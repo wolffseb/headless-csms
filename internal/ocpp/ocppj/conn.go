@@ -61,8 +61,9 @@ type Conn struct {
 
 	callTimeout time.Duration
 	// idleTimeout doubles as the heartbeat watchdog: it is applied as a read
-	// deadline and refreshed by any inbound traffic, so a station that stops
-	// talking is dropped without a second timer to keep in sync.
+	// deadline and refreshed by every inbound OCPP message, so a station that
+	// stops talking is dropped without a second timer to keep in sync.
+	// WebSocket pongs pointedly do not refresh it; see readLoop.
 	idleTimeout time.Duration
 
 	send  chan []byte
@@ -207,18 +208,29 @@ func (c *Conn) Run(ctx context.Context, handler ocpp.Handler) string {
 	return reason
 }
 
-// refreshDeadline restarts the idle watchdog. Any inbound traffic counts as a
-// sign of life, not only Heartbeat: the OCPP spec treats any message as one.
+// refreshDeadline restarts the idle watchdog. Any inbound OCPP message counts
+// as a sign of life, not only Heartbeat: the spec treats any message as one.
+// Pongs do not count; see readLoop.
 func (c *Conn) refreshDeadline() {
 	_ = c.ws.SetReadDeadline(time.Now().Add(c.idleTimeout))
 }
 
 func (c *Conn) readLoop() string {
 	c.refreshDeadline()
-	c.ws.SetPongHandler(func(string) error {
-		c.refreshDeadline()
-		return nil
-	})
+
+	// A pong deliberately does NOT refresh the deadline.
+	//
+	// We ping every idleTimeout/3, and any WebSocket stack answers a ping with
+	// a pong automatically, without the peer's application being involved. If
+	// a pong counted as a sign of life, our own keepalive would reset the
+	// watchdog on every cycle and it could never fire — least of all in the
+	// case it exists for: a station whose TCP connection is healthy but whose
+	// OCPP layer has stopped talking.
+	//
+	// So the watchdog measures application liveness (inbound OCPP messages)
+	// and the ping measures transport liveness (a failed write drops the
+	// connection from writeLoop). They are separate on purpose.
+	c.ws.SetPongHandler(func(string) error { return nil })
 
 	for {
 		_, data, err := c.ws.ReadMessage()

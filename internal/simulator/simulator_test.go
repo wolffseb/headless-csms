@@ -49,6 +49,11 @@ type rig struct {
 
 func newRig(t *testing.T, mutate ...func(*simulator.Options)) *rig {
 	t.Helper()
+	return newRigWithIdle(t, 30*time.Second, mutate...)
+}
+
+func newRigWithIdle(t *testing.T, idle time.Duration, mutate ...func(*simulator.Options)) *rig {
+	t.Helper()
 
 	cfg := testConfig()
 	svc := core.New(cfg)
@@ -59,7 +64,7 @@ func newRig(t *testing.T, mutate ...func(*simulator.Options)) *rig {
 		Core:        svc,
 		Handlers:    map[ocpp.Version]ocpp.Handler{ocpp.Version16: handler},
 		CallTimeout: 2 * time.Second,
-		IdleTimeout: 30 * time.Second,
+		IdleTimeout: idle,
 		Log:         discard(),
 	})
 	if err != nil {
@@ -640,4 +645,61 @@ func configValue(conf v16.GetConfigurationConf, key string) string {
 		}
 	}
 	return ""
+}
+
+// TestSilentStationIsDropped is the end-to-end half of the heartbeat watchdog:
+// a station that boots and then stops talking, while its WebSocket stack keeps
+// answering pings, must still be noticed as gone.
+//
+// The unit-level guard is TestPongsDoNotKeepAnIdleConnectionAlive in the csms
+// package; this proves the same thing through a real simulator, which is what
+// makes the failure reproducible by hand with `--scenario silent`.
+func TestSilentStationIsDropped(t *testing.T) {
+	t.Parallel()
+
+	const idle = 2 * time.Second
+
+	r := newRigWithIdle(t, idle, func(o *simulator.Options) { o.Scenario = simulator.ScenarioSilent })
+	waitFor(t, "the station to come online", func() bool { return r.core.IsOnline(testCP) })
+
+	start := time.Now()
+	deadline := time.Now().Add(idle + 5*time.Second)
+	for r.core.IsOnline(testCP) {
+		if time.Now().After(deadline) {
+			t.Fatalf("silent station still online %s after connecting", time.Since(start))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// And everything it had reported becomes unknown, rather than being served
+	// stale over OCPI.
+	waitFor(t, "EVSE-1 to become unknown", func() bool {
+		st, _ := r.core.EVSEStatus("EVSE-1")
+		return st == core.StatusUnknown
+	})
+}
+
+// TestHeartbeatsKeepTheStationOnline is the control for the test above: the
+// same short timeout, a cooperative station, and it stays online.
+func TestHeartbeatsKeepTheStationOnline(t *testing.T) {
+	t.Parallel()
+
+	const idle = 2 * time.Second
+
+	r := newRigWithIdle(t, idle)
+	waitFor(t, "the station to come online", func() bool { return r.core.IsOnline(testCP) })
+
+	// The CSMS hands out a 60s heartbeat interval, far longer than this
+	// timeout, so keep the station talking the way a busy one would.
+	deadline := time.Now().Add(2 * idle)
+	for time.Now().Before(deadline) {
+		if err := r.sim.SetConnectorStatus(context.Background(), 1, v16.StatusAvailable); err != nil {
+			t.Fatalf("status: %v", err)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	if !r.core.IsOnline(testCP) {
+		t.Error("a station that kept sending OCPP messages was dropped as idle")
+	}
 }

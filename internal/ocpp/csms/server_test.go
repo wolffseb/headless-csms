@@ -450,12 +450,63 @@ func TestIdleConnectionIsDropped(t *testing.T) {
 
 	// The read deadline is the heartbeat watchdog: a station that stops
 	// talking is dropped and everything it reported becomes UNKNOWN.
+	//
+	// This timeout is below the one-second floor on the ping period, so no
+	// ping goes out during it and WebSocket keepalive plays no part. The
+	// case where pings do fire is TestPongsDoNotKeepAnIdleConnectionAlive,
+	// and it is the one that matters in production.
 	h := newHarness(t, func(o *Options) { o.IdleTimeout = 250 * time.Millisecond })
 	client := ocpptest.MustDial(t, h.url(testCP))
 	defer client.Close()
 
 	waitFor(t, "the charge point to register", func() bool { return h.core.IsOnline(testCP) })
 	waitFor(t, "the idle connection to be dropped", func() bool { return !h.core.IsOnline(testCP) })
+}
+
+// TestPongsDoNotKeepAnIdleConnectionAlive guards the distinction the whole
+// heartbeat timeout rests on.
+//
+// We ping the station every idleTimeout/3, and any WebSocket stack answers a
+// ping with a pong automatically. If a pong counted as a sign of life, our own
+// keepalive would refresh the watchdog on every cycle and heartbeat_timeout
+// could never fire against a station whose TCP connection is healthy but whose
+// OCPP layer has stopped talking — exactly the failure it exists to catch.
+//
+// The timeout here is deliberately above the one-second ping floor, so pings
+// really do go out during the test.
+func TestPongsDoNotKeepAnIdleConnectionAlive(t *testing.T) {
+	t.Parallel()
+
+	// Above the one-second ping floor so pings really fire, but short enough
+	// to keep the test quick.
+	const idle = 2 * time.Second
+
+	h := newHarness(t, func(o *Options) { o.IdleTimeout = idle })
+
+	// A plain WebSocket client: silent at the OCPP level, but answering our
+	// pings the way any charger's stack would.
+	client := ocpptest.MustDial(t, h.url(testCP))
+	defer client.Close()
+
+	waitFor(t, "the charge point to register", func() bool { return h.core.IsOnline(testCP) })
+
+	// A budget of its own: the shared waitFor caps at 3s, which would race the
+	// timeout under test rather than observe it.
+	start := time.Now()
+	deadline := time.Now().Add(idle + 5*time.Second)
+	for h.core.IsOnline(testCP) {
+		if time.Now().After(deadline) {
+			t.Fatalf("silent station still online %s after connecting; "+
+				"pongs are keeping the watchdog alive", time.Since(start))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// It must not have been dropped early either: that would mean the
+	// watchdog is firing on something other than the timeout.
+	if elapsed := time.Since(start); elapsed < idle/2 {
+		t.Errorf("dropped after %s, well before the %s timeout", elapsed, idle)
+	}
 }
 
 func TestTrafficKeepsTheConnectionAlive(t *testing.T) {

@@ -98,6 +98,7 @@ Scenarios make it misbehave on purpose, which is how the unhappy paths get teste
 | `occupied` | Answers `ReserveNow` with `Occupied` |
 | `slow` | Stalls every answer past the call timeout |
 | `unlock-fails` | Refuses to release the cable lock |
+| `silent` | Boots, then stops sending anything while still answering pings — a station whose OCPP layer has hung but whose connection is fine. This is what `heartbeat_timeout` exists to catch, and the only way to exercise it by hand |
 
 `--connectors`, `--id`, `--csms`, `--tag`, `--vendor` and `--model` override the config
 when you want to point it somewhere else or fake a different station.

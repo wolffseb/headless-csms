@@ -41,13 +41,21 @@ const (
 	ScenarioSlow Scenario = "slow"
 	// ScenarioUnlockFails refuses to release the cable lock.
 	ScenarioUnlockFails Scenario = "unlock-fails"
+	// ScenarioSilent boots and then stops sending anything, while its
+	// WebSocket stack keeps answering the CSMS's pings.
+	//
+	// This is a station whose OCPP layer has hung but whose TCP connection is
+	// fine, and it is the case heartbeat_timeout exists to catch. Without it
+	// the watchdog cannot be exercised by hand at all, because a cooperative
+	// station keeps it fed.
+	ScenarioSilent Scenario = "silent"
 )
 
 // Scenarios lists every scenario, for the CLI's help text and validation.
 func Scenarios() []Scenario {
 	return []Scenario{
 		ScenarioNormal, ScenarioRejectReserve, ScenarioOccupied,
-		ScenarioSlow, ScenarioUnlockFails,
+		ScenarioSlow, ScenarioUnlockFails, ScenarioSilent,
 	}
 }
 
@@ -361,6 +369,14 @@ func (s *Simulator) reportInitialStatus(ctx context.Context) error {
 }
 
 func (s *Simulator) heartbeatLoop(ctx context.Context) {
+	if s.opts.Scenario == ScenarioSilent {
+		// Deliberately never heartbeat. The connection stays open and pings
+		// still get answered, so only the CSMS's application-level watchdog
+		// can notice.
+		s.log.Info("going silent: no further messages will be sent")
+		return
+	}
+
 	for {
 		timer := time.NewTimer(s.heartbeatInterval())
 
