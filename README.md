@@ -67,10 +67,40 @@ INFO msg="ALP-HYC-001 booted (Alpitronic HYC300)"
 INFO msg="ALP-HYC-001-1 UNKNOWN→CHARGING"
 ```
 
-`--log-level debug` shows the protocol chatter underneath. There is no charge point
-simulator yet, so until the next step you need a real station or a WebSocket client
-(`websocat -H='Sec-WebSocket-Protocol: ocpp1.6' ws://127.0.0.1:9000/ocpp/ALP-HYC-001`)
-to drive it.
+`--log-level debug` shows the protocol chatter underneath.
+
+## Testing without the station
+
+A charge point simulator is built into the binary, so the whole thing runs on a laptop.
+In a second terminal:
+
+```sh
+./bin/cpms simulate charger -c config.yaml
+```
+
+With no flags it reads the same config file and points itself at the CSMS `cpms run` is
+serving, so the two commands are a working pair out of the box. The station appears in the
+first terminal:
+
+```
+INFO msg="charge point connected" charge_point=ALP-HYC-001 version=1.6
+INFO msg="ALP-HYC-001 booted (Alpitronic HYC300 fw simulator)"
+INFO msg="ALP-HYC-001-1 UNKNOWN→AVAILABLE"
+INFO msg="ALP-HYC-001-2 UNKNOWN→AVAILABLE"
+```
+
+Scenarios make it misbehave on purpose, which is how the unhappy paths get tested:
+
+| `--scenario` | Behaviour |
+|---|---|
+| `normal` | A cooperative station (default) |
+| `reject-reserve` | Refuses every `ReserveNow`, and stops advertising the Reservation feature profile — what a station that cannot reserve actually looks like |
+| `occupied` | Answers `ReserveNow` with `Occupied` |
+| `slow` | Stalls every answer past the call timeout |
+| `unlock-fails` | Refuses to release the cable lock |
+
+`--connectors`, `--id`, `--csms`, `--tag`, `--vendor` and `--model` override the config
+when you want to point it somewhere else or fake a different station.
 
 An invalid config exits 1 and names every problem by its field path, all in one pass:
 
@@ -107,14 +137,20 @@ be pointed at a randomly chosen port).
 ```
 internal/core        domain state and the event bus — the single source of truth
 internal/ocpp        version-agnostic RPC errors, versions, the Handler interface
-internal/ocpp/csms   WebSocket server, OCPP-J framing, request/response correlation
+internal/ocpp/ocppj  the OCPP-J RPC layer: framing, correlation, connection goroutines
+internal/ocpp/csms   the WebSocket server a charge point dials into
 internal/ocpp/v16    OCPP 1.6-J payloads and the adapter that writes to core
+internal/simulator   a charge point: dials a CSMS and behaves like a station
 internal/ocpptest    a raw OCPP-J client used by the tests
 ```
 
 `csms` never learns a message name: it routes `(charge point, action, raw payload)` to the
 `ocpp.Handler` chosen by the negotiated WebSocket subprotocol. That is what lets OCPP 2.0.1
 arrive later as a sibling of `v16` rather than as a rewrite.
+
+`ocppj` is direction-agnostic on purpose. A CSMS connection and a charge point connection
+differ only in who performs the handshake, so both ends share one implementation of the
+framing and correlation rather than keeping two that can drift apart.
 
 The charge point identity is taken from the **last** path segment of the WebSocket URL, so
 `/ocpp/<id>`, `/<id>` and `/steve/websocket/CentralSystemService/<id>` all work — vendors
@@ -136,8 +172,8 @@ Built in tracked steps; each lands as its own PR.
 |---|---|---|
 | 1 | Project skeleton, config loader, CI | done |
 | 2 | OCPP 1.6-J CSMS: WebSocket server and message routing | done |
-| 3 | Built-in charge point simulator | next |
-| 4 | Outbound OCPP commands, reservation lifecycle, one-shot CLI | |
+| 3 | Built-in charge point simulator | done |
+| 4 | Outbound OCPP commands, reservation lifecycle, one-shot CLI | next |
 | 5 | OCPI foundation: versions + credentials handshake | |
 | 6 | OCPI Locations module (sender) | |
 | 7 | PATCH location on status change | |

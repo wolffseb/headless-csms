@@ -15,6 +15,7 @@ import (
 	"github.com/wolffseb/cli-cpms/internal/config"
 	"github.com/wolffseb/cli-cpms/internal/core"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
+	"github.com/wolffseb/cli-cpms/internal/ocpp/ocppj"
 	"github.com/wolffseb/cli-cpms/internal/ocpptest"
 )
 
@@ -280,8 +281,8 @@ func TestMalformedFrameAnswersRpcFrameworkError(t *testing.T) {
 	if resp.ErrorCode != string(ocpp.ErrRpcFrameworkError) {
 		t.Errorf("code = %s, want %s", resp.ErrorCode, ocpp.ErrRpcFrameworkError)
 	}
-	if resp.ID != unknownMessageID {
-		t.Errorf("reply id = %q, want %q when the id could not be read", resp.ID, unknownMessageID)
+	if resp.ID != ocppj.UnknownMessageID {
+		t.Errorf("reply id = %q, want %q when the id could not be read", resp.ID, ocppj.UnknownMessageID)
 	}
 
 	// A malformed frame must not kill the connection.
@@ -360,7 +361,7 @@ func TestOutboundCallsAreCorrelated(t *testing.T) {
 		t.Error(err)
 	}
 
-	if got := conn.pendingCount(); got != 0 {
+	if got := conn.PendingCount(); got != 0 {
 		t.Errorf("%d pending entries left behind, want 0", got)
 	}
 }
@@ -390,7 +391,7 @@ func TestOutboundCallTimesOutWithoutLeaking(t *testing.T) {
 		t.Fatal("expected a timeout")
 	}
 
-	if got := conn.pendingCount(); got != 0 {
+	if got := conn.PendingCount(); got != 0 {
 		t.Errorf("%d pending entries left after a timeout, want 0", got)
 	}
 	// A timed-out call must not leave a goroutine behind.
@@ -419,7 +420,7 @@ func TestOutboundCallHonoursContextCancellation(t *testing.T) {
 	if _, err := conn.Call(ctx, "Ping", map[string]any{}); err == nil {
 		t.Fatal("expected cancellation to end the call")
 	}
-	if got := conn.pendingCount(); got != 0 {
+	if got := conn.PendingCount(); got != 0 {
 		t.Errorf("%d pending entries left after cancellation, want 0", got)
 	}
 }

@@ -1,4 +1,12 @@
-package csms
+// Package ocppj implements the OCPP-J RPC layer that sits on a WebSocket:
+// the [2,id,action,payload] framing, request/response correlation, and the
+// goroutines that drive one connection.
+//
+// It is deliberately direction-agnostic. The CSMS uses it for connections a
+// charge point dialled in on; the charge point simulator uses it for the
+// connection it dials out. Only who performs the WebSocket handshake differs,
+// so only that lives outside this package.
+package ocppj
 
 import (
 	"context"
@@ -41,7 +49,7 @@ type callResult struct {
 	rpcErr  *ocpp.RPCError
 }
 
-// Conn is one charge point's WebSocket connection.
+// Conn is one OCPP-J connection, from either end.
 //
 // It owns three goroutines: a reader, a writer (gorilla permits only one
 // concurrent writer), and a handler that processes inbound CALLs in order.
@@ -58,7 +66,7 @@ type Conn struct {
 	idleTimeout time.Duration
 
 	send  chan []byte
-	calls chan frame
+	calls chan Frame
 
 	pendingMu sync.Mutex
 	pending   map[string]chan callResult
@@ -69,22 +77,46 @@ type Conn struct {
 	done      chan struct{}
 }
 
-func newConn(id string, version ocpp.Version, ws *websocket.Conn, log *slog.Logger, callTimeout, idleTimeout time.Duration) *Conn {
+// Options configure a Conn.
+type Options struct {
+	// ID names the peer in logs. On the CSMS side it is the charge point
+	// identity; on the charge point side it is our own.
+	ID string
+	// Version is the negotiated OCPP version.
+	Version ocpp.Version
+	// CallTimeout bounds an outbound request.
+	CallTimeout time.Duration
+	// IdleTimeout drops a connection with no inbound traffic for this long.
+	IdleTimeout time.Duration
+	Log         *slog.Logger
+}
+
+// New wraps an already-handshaken WebSocket connection.
+func New(ws *websocket.Conn, opts Options) *Conn {
+	if opts.Log == nil {
+		opts.Log = slog.Default()
+	}
+	if opts.CallTimeout <= 0 {
+		opts.CallTimeout = 30 * time.Second
+	}
+	if opts.IdleTimeout <= 0 {
+		opts.IdleTimeout = 90 * time.Second
+	}
 	return &Conn{
-		id:          id,
-		version:     version,
+		id:          opts.ID,
+		version:     opts.Version,
 		ws:          ws,
-		log:         log,
-		callTimeout: callTimeout,
-		idleTimeout: idleTimeout,
+		log:         opts.Log,
+		callTimeout: opts.CallTimeout,
+		idleTimeout: opts.IdleTimeout,
 		send:        make(chan []byte, sendBuffer),
-		calls:       make(chan frame, callBuffer),
+		calls:       make(chan Frame, callBuffer),
 		pending:     make(map[string]chan callResult),
 		done:        make(chan struct{}),
 	}
 }
 
-// ID is the charge point identity this connection belongs to.
+// ID is the peer identity this connection belongs to.
 func (c *Conn) ID() string { return c.id }
 
 // Version is the OCPP version negotiated for this connection.
@@ -102,7 +134,7 @@ func (c *Conn) Done() <-chan struct{} { return c.done }
 func (c *Conn) Call(ctx context.Context, action string, payload any) (json.RawMessage, error) {
 	id := strconv.FormatUint(c.nextID.Add(1), 10)
 
-	data, err := encodeCall(id, action, payload)
+	data, err := EncodeCall(id, action, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -145,24 +177,24 @@ func (c *Conn) forget(id string) {
 	c.pendingMu.Unlock()
 }
 
-// pendingCount is used by tests to prove that finished calls leave nothing
-// behind.
-func (c *Conn) pendingCount() int {
+// PendingCount reports how many calls are awaiting an answer.
+func (c *Conn) PendingCount() int {
 	c.pendingMu.Lock()
 	defer c.pendingMu.Unlock()
 	return len(c.pending)
 }
 
-// close shuts the connection down once, unblocking everything waiting on it.
-func (c *Conn) close() {
+// Close shuts the connection down once, unblocking everything waiting on it.
+// It is safe to call more than once.
+func (c *Conn) Close() {
 	c.closeOnce.Do(func() {
 		close(c.done)
 		_ = c.ws.Close()
 	})
 }
 
-// run drives the connection until it ends, returning why it ended.
-func (c *Conn) run(ctx context.Context, handler ocpp.Handler) string {
+// Run drives the connection until it ends, returning why it ended.
+func (c *Conn) Run(ctx context.Context, handler ocpp.Handler) string {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() { defer wg.Done(); c.writeLoop() }()
@@ -170,7 +202,7 @@ func (c *Conn) run(ctx context.Context, handler ocpp.Handler) string {
 
 	reason := c.readLoop()
 
-	c.close()
+	c.Close()
 	wg.Wait()
 	return reason
 }
@@ -195,7 +227,7 @@ func (c *Conn) readLoop() string {
 		}
 		c.refreshDeadline()
 
-		f, errID, rpcErr := parseFrame(data)
+		f, errID, rpcErr := ParseFrame(data)
 		if rpcErr != nil {
 			c.log.Warn("malformed frame", "charge_point", c.id, "error", rpcErr.Error())
 			c.sendCallError(errID, rpcErr)
@@ -203,15 +235,15 @@ func (c *Conn) readLoop() string {
 		}
 
 		switch f.Type {
-		case messageTypeCall:
+		case MessageTypeCall:
 			select {
 			case c.calls <- f:
 			case <-c.done:
 				return "closed"
 			}
-		case messageTypeCallResult:
+		case MessageTypeCallResult:
 			c.deliver(f.ID, callResult{payload: f.Payload})
-		case messageTypeCallError:
+		case MessageTypeCallError:
 			c.deliver(f.ID, callResult{rpcErr: &ocpp.RPCError{
 				Code:        f.ErrorCode,
 				Description: f.ErrorDescription,
@@ -251,7 +283,7 @@ func (c *Conn) handleLoop(ctx context.Context, handler ocpp.Handler) {
 				c.sendCallError(f.ID, rpcErr)
 				continue
 			}
-			data, err := encodeCallResult(f.ID, result)
+			data, err := EncodeCallResult(f.ID, result)
 			if err != nil {
 				c.log.Error("encoding result", "charge_point", c.id, "action", f.Action, "error", err)
 				c.sendCallError(f.ID, ocpp.Errorf(ocpp.ErrInternalError, "could not encode result"))
@@ -264,7 +296,7 @@ func (c *Conn) handleLoop(ctx context.Context, handler ocpp.Handler) {
 
 // dispatch calls the version handler, converting a panic into an InternalError
 // so that one bad message cannot take the process down.
-func (c *Conn) dispatch(ctx context.Context, handler ocpp.Handler, f frame) (result any, rpcErr *ocpp.RPCError) {
+func (c *Conn) dispatch(ctx context.Context, handler ocpp.Handler, f Frame) (result any, rpcErr *ocpp.RPCError) {
 	defer func() {
 		if r := recover(); r != nil {
 			c.log.Error("handler panicked", "charge_point", c.id, "action", f.Action, "panic", r)
@@ -275,7 +307,7 @@ func (c *Conn) dispatch(ctx context.Context, handler ocpp.Handler, f frame) (res
 }
 
 func (c *Conn) sendCallError(id string, rpcErr *ocpp.RPCError) {
-	data, err := encodeCallError(id, rpcErr)
+	data, err := EncodeCallError(id, rpcErr)
 	if err != nil {
 		c.log.Error("encoding call error", "charge_point", c.id, "error", err)
 		return
@@ -310,7 +342,7 @@ func (c *Conn) writeLoop() {
 			_ = c.ws.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := c.ws.WriteMessage(websocket.TextMessage, data); err != nil {
 				c.log.Debug("write failed", "charge_point", c.id, "error", err)
-				c.close()
+				c.Close()
 				return
 			}
 
@@ -319,7 +351,7 @@ func (c *Conn) writeLoop() {
 			// ping lives here rather than needing its own serialisation.
 			if err := c.ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait)); err != nil {
 				c.log.Debug("ping failed", "charge_point", c.id, "error", err)
-				c.close()
+				c.Close()
 				return
 			}
 		}

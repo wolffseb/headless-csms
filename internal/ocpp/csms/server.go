@@ -1,6 +1,7 @@
 // Package csms implements the Charging Station Management System side of
-// OCPP-J: the WebSocket server a charge point dials into, the RPC framing on
-// top of it, and request/response correlation.
+// OCPP-J: the WebSocket server a charge point dials into, the handshake, and
+// the registry of live connections. The RPC layer on top of each connection
+// lives in internal/ocpp/ocppj, which both ends share.
 //
 // It is deliberately version-agnostic. It routes (charge point, action, raw
 // payload) to an ocpp.Handler selected by the negotiated WebSocket
@@ -22,6 +23,7 @@ import (
 
 	"github.com/wolffseb/cli-cpms/internal/core"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
+	"github.com/wolffseb/cli-cpms/internal/ocpp/ocppj"
 )
 
 // Options configure a Server.
@@ -59,7 +61,7 @@ type Server struct {
 	cancel context.CancelFunc
 
 	mu    sync.Mutex
-	conns map[string]*Conn
+	conns map[string]*ocppj.Conn
 	wg    sync.WaitGroup
 }
 
@@ -87,7 +89,7 @@ func New(opts Options) (*Server, error) {
 		log:    opts.Log,
 		ctx:    ctx,
 		cancel: cancel,
-		conns:  make(map[string]*Conn),
+		conns:  make(map[string]*ocppj.Conn),
 		upgrader: websocket.Upgrader{
 			HandshakeTimeout: 10 * time.Second,
 			// Chargers do not send an Origin header, and this listener is a
@@ -136,7 +138,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	s.mu.Lock()
 	for _, c := range s.conns {
-		c.close()
+		c.Close()
 	}
 	s.mu.Unlock()
 
@@ -157,7 +159,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // ChargePoint returns the live connection for an identity, if it is connected.
-func (s *Server) ChargePoint(id string) (*Conn, bool) {
+func (s *Server) ChargePoint(id string) (*ocppj.Conn, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -230,14 +232,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveConn(id string, version ocpp.Version, ws *websocket.Conn, urlPath, remote string) {
-	conn := newConn(id, version, ws, s.log, s.opts.CallTimeout, s.opts.IdleTimeout)
+	conn := ocppj.New(ws, ocppj.Options{
+		ID:          id,
+		Version:     version,
+		CallTimeout: s.opts.CallTimeout,
+		IdleTimeout: s.opts.IdleTimeout,
+		Log:         s.log,
+	})
 
 	// A charger that reconnects before we noticed the old socket die would
 	// otherwise leave a stale connection registered under the same identity.
 	s.mu.Lock()
 	if old, ok := s.conns[id]; ok {
 		s.log.Info("replacing existing connection", "charge_point", id)
-		old.close()
+		old.Close()
 	}
 	s.conns[id] = conn
 	s.mu.Unlock()
@@ -246,7 +254,7 @@ func (s *Server) serveConn(id string, version ocpp.Version, ws *websocket.Conn, 
 		"charge_point", id, "version", string(version), "path", urlPath, "remote", remote)
 	s.opts.Core.Connected(id)
 
-	reason := conn.run(s.ctx, s.opts.Handlers[version])
+	reason := conn.Run(s.ctx, s.opts.Handlers[version])
 
 	s.mu.Lock()
 	// We are only the current connection if nothing replaced us in the

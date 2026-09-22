@@ -1,4 +1,4 @@
-package csms
+package ocppj
 
 import (
 	"encoding/json"
@@ -14,11 +14,11 @@ func TestParseFrameValid(t *testing.T) {
 	t.Run("call", func(t *testing.T) {
 		t.Parallel()
 
-		f, _, rpcErr := parseFrame([]byte(`[2,"abc","BootNotification",{"chargePointVendor":"Alpitronic"}]`))
+		f, _, rpcErr := ParseFrame([]byte(`[2,"abc","BootNotification",{"chargePointVendor":"Alpitronic"}]`))
 		if rpcErr != nil {
 			t.Fatalf("unexpected error: %v", rpcErr)
 		}
-		if f.Type != messageTypeCall || f.ID != "abc" || f.Action != "BootNotification" {
+		if f.Type != MessageTypeCall || f.ID != "abc" || f.Action != "BootNotification" {
 			t.Fatalf("got %+v, want a CALL abc/BootNotification", f)
 		}
 		var payload map[string]string
@@ -33,11 +33,11 @@ func TestParseFrameValid(t *testing.T) {
 	t.Run("call result", func(t *testing.T) {
 		t.Parallel()
 
-		f, _, rpcErr := parseFrame([]byte(`[3,"abc",{"status":"Accepted"}]`))
+		f, _, rpcErr := ParseFrame([]byte(`[3,"abc",{"status":"Accepted"}]`))
 		if rpcErr != nil {
 			t.Fatalf("unexpected error: %v", rpcErr)
 		}
-		if f.Type != messageTypeCallResult || f.ID != "abc" {
+		if f.Type != MessageTypeCallResult || f.ID != "abc" {
 			t.Fatalf("got %+v, want a CALLRESULT abc", f)
 		}
 	})
@@ -45,7 +45,7 @@ func TestParseFrameValid(t *testing.T) {
 	t.Run("call error", func(t *testing.T) {
 		t.Parallel()
 
-		f, _, rpcErr := parseFrame([]byte(`[4,"abc","NotSupported","nope",{"extra":1}]`))
+		f, _, rpcErr := ParseFrame([]byte(`[4,"abc","NotSupported","nope",{"extra":1}]`))
 		if rpcErr != nil {
 			t.Fatalf("unexpected error: %v", rpcErr)
 		}
@@ -59,7 +59,7 @@ func TestParseFrameValid(t *testing.T) {
 
 		// The spec says five elements, but stacks in the wild omit the details
 		// object. Understanding the response beats being right about arity.
-		f, _, rpcErr := parseFrame([]byte(`[4,"abc","GenericError","boom"]`))
+		f, _, rpcErr := ParseFrame([]byte(`[4,"abc","GenericError","boom"]`))
 		if rpcErr != nil {
 			t.Fatalf("unexpected error: %v", rpcErr)
 		}
@@ -77,13 +77,13 @@ func TestParseFrameMalformed(t *testing.T) {
 		input  string
 		wantID string
 	}{
-		{"not json", `{`, unknownMessageID},
-		{"not an array", `{"messageId":"abc"}`, unknownMessageID},
-		{"empty array", `[]`, unknownMessageID},
-		{"too few elements", `[2,"abc"]`, unknownMessageID},
-		{"message type not a number", `["two","abc","Heartbeat",{}]`, unknownMessageID},
-		{"message id not a string", `[2,42,"Heartbeat",{}]`, unknownMessageID},
-		{"empty message id", `[2,"","Heartbeat",{}]`, unknownMessageID},
+		{"not json", `{`, UnknownMessageID},
+		{"not an array", `{"messageId":"abc"}`, UnknownMessageID},
+		{"empty array", `[]`, UnknownMessageID},
+		{"too few elements", `[2,"abc"]`, UnknownMessageID},
+		{"message type not a number", `["two","abc","Heartbeat",{}]`, UnknownMessageID},
+		{"message id not a string", `[2,42,"Heartbeat",{}]`, UnknownMessageID},
+		{"empty message id", `[2,"","Heartbeat",{}]`, UnknownMessageID},
 		// From here the id is readable, so the peer can match our error to its
 		// pending call.
 		{"unknown message type id", `[9,"abc","Heartbeat",{}]`, "abc"},
@@ -100,12 +100,12 @@ func TestParseFrameMalformed(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, gotID, rpcErr := parseFrame([]byte(tt.input))
+			_, gotID, rpcErr := ParseFrame([]byte(tt.input))
 			if rpcErr == nil {
 				t.Fatal("expected the frame to be rejected")
 			}
 			// Anything that is not a well-formed RPC frame is
-			// RpcFrameworkError; FormationViolation is for a good frame with a
+			// RpcFrameworkError; FormationViolation is for a good Frame with a
 			// payload that does not fit its action, which only the version
 			// handler can judge.
 			if rpcErr.Code != ocpp.ErrRpcFrameworkError {
@@ -127,15 +127,15 @@ func TestEncodeRoundTrip(t *testing.T) {
 	t.Run("call", func(t *testing.T) {
 		t.Parallel()
 
-		data, err := encodeCall("7", "Heartbeat", map[string]any{"a": 1})
+		data, err := EncodeCall("7", "Heartbeat", map[string]any{"a": 1})
 		if err != nil {
 			t.Fatal(err)
 		}
-		f, _, rpcErr := parseFrame(data)
+		f, _, rpcErr := ParseFrame(data)
 		if rpcErr != nil {
 			t.Fatalf("our own CALL did not parse: %v", rpcErr)
 		}
-		if f.Type != messageTypeCall || f.ID != "7" || f.Action != "Heartbeat" {
+		if f.Type != MessageTypeCall || f.ID != "7" || f.Action != "Heartbeat" {
 			t.Errorf("got %+v", f)
 		}
 	})
@@ -145,7 +145,7 @@ func TestEncodeRoundTrip(t *testing.T) {
 
 		// A response of `null` is rejected by strict chargers; `{}` is correct
 		// for a message that carries nothing back.
-		data, err := encodeCallResult("7", nil)
+		data, err := EncodeCallResult("7", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -157,11 +157,11 @@ func TestEncodeRoundTrip(t *testing.T) {
 	t.Run("call error", func(t *testing.T) {
 		t.Parallel()
 
-		data, err := encodeCallError("7", ocpp.Errorf(ocpp.ErrNotImplemented, "no such action"))
+		data, err := EncodeCallError("7", ocpp.Errorf(ocpp.ErrNotImplemented, "no such action"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		f, _, rpcErr := parseFrame(data)
+		f, _, rpcErr := ParseFrame(data)
 		if rpcErr != nil {
 			t.Fatalf("our own CALLERROR did not parse: %v", rpcErr)
 		}
