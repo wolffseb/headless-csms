@@ -44,13 +44,13 @@ config.yaml is valid.
   Heartbeat timeout   90s
   OCPI listener       0.0.0.0:8080
   OCPI advertised as  http://192.168.1.10:8080/ocpi
-  OCPI party          DE*FRY
+  OCPI party          DE*FYT
   Default RFID tag    04A1B2C3D4
-  Location            OFFICE-01 "Fryte HQ", Berlin (DEU) — 2 EVSEs, 2 connectors
+  Location            OFFICE-01 "Fryte HQ", München (DEU) — 2 EVSEs, 2 connectors
 
   EVSE           EVSE ID        OCPP CONNECTOR  CONNECTORS
-  ALP-HYC-001-1  DE*FRY*E001*1  1               IEC_62196_T2_COMBO/CABLE/DC 920V 500A
-  ALP-HYC-001-2  DE*FRY*E001*2  2               IEC_62196_T2_COMBO/CABLE/DC 920V 500A
+  ALP-HYC-001-1  DE*FYT*E001*1  1               IEC_62196_T2_COMBO/CABLE/DC 920V 500A
+  ALP-HYC-001-2  DE*FYT*E001*2  2               IEC_62196_T2_COMBO/CABLE/DC 920V 500A
 ```
 
 Then start the CSMS and point the station at the URL it prints:
