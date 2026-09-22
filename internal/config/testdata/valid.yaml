@@ -4,7 +4,9 @@ charger:
   id: ALP-HYC-001
   ip: 192.168.1.42
   ocpp_version: "1.6"
+  heartbeat_interval: 45s
   heartbeat_timeout: 120s
+  call_timeout: 15s
 
 server:
   ocpp_bind: 0.0.0.0:9000

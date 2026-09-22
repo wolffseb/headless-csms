@@ -28,9 +28,15 @@ type Charger struct {
 	IP string `yaml:"ip"`
 	// OCPPVersion is the version we expect this station to speak.
 	OCPPVersion string `yaml:"ocpp_version"`
+	// HeartbeatInterval is the interval we hand the station in the
+	// BootNotification response, telling it how often to check in.
+	HeartbeatInterval Duration `yaml:"heartbeat_interval"`
 	// HeartbeatTimeout is how long we tolerate silence before marking the
-	// station offline.
+	// station offline. It must exceed HeartbeatInterval.
 	HeartbeatTimeout Duration `yaml:"heartbeat_timeout"`
+	// CallTimeout bounds how long an outbound OCPP request waits for the
+	// station to answer.
+	CallTimeout Duration `yaml:"call_timeout"`
 }
 
 // Server holds the two listeners cpms opens.
@@ -120,12 +126,14 @@ type Connector struct {
 
 // Defaults applied to any field the operator left out.
 const (
-	DefaultOCPPVersion      = "1.6"
-	DefaultHeartbeatTimeout = 90 * time.Second
-	DefaultOCPPBind         = "0.0.0.0:9000"
-	DefaultOCPIBind         = "0.0.0.0:8080"
-	DefaultPushDebounce     = 500 * time.Millisecond
-	DefaultPushMaxRetries   = 5
+	DefaultOCPPVersion       = "1.6"
+	DefaultHeartbeatInterval = 60 * time.Second
+	DefaultHeartbeatTimeout  = 90 * time.Second
+	DefaultCallTimeout       = 30 * time.Second
+	DefaultOCPPBind          = "0.0.0.0:9000"
+	DefaultOCPIBind          = "0.0.0.0:8080"
+	DefaultPushDebounce      = 500 * time.Millisecond
+	DefaultPushMaxRetries    = 5
 )
 
 // EVSEByUID returns the configured EVSE with the given OCPI uid.
@@ -155,8 +163,14 @@ func (c *Config) applyDefaults() {
 	if c.Charger.OCPPVersion == "" {
 		c.Charger.OCPPVersion = DefaultOCPPVersion
 	}
+	if c.Charger.HeartbeatInterval.unset() {
+		c.Charger.HeartbeatInterval.setDefault(DefaultHeartbeatInterval)
+	}
 	if c.Charger.HeartbeatTimeout.unset() {
 		c.Charger.HeartbeatTimeout.setDefault(DefaultHeartbeatTimeout)
+	}
+	if c.Charger.CallTimeout.unset() {
+		c.Charger.CallTimeout.setDefault(DefaultCallTimeout)
 	}
 	if c.Server.OCPPBind == "" {
 		c.Server.OCPPBind = DefaultOCPPBind

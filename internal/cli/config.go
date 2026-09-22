@@ -27,15 +27,9 @@ func newConfigValidateCommand(opts *options) *cobra.Command {
 			"every problem, each named by its field path, when it is not.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := config.Load(opts.configPath)
+			cfg, err := loadConfig(cmd, opts)
 			if err != nil {
-				var verrs config.ValidationErrors
-				if !errors.As(err, &verrs) {
-					// An I/O problem: no field context to report.
-					return fmt.Errorf("reading %s: %w", opts.configPath, err)
-				}
-				printValidationReport(cmd, opts.configPath, verrs)
-				return ErrSilent
+				return err
 			}
 
 			cmd.Printf("%s is valid.\n\n", opts.configPath)
@@ -43,6 +37,23 @@ func newConfigValidateCommand(opts *options) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// loadConfig loads the config file, reporting validation problems in full and
+// returning ErrSilent so the top level does not print them a second time.
+func loadConfig(cmd *cobra.Command, opts *options) (*config.Config, error) {
+	cfg, err := config.Load(opts.configPath)
+	if err == nil {
+		return cfg, nil
+	}
+
+	var verrs config.ValidationErrors
+	if !errors.As(err, &verrs) {
+		// An I/O problem: no field context to report.
+		return nil, fmt.Errorf("reading %s: %w", opts.configPath, err)
+	}
+	printValidationReport(cmd, opts.configPath, verrs)
+	return nil, ErrSilent
 }
 
 // printValidationReport writes every problem to stderr, one per line, each

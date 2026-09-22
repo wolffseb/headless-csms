@@ -14,8 +14,14 @@ charger:
   # dialled by the charger, not by us.
   ip: 192.168.1.42
   ocpp_version: "1.6"
-  # Silence longer than this marks the station offline.
+  # What we tell the station in the BootNotification response: how often it
+  # should check in.
+  heartbeat_interval: 60s
+  # Silence longer than this marks the station offline. Must exceed the
+  # interval above, or a punctual station gets marked offline between beats.
   heartbeat_timeout: 90s
+  # How long an outbound command waits for the station to answer.
+  call_timeout: 30s
 
 server:
   # Where we listen for the charger. Point the station's CSMS URL here.
@@ -29,7 +35,7 @@ auth:
 
 ocpi:
   country_code: DE
-  party_id: FRY
+  party_id: FYT
   # The OCPI root we advertise to the counterparty. It has to be reachable
   # from their host, which is why it is not derived from ocpi_bind above.
   public_base_url: http://192.168.1.10:8080/ocpi
@@ -49,16 +55,16 @@ ocpi:
 location:
   id: OFFICE-01
   name: Fryte HQ
-  address: Musterstrasse 1
-  city: Berlin
-  postal_code: "10115"
+  address: Astallerstr. 9
+  city: München
+  postal_code: "80339"
   country: DEU
   coordinates:
     latitude: "52.520008"
     longitude: "13.404954"
   evses:
     - uid: ALP-HYC-001-1
-      evse_id: DE*FRY*E001*1
+      evse_id: DE*FYT*E001*1
       # OCPP 1.6 addresses this outlet by connector id. 0 is reserved for the
       # charge point as a whole, so EVSEs start at 1.
       ocpp_connector_id: 1
@@ -71,7 +77,7 @@ location:
           max_amperage: 500
           max_electric_power: 400000
     - uid: ALP-HYC-001-2
-      evse_id: DE*FRY*E001*2
+      evse_id: DE*FYT*E001*2
       ocpp_connector_id: 2
       connectors:
         - id: "1"

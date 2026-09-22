@@ -18,7 +18,9 @@ charger:
   id: ALP-HYC-001
   ip: 192.168.1.42
   ocpp_version: "1.6"
+  heartbeat_interval: 60s
   heartbeat_timeout: 90s
+  call_timeout: 30s
 server:
   ocpp_bind: 0.0.0.0:9000
   ocpi_bind: 0.0.0.0:8080
@@ -116,6 +118,18 @@ func TestInvalidConfigsNameTheOffendingField(t *testing.T) {
 		mutate:    rep("heartbeat_timeout: 90s", "heartbeat_timeout: 0s", 1),
 		wantPaths: []string{"charger.heartbeat_timeout"},
 	}, {
+		name:      "heartbeat timeout below the interval",
+		mutate:    rep("heartbeat_timeout: 90s", "heartbeat_timeout: 30s", 1),
+		wantPaths: []string{"charger.heartbeat_timeout"},
+	}, {
+		name:      "heartbeat timeout equal to the interval",
+		mutate:    rep("heartbeat_timeout: 90s", "heartbeat_timeout: 60s", 1),
+		wantPaths: []string{"charger.heartbeat_timeout"},
+	}, {
+		name:      "zero call timeout",
+		mutate:    rep("call_timeout: 30s", "call_timeout: 0s", 1),
+		wantPaths: []string{"charger.call_timeout"},
+	}, {
 		name:      "unsupported ocpp version",
 		mutate:    rep(`ocpp_version: "1.6"`, `ocpp_version: "1.5"`, 1),
 		wantPaths: []string{"charger.ocpp_version"},
@@ -126,6 +140,11 @@ func TestInvalidConfigsNameTheOffendingField(t *testing.T) {
 	}, {
 		name:      "bind without a port",
 		mutate:    rep("ocpp_bind: 0.0.0.0:9000", "ocpp_bind: 0.0.0.0", 1),
+		wantPaths: []string{"server.ocpp_bind"},
+	}, {
+		name: "bind on port zero",
+		// Port 0 picks a random port, which no charger can be pointed at.
+		mutate:    rep("ocpp_bind: 0.0.0.0:9000", "ocpp_bind: 0.0.0.0:0", 1),
 		wantPaths: []string{"server.ocpp_bind"},
 	}, {
 		name:      "id tag longer than 20 characters",
@@ -298,7 +317,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 		want any
 	}{
 		{"ocpp_version", cfg.Charger.OCPPVersion, config.DefaultOCPPVersion},
+		{"heartbeat_interval", cfg.Charger.HeartbeatInterval.Duration(), config.DefaultHeartbeatInterval},
 		{"heartbeat_timeout", cfg.Charger.HeartbeatTimeout.Duration(), config.DefaultHeartbeatTimeout},
+		{"call_timeout", cfg.Charger.CallTimeout.Duration(), config.DefaultCallTimeout},
 		{"ocpp_bind", cfg.Server.OCPPBind, config.DefaultOCPPBind},
 		{"ocpi_bind", cfg.Server.OCPIBind, config.DefaultOCPIBind},
 		{"push.debounce", cfg.OCPI.Push.Debounce.Duration(), config.DefaultPushDebounce},

@@ -73,11 +73,30 @@ func (c *Config) validateCharger(v *validator) {
 			c.Charger.OCPPVersion, strings.Join(sorted(ocppVersions), ", "))
 	}
 
-	if err := c.Charger.HeartbeatTimeout.parse(); err != nil {
-		v.add("charger.heartbeat_timeout", "%q is not a duration; want e.g. \"90s\"", c.Charger.HeartbeatTimeout.raw)
-	} else if c.Charger.HeartbeatTimeout.dur <= 0 {
-		v.add("charger.heartbeat_timeout", "must be greater than zero, got %s", c.Charger.HeartbeatTimeout.raw)
+	intervalOK := positiveDuration(v, "charger.heartbeat_interval", &c.Charger.HeartbeatInterval)
+	timeoutOK := positiveDuration(v, "charger.heartbeat_timeout", &c.Charger.HeartbeatTimeout)
+	positiveDuration(v, "charger.call_timeout", &c.Charger.CallTimeout)
+
+	// A timeout at or below the interval we ask the station to keep guarantees
+	// it will be marked offline between two perfectly punctual heartbeats.
+	if intervalOK && timeoutOK && c.Charger.HeartbeatTimeout.dur <= c.Charger.HeartbeatInterval.dur {
+		v.add("charger.heartbeat_timeout", "must be greater than charger.heartbeat_interval (%s), got %s",
+			c.Charger.HeartbeatInterval, c.Charger.HeartbeatTimeout)
 	}
+}
+
+// positiveDuration parses a duration field and requires it to be above zero,
+// reporting problems against the field's own path.
+func positiveDuration(v *validator, path string, d *Duration) bool {
+	if err := d.parse(); err != nil {
+		v.add(path, "%q is not a duration; want e.g. \"90s\"", d.raw)
+		return false
+	}
+	if d.dur <= 0 {
+		v.add(path, "must be greater than zero, got %s", d.raw)
+		return false
+	}
+	return true
 }
 
 func (c *Config) validateServer(v *validator) {
@@ -104,8 +123,15 @@ func validateBind(v *validator, path, bind string) (host string, port int, ok bo
 		return "", 0, false
 	}
 	port, err = strconv.Atoi(portStr)
-	if err != nil || port < 1 || port > 65535 {
+	if err != nil || port < 0 || port > 65535 {
 		v.add(path, "%q does not have a valid port (1-65535)", bind)
+		return "", 0, false
+	}
+	if port == 0 {
+		// Port 0 binds to whatever is free, which nobody can be configured to
+		// dial. For a listener a charger and a backend must find, that is a
+		// mistake rather than a feature.
+		v.add(path, "port 0 picks a random port that nothing can be pointed at; choose a fixed port")
 		return "", 0, false
 	}
 	// An empty host means "all interfaces" and is fine.

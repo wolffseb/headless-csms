@@ -43,6 +43,7 @@ func NewRootCommand() *cobra.Command {
 		"path to the configuration file")
 
 	root.AddCommand(
+		newRunCommand(opts),
 		newVersionCommand(),
 		newConfigCommand(opts),
 	)

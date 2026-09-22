@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/wolffseb/cli-cpms/internal/cli"
+	"github.com/wolffseb/cli-cpms/internal/config"
 )
 
 // run executes the command tree with the given args and returns what it wrote
@@ -28,22 +30,40 @@ func run(t *testing.T, args ...string) (stdout, stderr string, err error) {
 func TestConfigValidateAcceptsExampleConfig(t *testing.T) {
 	t.Parallel()
 
-	stdout, stderr, err := run(t, "config", "validate", "-c", "../../config.example.yaml")
+	const path = "../../config.example.yaml"
+
+	stdout, stderr, err := run(t, "config", "validate", "-c", path)
 	if err != nil {
 		t.Fatalf("expected success, got %v (stderr: %s)", err, stderr)
 	}
 
-	// The summary has to state the things an operator must get right for the
-	// station and the counterparty to reach us.
+	// Expectations are derived from the example rather than copied out of it.
+	// What this test is about is the summary's job — that nothing an operator
+	// needs in order to wire up the station and the counterparty silently drops
+	// out of the output — not the particular party id or address that happens
+	// to be in the file today.
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("loading %s: %v", path, err)
+	}
+
 	wants := []string{
 		"is valid",
-		"ALP-HYC-001",
-		"ws://<this-host>:9000/ocpp/ALP-HYC-001", // the station's CSMS URL
-		"DE*FRY",
-		"http://192.168.1.10:8080/ocpi",
-		"2 EVSEs",
-		"DE*FRY*E001*1",
+		cfg.Charger.ID,
+		cfg.OCPI.CountryCode + "*" + cfg.OCPI.PartyID,
+		cfg.OCPI.PublicBaseURL,
+		// Prefix only: the summary pluralises, so a one-EVSE example would
+		// render "1 EVSE" and an exact match would fail for no good reason.
+		strconv.Itoa(len(cfg.Location.EVSEs)) + " EVSE",
+		// The one literal worth keeping: substituting a placeholder for a
+		// wildcard bind is summary logic, not config content, and this is the
+		// line an operator copies into the station.
+		"ws://<this-host>:9000/ocpp/" + cfg.Charger.ID,
 	}
+	for _, evse := range cfg.Location.EVSEs {
+		wants = append(wants, evse.UID, evse.EVSEID)
+	}
+
 	for _, want := range wants {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("summary does not mention %q\n--- summary ---\n%s", want, stdout)
