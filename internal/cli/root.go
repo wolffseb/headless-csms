@@ -44,6 +44,7 @@ func NewRootCommand() *cobra.Command {
 
 	root.AddCommand(
 		newRunCommand(opts),
+		newSimulateCommand(opts),
 		newVersionCommand(),
 		newConfigCommand(opts),
 	)

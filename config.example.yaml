@@ -59,9 +59,12 @@ location:
   city: München
   postal_code: "80339"
   country: DEU
+  # Served verbatim over OCPI, so a roaming partner maps the station here.
+  # These are approximate for the address above (Schwanthalerhöhe); replace
+  # them with the station's actual position.
   coordinates:
-    latitude: "52.520008"
-    longitude: "13.404954"
+    latitude: "48.134000"
+    longitude: "11.539000"
   evses:
     - uid: ALP-HYC-001-1
       evse_id: DE*FYT*E001*1
