@@ -1,4 +1,4 @@
-# cli-cpms
+# headless-csms
 
 A terminal charge point management system for a single OCPP charging station.
 
