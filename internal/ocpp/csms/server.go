@@ -36,6 +36,10 @@ type Options struct {
 	// Handlers maps each supported OCPP version to its adapter. The versions
 	// present here are exactly the subprotocols offered during negotiation.
 	Handlers map[ocpp.Version]ocpp.Handler
+	// NewChargePoint wraps a live connection in the command interface for its
+	// negotiated version. It is supplied by the caller so that this package
+	// never learns what a version adapter is; Command fails without it.
+	NewChargePoint func(*ocppj.Conn) (ocpp.ChargePoint, error)
 	// Accept decides whether a charge point identity may connect. A nil Accept
 	// accepts every identity.
 	Accept func(chargePointID string) bool
@@ -165,6 +169,23 @@ func (s *Server) ChargePoint(id string) (*ocppj.Conn, bool) {
 
 	c, ok := s.conns[id]
 	return c, ok
+}
+
+// Command returns the command interface for a connected charge point. It
+// fails with ocpp.ErrNotConnected when the identity is not connected.
+//
+// The returned value stays bound to the connection that was live when it was
+// asked for. If that connection drops, its calls fail with an error that also
+// matches ocpp.ErrNotConnected; ask again after the station reconnects.
+func (s *Server) Command(id string) (ocpp.ChargePoint, error) {
+	conn, ok := s.ChargePoint(id)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ocpp.ErrNotConnected, id)
+	}
+	if s.opts.NewChargePoint == nil {
+		return nil, fmt.Errorf("csms: no NewChargePoint configured")
+	}
+	return s.opts.NewChargePoint(conn)
 }
 
 // Connected lists the identities currently connected.

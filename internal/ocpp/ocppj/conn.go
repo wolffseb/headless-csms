@@ -40,8 +40,34 @@ const (
 	callBuffer = 64
 )
 
-// ErrConnClosed is returned by Call when the connection is gone.
-var ErrConnClosed = errors.New("ocpp: connection closed")
+// ErrConnClosed is returned by Call when the connection is gone. It matches
+// ocpp.ErrNotConnected under errors.Is, so callers above the transport need
+// not know this package exists.
+var ErrConnClosed error = connClosedError{}
+
+type connClosedError struct{}
+
+// Error keeps the message ErrConnClosed has always had.
+func (connClosedError) Error() string { return "ocpp: connection closed" }
+
+// Is makes errors.Is(err, ocpp.ErrNotConnected) hold.
+func (connClosedError) Is(target error) bool { return target == ocpp.ErrNotConnected }
+
+// timeoutError is returned by Call when the peer does not answer in time. It
+// matches ocpp.ErrTimeout under errors.Is and names the action and the
+// timeout, which is what an operator needs to read in a log line.
+type timeoutError struct {
+	action string
+	after  time.Duration
+}
+
+// Error names the action and the timeout, as it did before it was typed.
+func (e timeoutError) Error() string {
+	return fmt.Sprintf("%s: no answer within %s", e.action, e.after)
+}
+
+// Is makes errors.Is(err, ocpp.ErrTimeout) hold.
+func (timeoutError) Is(target error) bool { return target == ocpp.ErrTimeout }
 
 // callResult is the outcome of an outbound CALL.
 type callResult struct {
@@ -164,7 +190,7 @@ func (c *Conn) Call(ctx context.Context, action string, payload any) (json.RawMe
 		}
 		return res.payload, nil
 	case <-timer.C:
-		return nil, fmt.Errorf("%s: no answer within %s", action, c.callTimeout)
+		return nil, timeoutError{action: action, after: c.callTimeout}
 	case <-c.done:
 		return nil, ErrConnClosed
 	case <-ctx.Done():

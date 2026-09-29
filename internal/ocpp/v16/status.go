@@ -1,6 +1,9 @@
 package v16
 
-import "github.com/wolffseb/cli-cpms/internal/core"
+import (
+	"github.com/wolffseb/cli-cpms/internal/core"
+	"github.com/wolffseb/cli-cpms/internal/ocpp"
+)
 
 // The OCPP 1.6 ChargePointStatus values.
 const (
@@ -46,4 +49,53 @@ func MapStatus(s string) core.EVSEStatus {
 		return mapped
 	}
 	return core.StatusUnknown
+}
+
+// commandStatusMap lists, per action, every status the 1.6 spec defines for
+// its .conf. A value is only mapped for the action that defines it: "Unlocked"
+// in answer to ReserveNow is as unknown as a string no action uses.
+var commandStatusMap = map[string]map[string]ocpp.CommandStatus{
+	// ReservationStatus.
+	ActionReserveNow: {
+		ReservationAccepted:    ocpp.CommandAccepted,
+		ReservationFaulted:     ocpp.CommandFaulted,
+		ReservationOccupied:    ocpp.CommandOccupied,
+		ReservationRejected:    ocpp.CommandRejected,
+		ReservationUnavailable: ocpp.CommandUnavailable,
+	},
+	// CancelReservationStatus.
+	ActionCancelReservation: {
+		CmdAccepted: ocpp.CommandAccepted,
+		CmdRejected: ocpp.CommandRejected,
+	},
+	// RemoteStartStopStatus, for both directions.
+	ActionRemoteStartTransaction: {
+		CmdAccepted: ocpp.CommandAccepted,
+		CmdRejected: ocpp.CommandRejected,
+	},
+	ActionRemoteStopTransaction: {
+		CmdAccepted: ocpp.CommandAccepted,
+		CmdRejected: ocpp.CommandRejected,
+	},
+	// UnlockStatus.
+	ActionUnlockConnector: {
+		UnlockUnlocked:     ocpp.CommandUnlocked,
+		UnlockFailed:       ocpp.CommandUnlockFailed,
+		UnlockNotSupported: ocpp.CommandNotSupported,
+	},
+	// TriggerMessageStatus.
+	ActionTriggerMessage: {
+		TriggerAccepted:       ocpp.CommandAccepted,
+		TriggerRejected:       ocpp.CommandRejected,
+		TriggerNotImplemented: ocpp.CommandNotImplemented,
+	},
+}
+
+// MapCommandStatus converts the status in an action's .conf. Anything the
+// spec does not define for that action is CommandUnknown, never a guess.
+func MapCommandStatus(action, status string) ocpp.CommandStatus {
+	if mapped, ok := commandStatusMap[action][status]; ok {
+		return mapped
+	}
+	return ocpp.CommandUnknown
 }

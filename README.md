@@ -137,10 +137,10 @@ be pointed at a randomly chosen port).
 
 ```
 internal/core        domain state and the event bus — the single source of truth
-internal/ocpp        version-agnostic RPC errors, versions, the Handler interface
+internal/ocpp        version-agnostic RPC errors, versions, the Handler and ChargePoint interfaces
 internal/ocpp/ocppj  the OCPP-J RPC layer: framing, correlation, connection goroutines
 internal/ocpp/csms   the WebSocket server a charge point dials into
-internal/ocpp/v16    OCPP 1.6-J payloads and the adapter that writes to core
+internal/ocpp/v16    OCPP 1.6-J payloads, the adapter that writes to core, and the command adapter
 internal/simulator   a charge point: dials a CSMS and behaves like a station
 internal/ocpptest    a raw OCPP-J client used by the tests
 ```
@@ -148,6 +148,16 @@ internal/ocpptest    a raw OCPP-J client used by the tests
 `csms` never learns a message name: it routes `(charge point, action, raw payload)` to the
 `ocpp.Handler` chosen by the negotiated WebSocket subprotocol. That is what lets OCPP 2.0.1
 arrive later as a sibling of `v16` rather than as a rewrite.
+
+Commands go the other way through `ocpp.ChargePoint`, which `csms.Server.Command(id)` hands
+out: `ReserveNow`, `CancelReservation`, `RemoteStart`, `RemoteStop`, `UnlockConnector`,
+`TriggerStatus` and `Capabilities`. Callers address EVSEs by their OCPI `uid` from config and
+get back a version-agnostic status (`Accepted`, `Occupied`, `UnlockFailed`, ...) alongside the
+station's literal answer. A station saying no is a result, not an error; errors are for the
+call itself failing (`ocpp.ErrTimeout`, `ocpp.ErrNotConnected`, `ocpp.ErrUnknownEVSE`, or the
+station's CALLERROR as `*ocpp.RPCError`). The exact 1.6 payloads are pinned by golden files in
+`internal/ocpp/v16/testdata/golden`; regenerate them deliberately with
+`go test ./internal/ocpp/v16 -run Golden -update`.
 
 `ocppj` is direction-agnostic on purpose. A CSMS connection and a charge point connection
 differ only in who performs the handshake, so both ends share one implementation of the
@@ -174,7 +184,7 @@ Built in tracked steps; each lands as its own PR.
 | 1 | Project skeleton, config loader, CI | done |
 | 2 | OCPP 1.6-J CSMS: WebSocket server and message routing | done |
 | 3 | Built-in charge point simulator | done |
-| 4 | Outbound OCPP commands, reservation lifecycle, one-shot CLI | next |
+| 4 | Outbound OCPP commands, reservation lifecycle, one-shot CLI | in progress |
 | 5 | OCPI foundation: versions + credentials handshake | |
 | 6 | OCPI Locations module (sender) | |
 | 7 | PATCH location on status change | |

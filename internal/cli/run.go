@@ -16,6 +16,7 @@ import (
 	"github.com/wolffseb/cli-cpms/internal/core"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
 	"github.com/wolffseb/cli-cpms/internal/ocpp/csms"
+	"github.com/wolffseb/cli-cpms/internal/ocpp/ocppj"
 	"github.com/wolffseb/cli-cpms/internal/ocpp/v16"
 )
 
@@ -65,6 +66,14 @@ func run(cmd *cobra.Command, cfg *config.Config, logger *slog.Logger) error {
 		Bind:     cfg.Server.OCPPBind,
 		Core:     svc,
 		Handlers: map[ocpp.Version]ocpp.Handler{ocpp.Version16: handler},
+		NewChargePoint: func(conn *ocppj.Conn) (ocpp.ChargePoint, error) {
+			switch conn.Version() {
+			case ocpp.Version16:
+				return v16.NewChargePoint(conn, cfg), nil
+			default:
+				return nil, fmt.Errorf("no command adapter for OCPP %s", conn.Version())
+			}
+		},
 		// Exactly one station is configured, so anything else dialling in is a
 		// misconfiguration worth rejecting loudly.
 		Accept:      func(id string) bool { return id == cfg.Charger.ID },
