@@ -60,6 +60,9 @@ func (f fakeStation) TriggerStatus(context.Context, string) (ocpp.Result, error)
 func (f fakeStation) Capabilities(context.Context) (ocpp.Capabilities, error) {
 	return ocpp.Capabilities{}, nil
 }
+func (f fakeStation) Probe(context.Context) (ocpp.ProbeReport, error) {
+	return ocpp.ProbeReport{Version: ocpp.Version16}, f.err
+}
 
 type commands struct{ station ocpp.ChargePoint }
 
@@ -123,6 +126,8 @@ func TestErrorCodes(t *testing.T) {
 		{"nothing to stop", socket.OpStop, fakeStation{}, socket.CodeRefused},
 		{"nothing to cancel", socket.OpCancel, fakeStation{}, socket.CodeRefused},
 		{"call error", socket.OpReserve, fakeStation{err: ocpp.Errorf(ocpp.ErrInternalError, "boom")}, socket.CodeInternal},
+		{"probe timeout", socket.OpProbe, fakeStation{err: fmt.Errorf("GetConfiguration: %w", ocpp.ErrTimeout)}, socket.CodeTimeout},
+		{"probe not connected", socket.OpProbe, nil, socket.CodeNotConnected},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

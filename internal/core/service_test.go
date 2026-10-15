@@ -190,11 +190,19 @@ func TestDisconnectMakesEverythingUnknown(t *testing.T) {
 	if got := statusOf(t, s, "EVSE-1"); got != core.StatusUnknown {
 		t.Errorf("EVSE-1 = %s, want UNKNOWN after disconnect", got)
 	}
+	cp, _ := s.Snapshot().ChargePoint(testCP)
+	if d := cp.LastDisconnect; d.Reason != "heartbeat timeout" || !d.At.Equal(events[0].At) {
+		t.Errorf("last disconnect = %+v, want the heartbeat timeout at %s", d, events[0].At)
+	}
 
-	// Disconnecting twice must not emit a second round.
+	// Disconnecting twice must not emit a second round, or overwrite why the
+	// station went offline.
 	s.Disconnected(testCP, "again")
 	if got := collect(t, ch); len(got) != 0 {
 		t.Errorf("second disconnect emitted %v, want nothing", kinds(got))
+	}
+	if cp, _ := s.Snapshot().ChargePoint(testCP); cp.LastDisconnect.Reason != "heartbeat timeout" {
+		t.Errorf("last disconnect reason = %q after a second disconnect", cp.LastDisconnect.Reason)
 	}
 }
 

@@ -33,6 +33,7 @@ const (
 	OpStop    Op = "stop"
 	OpUnlock  Op = "unlock"
 	OpStatus  Op = "status"
+	OpProbe   Op = "probe"
 )
 
 // Request is one line sent to the socket. Each connection carries exactly
@@ -123,6 +124,15 @@ type ChargePointStatus struct {
 	// StationStatus is what the station reported for itself (OCPP 1.6
 	// connector 0).
 	StationStatus string `json:"station_status"`
+	// LastDisconnect is nil unless the station has disconnected since
+	// `cpms run` started.
+	LastDisconnect *DisconnectStatus `json:"last_disconnect"`
+}
+
+// DisconnectStatus is when and why the station last went offline.
+type DisconnectStatus struct {
+	At     time.Time `json:"at"`
+	Reason string    `json:"reason"`
 }
 
 // EVSEStatus describes one EVSE.
@@ -148,4 +158,61 @@ type TransactionStatus struct {
 	ID        string    `json:"id"`
 	IDTag     string    `json:"id_tag"`
 	StartedAt time.Time `json:"started_at"`
+}
+
+// ProbeResult is the result of OpProbe: what the station says about itself.
+// Its JSON is part of what `cpms probe --json` prints, so like Status its
+// field names are a public interface.
+type ProbeResult struct {
+	ChargePoint ProbeChargePoint `json:"charge_point"`
+	// Features are in the station's own terms, such as 1.6 feature profiles.
+	Features []ProbeFeature `json:"features"`
+	// Capabilities are what cpms asks of a station, whatever the version.
+	Capabilities []ProbeCapability `json:"capabilities"`
+	Settings     []ProbeSetting    `json:"settings"`
+	// Connectors and HeartbeatIntervalSeconds are null when the station did
+	// not report them, or reported something unreadable.
+	Connectors               *int          `json:"connectors"`
+	HeartbeatIntervalSeconds *int          `json:"heartbeat_interval_s"`
+	Raw                      []ProbeRawKey `json:"raw"`
+}
+
+// ProbeChargePoint identifies the probed station.
+type ProbeChargePoint struct {
+	ID           string `json:"id"`
+	OCPPVersion  string `json:"ocpp_version"`
+	Vendor       string `json:"vendor"`
+	Model        string `json:"model"`
+	SerialNumber string `json:"serial_number"`
+	Firmware     string `json:"firmware"`
+}
+
+// ProbeFeature is one feature as the station names it. Support is "yes",
+// "no" or "unknown".
+type ProbeFeature struct {
+	Name    string   `json:"name"`
+	Support string   `json:"support"`
+	Grants  []string `json:"grants"`
+}
+
+// ProbeCapability is whether the station supports one capability.
+type ProbeCapability struct {
+	Name    string `json:"name"`
+	Support string `json:"support"`
+}
+
+// ProbeSetting is one behaviour-relevant setting. Value is empty when
+// Reported is false.
+type ProbeSetting struct {
+	Name     string `json:"name"`
+	Value    string `json:"value"`
+	Reported bool   `json:"reported"`
+	Meaning  string `json:"meaning"`
+}
+
+// ProbeRawKey is one configuration entry exactly as the station reported it.
+type ProbeRawKey struct {
+	Key      string `json:"key"`
+	Value    string `json:"value"`
+	Readonly bool   `json:"readonly"`
 }

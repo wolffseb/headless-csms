@@ -239,6 +239,42 @@ func TestChargePointAgainstSimulator(t *testing.T) {
 			t.Errorf("caps = %+v, want Reservation false", caps)
 		}
 	})
+
+	t.Run("probe", func(t *testing.T) {
+		t.Parallel()
+
+		r := newSimRig(t, 2*time.Second)
+		report, err := r.cp.Probe(ctx3s(t))
+		if err != nil {
+			t.Fatalf("Probe: %v", err)
+		}
+		for _, c := range ocpp.AllCapabilities() {
+			if got := report.Support(c); got != ocpp.SupportYes {
+				t.Errorf("%s = %s, want yes", c, got)
+			}
+		}
+		if report.Connectors == nil || *report.Connectors != 2 {
+			t.Errorf("connectors = %v, want the simulator's 2", report.Connectors)
+		}
+		for _, s := range report.Settings {
+			if !s.Reported {
+				t.Errorf("the simulator does not report %s", s.Name)
+			}
+		}
+	})
+
+	t.Run("probe under reject-reserve", func(t *testing.T) {
+		t.Parallel()
+
+		r := newSimRig(t, 2*time.Second, func(o *simulator.Options) { o.Scenario = simulator.ScenarioRejectReserve })
+		report, err := r.cp.Probe(ctx3s(t))
+		if err != nil {
+			t.Fatalf("Probe: %v", err)
+		}
+		if got := report.Support(ocpp.CapReservation); got != ocpp.SupportNo {
+			t.Errorf("reservation = %s, want no", got)
+		}
+	})
 }
 
 func TestCommandForAnAbsentChargePoint(t *testing.T) {

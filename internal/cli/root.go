@@ -61,7 +61,7 @@ func NewRootCommand() *cobra.Command {
 	root.PersistentFlags().StringVar(&opts.statePath, "state", "",
 		"path to the state file (default: "+DefaultStateFile+" next to the config file)")
 	root.PersistentFlags().StringVar(&opts.socketPath, "socket", "",
-		"path to the control socket of `cpms run` (default: "+DefaultSocketFile+" next to the state file)")
+		"path to the control socket of cpms run (default: "+DefaultSocketFile+" next to the state file)")
 
 	root.AddCommand(
 		newRunCommand(opts),
@@ -70,5 +70,6 @@ func NewRootCommand() *cobra.Command {
 		newConfigCommand(opts),
 	)
 	root.AddCommand(newStationCommands(opts)...)
+	root.AddCommand(newProbeCommand(opts))
 	return root
 }

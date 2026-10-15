@@ -72,6 +72,9 @@ type chargePointState struct {
 	online   bool
 	boot     BootInfo
 	lastSeen time.Time
+	// lastDisconnect is zero until the station has disconnected while this
+	// process was running.
+	lastDisconnect Disconnect
 
 	// station is the status reported for OCPP connector 0, meaning the
 	// station as a whole.
@@ -322,6 +325,7 @@ func (s *Service) Disconnected(cpID, reason string) {
 		return
 	}
 	cp.online = false
+	cp.lastDisconnect = Disconnect{At: at, Reason: reason}
 	events := append([]Event{{
 		Kind: EventChargePointDisconnected, At: at, ChargePointID: cpID, Detail: reason,
 	}}, cp.recompute(at)...)
@@ -438,6 +442,12 @@ func (s *Service) IsOnline(cpID string) bool {
 	return ok && cp.online
 }
 
+// Disconnect is when and why a charge point went offline.
+type Disconnect struct {
+	At     time.Time
+	Reason string
+}
+
 // EVSESnapshot is one EVSE as seen by a reader.
 type EVSESnapshot struct {
 	UID         string
@@ -448,12 +458,15 @@ type EVSESnapshot struct {
 
 // ChargePointSnapshot is one charge point as seen by a reader.
 type ChargePointSnapshot struct {
-	ID            string
-	Online        bool
-	Boot          BootInfo
-	LastSeen      time.Time
-	StationStatus EVSEStatus
-	EVSEs         []EVSESnapshot
+	ID       string
+	Online   bool
+	Boot     BootInfo
+	LastSeen time.Time
+	// LastDisconnect is the most recent disconnect, or zero if there has been
+	// none since this process started.
+	LastDisconnect Disconnect
+	StationStatus  EVSEStatus
+	EVSEs          []EVSESnapshot
 	// Transactions holds the active ones and those stopped since this process
 	// started, in the order they began. Only active ones survive a restart.
 	Transactions []Transaction
@@ -485,13 +498,14 @@ func (s *Service) Snapshot() Snapshot {
 	out := Snapshot{ChargePoints: make([]ChargePointSnapshot, 0, len(s.cps))}
 	for _, cp := range s.cps {
 		snap := ChargePointSnapshot{
-			ID:            cp.id,
-			Online:        cp.online,
-			Boot:          cp.boot,
-			LastSeen:      cp.lastSeen,
-			StationStatus: cp.station,
-			EVSEs:         make([]EVSESnapshot, 0, len(cp.order)),
-			Transactions:  make([]Transaction, 0, len(cp.transactions)),
+			ID:             cp.id,
+			Online:         cp.online,
+			Boot:           cp.boot,
+			LastSeen:       cp.lastSeen,
+			LastDisconnect: cp.lastDisconnect,
+			StationStatus:  cp.station,
+			EVSEs:          make([]EVSESnapshot, 0, len(cp.order)),
+			Transactions:   make([]Transaction, 0, len(cp.transactions)),
 		}
 		for _, uid := range cp.order {
 			snap.EVSEs = append(snap.EVSEs, EVSESnapshot{
