@@ -116,6 +116,73 @@ config.yaml is not valid:
 3 problems found.
 ```
 
+## Driving the station
+
+While `cpms run` is serving, one-shot commands in another terminal act on the station
+through it. With the simulator from the previous section in a second terminal, a third one
+gives you the whole flow this tool exists for: reserve, redeem with the office tag, stop.
+
+```
+$ cpms reserve --evse ALP-HYC-001-1
+ALP-HYC-001-1 reserved for 04A1B2C3D4 until 14:43:30 (reservation 1)
+
+$ cpms status
+ALP-HYC-001  online  Alpitronic HYC300 fw simulator  last seen 14:28:30
+
+EVSE           STATUS     RESERVATION                   TRANSACTION
+ALP-HYC-001-1  RESERVED   #1 04A1B2C3D4 until 14:43:30  -
+ALP-HYC-001-2  AVAILABLE  -                             -
+
+$ cpms start --evse ALP-HYC-001-1
+ALP-HYC-001-1 remote start accepted
+
+$ cpms status
+...
+ALP-HYC-001-1  CHARGING   -            1 04A1B2C3D4 since 14:28:32
+
+$ cpms stop --evse ALP-HYC-001-1
+ALP-HYC-001-1 remote stop accepted
+```
+
+| Command | Does |
+|---|---|
+| `cpms reserve [--evse UID] [--tag TAG] [--expires 15m]` | Holds an EVSE for a tag. The tag defaults to `auth.default_id_tag`, the length to 15 minutes. |
+| `cpms cancel [--evse UID]` | Releases the reservation on an EVSE |
+| `cpms start [--evse UID] [--tag TAG]` | Asks the station to start a session. It returns once the station accepts; the session shows up in `status` when the station reports it. |
+| `cpms stop [--evse UID]` | Stops the session running on an EVSE |
+| `cpms unlock [--evse UID]` | Releases the cable lock |
+| `cpms status [--json]` | The station, and per EVSE its status, reservation and session. `--json` is a stable format for scripts. |
+
+`--evse` takes the EVSE `uid` from config, and may be left out when only one EVSE is
+configured. A typo is caught from config before anything is sent, and the error lists the
+valid uids.
+
+**Exit codes** are stable, so scripts can branch on them:
+
+| Code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Usage, config, or unexpected error (including an unknown `--evse`) |
+| 2 | `cpms run` is not reachable |
+| 3 | The charge point is not connected to cpms |
+| 4 | The station rejected the command |
+| 5 | The station is occupied |
+| 6 | The station is faulted or unavailable |
+| 7 | The station did not answer within `charger.call_timeout` |
+| 8 | Unlock failed, or the station does not support the command |
+| 9 | Refused by cpms before sending: already reserved, no reservation to cancel, nothing to stop |
+
+**How it works.** `cpms run` listens on a Unix socket, `cpms.sock` next to the state file by
+default (`--socket` overrides it; use the same value for `run` and the commands). The socket
+is `0600` and removed on shutdown. It also stops a second `cpms run` on the same state: the
+second one finds the first answering and exits with "another cpms is already running". A
+socket left behind by a `cpms run` that was killed is detected and replaced.
+
+Socket paths are limited to 103 bytes, a kernel limit on macOS. If the default path next to
+the state file is longer than that, cpms falls back to a short path in the temp directory
+(`cpms-<hash of the state path>.sock`), which `run` and the commands both derive on their
+own; `cpms run` prints the path it uses. A `--socket` you give explicitly is used as is.
+
 ## Configuration
 
 Everything lives in one YAML file — see [`config.example.yaml`](config.example.yaml),
@@ -152,21 +219,255 @@ Two listener rules worth knowing, both enforced at validation time:
 marked offline between two beats), and neither listener may use port 0 (a charger cannot
 be pointed at a randomly chosen port).
 
-## How it is put together
+## Architecture
+
+### The big picture
+
+```mermaid
+flowchart LR
+    cli["One-shot commands<br/>cpms reserve / start / stop<br/>unlock / status"]
+    fryte["Fryte backend<br/>(OCPI client, planned)"]
+    station["Charging station<br/>(Alpitronic, or<br/>cpms simulate charger)"]
+
+    subgraph run ["cpms run (one process)"]
+        sock["Control socket<br/>control/socket"]
+        ocpi["OCPI server<br/>(planned)"]
+        ctrl["control<br/>the one way to act<br/>on the station"]
+        csms["OCPP server<br/>ocpp/csms + ocpp/v16"]
+        core["core<br/>state + event bus"]
+        store[("state.json")]
+        log["event log"]
+    end
+
+    cli -- "Unix socket" --> sock
+    fryte <-. "OCPI 2.3.0<br/>(commands in, PATCHes out)" .-> ocpi
+    sock --> ctrl
+    ocpi -.-> ctrl
+    ctrl -- "commands" --> csms
+    csms <-- "OCPP 1.6-J over WebSocket<br/>(the station dials in)" --> station
+    ctrl -- "reservations, ids" --> core
+    csms -- "station reports" --> core
+    ocpi -. "subscribes to status changes" .-> core
+    core <--> store
+    core --> log
+```
+
+Three things talk to `cpms run`, and each one has exactly one way in:
+
+- **The station dials us.** In OCPP-J the charge point is the WebSocket client, so `cpms run`
+  is a server and the station's CSMS URL points at it. Nothing in cpms ever dials the station.
+- **One-shot commands go through the control socket.** They cannot talk to the station
+  themselves, because the station's only connection is to `cpms run`. They send one request
+  to the socket and get one answer back, then exit.
+- **Fryte will come in over OCPI** (roadmap steps 5–8). It ends up in the same `control`
+  layer as the terminal, so a reservation from Fryte and one from the terminal are the same
+  thing to the rest of cpms.
+
+### Inside `cpms run`
+
+A few rules hold the design together:
+
+- **`core` is the single source of truth.** It holds every connected station, every EVSE's
+  status, reservations and transactions, and publishes an event for every change. The event
+  log, and later the TUI and the OCPI push, are subscribers. Nothing else keeps charger state.
+- **`control` is the single way to act on the station.** It validates the EVSE, allocates and
+  persists ids, sends the command, interprets the answer, and records the outcome in `core`.
+  The socket, and later OCPI and the TUI, are thin transports in front of it.
+- **Protocol versions stay in their adapters.** `ocpp/csms` routes raw messages by the
+  negotiated subprotocol and never learns a message name. `ocpp/v16` translates between 1.6
+  messages and the version-agnostic `core` and `ocpp.ChargePoint`. OCPP 2.0.1 will be a
+  sibling adapter, not a rewrite.
+- **`config.yaml` is read, `state.json` is written.** Active reservations, active
+  transactions and the id counters survive a restart; nothing else is persisted.
+
+### Packages
 
 ```
-internal/core        domain state and the event bus — the single source of truth
-internal/control     the one place that acts on the station: reserve, cancel, start, stop, unlock
-internal/ocpp        version-agnostic RPC errors, versions, the Handler and ChargePoint interfaces
-internal/ocpp/ocppj  the OCPP-J RPC layer: framing, correlation, connection goroutines
-internal/ocpp/csms   the WebSocket server a charge point dials into
-internal/ocpp/v16    OCPP 1.6-J payloads, the adapter that writes to core, and the command adapter
-internal/simulator   a charge point: dials a CSMS and behaves like a station
-internal/ocpptest    a raw OCPP-J client used by the tests
-internal/state       state.json: the persisted DTOs and the atomic-write store
-internal/statetest   a state store whose writes can be made to fail, for tests
-internal/clocktest   a manually advanced clock, for tests that wait on expiry
+internal/core            domain state and the event bus — the single source of truth
+internal/control         the one place that acts on the station: reserve, cancel, start, stop, unlock
+internal/control/socket  the Unix socket the one-shot commands reach `cpms run` through
+internal/ocpp            version-agnostic RPC errors, versions, the Handler and ChargePoint interfaces
+internal/ocpp/ocppj      the OCPP-J RPC layer: framing, correlation, connection goroutines
+internal/ocpp/csms       the WebSocket server a charge point dials into
+internal/ocpp/v16        OCPP 1.6-J payloads, the adapter that writes to core, and the command adapter
+internal/state           state.json: the persisted DTOs and the atomic-write store
+internal/simulator       a charge point: dials a CSMS and behaves like a station
+internal/cli             the command tree: run, simulate, the one-shot commands, config validate
+internal/ocpptest        a raw OCPP-J client used by the tests
+internal/statetest       a state store whose writes can be made to fail, for tests
+internal/clocktest       a manually advanced clock, for tests that wait on expiry
 ```
+
+### The important sequences
+
+#### Startup, and the station connecting
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Op as Operator
+    participant Run as cpms run
+    participant Core as core
+    participant St as Station
+
+    Op->>Run: cpms run -c config.yaml
+    Run->>Run: load config, open state.json
+    Run->>Run: claim control socket (refuses if another cpms answers)
+    Run->>Core: build from state.json<br/>(reservations re-armed, transactions and counters restored)
+    Run->>Run: listen for OCPP on server.ocpp_bind
+    Note over Run: prints the CSMS URL and the socket path
+
+    St->>Run: WebSocket upgrade GET /ocpp/ALP-HYC-001<br/>Sec-WebSocket-Protocol: ocpp1.6
+    Run->>Core: Connected
+    St->>Run: BootNotification
+    Run->>Core: Booted (vendor, model, firmware)
+    Run-->>St: Accepted, interval = charger.heartbeat_interval
+    St->>Run: StatusNotification per connector
+    Run->>Core: SetConnectorStatus (OCPP status → OCPI status)
+    Core-->>Run: event: EVSE UNKNOWN→AVAILABLE (logged)
+    loop every heartbeat_interval
+        St->>Run: Heartbeat
+    end
+```
+
+The identity is the **last** segment of the URL path, so `/ocpp/<id>`, `/<id>` and longer
+vendor prefixes all work. An identity other than `charger.id` is rejected with HTTP 404.
+
+#### Reserving from the terminal
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CLI as cpms reserve
+    participant Sock as control socket
+    participant Ctl as control
+    participant Core as core
+    participant V16 as ocpp/v16
+    participant St as Station
+
+    CLI->>CLI: check --evse against config (exit 1 if unknown, nothing sent)
+    CLI->>Sock: {"v":1,"op":"reserve","evse":"ALP-HYC-001-1"}
+    Sock->>Ctl: Reserve
+    Ctl->>Core: BeginReservation: allocate id, persist counter, pending
+    Ctl->>V16: ChargePoint.ReserveNow
+    V16->>St: [2,"7","ReserveNow",{connectorId, expiryDate, idTag, reservationId}]
+    St-->>V16: [3,"7",{"status":"Accepted"}]
+    V16-->>Ctl: Result Accepted
+    Ctl->>Core: ActivateReservation: persist, arm expiry timer
+    Core-->>Core: event: reservation created
+    Ctl-->>Sock: reservation id + expiry
+    Sock-->>CLI: {"ok":true,"result":{...}}
+    CLI->>CLI: print, exit 0
+    St->>V16: StatusNotification Reserved
+    V16->>Core: EVSE AVAILABLE→RESERVED
+```
+
+If the station answers anything but `Accepted`, or does not answer within
+`charger.call_timeout`, the pending reservation is ended at once and the CLI exits with the
+matching code (4–7). `core` only shows `RESERVED` when the station reports it; the
+reservation record sits next to the status rather than overwriting it.
+
+#### Redeeming the reservation: start and stop
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CLI as cpms start / stop
+    participant Ctl as control
+    participant Core as core
+    participant V16 as ocpp/v16
+    participant St as Station
+
+    CLI->>Ctl: Start (via socket), tag = auth.default_id_tag
+    Ctl->>Core: allocate remote start id
+    Ctl->>V16: RemoteStart
+    V16->>St: RemoteStartTransaction {connectorId, idTag}
+    St-->>V16: Accepted
+    Ctl-->>CLI: exit 0, "remote start accepted"
+    Note over St: may first send Authorize for the tag,<br/>and may wait for a car to be plugged in
+    St->>V16: StartTransaction {connectorId, idTag, meterStart, reservationId}
+    V16->>Core: next transaction id (persisted)
+    V16->>Core: StartTransaction: consumes the reservation
+    V16-->>St: {transactionId, idTagInfo: Accepted}
+    St->>V16: StatusNotification Charging
+    V16->>Core: EVSE RESERVED→CHARGING
+
+    CLI->>Ctl: Stop (via socket)
+    Ctl->>Core: find the active transaction on the EVSE
+    Ctl->>V16: RemoteStop
+    V16->>St: RemoteStopTransaction {transactionId}
+    St-->>V16: Accepted
+    St->>V16: StopTransaction {transactionId, meterStop, reason}
+    V16->>Core: StopTransaction (persisted)
+    St->>V16: StatusNotification Finishing / Available
+```
+
+A session that starts **without** `reservationId` on the same connector with the same tag
+also consumes the reservation, because some stations leave the field out. A different tag
+leaves the reservation in place.
+
+#### Expiry, and restarting cpms
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Core as core
+    participant Store as state.json
+    participant St as Station
+
+    Note over Core: expiry timer fires at ExpiresAt
+    Core->>Core: end reservation as "expired" (no station message needed)
+    Core->>Store: write active reservations, transactions, counters
+    St->>Core: StatusNotification Available (the station expires its own copy)
+
+    Note over Core,Store: cpms run is restarted
+    Store->>Core: load
+    Core->>Core: drop reservations that expired while down,<br/>re-arm the rest, restore active transactions,<br/>continue the id counters
+```
+
+Ids are never handed out twice, even after a restart: the counters are persisted with every
+allocation, and on load they are also kept ahead of every id still in the file.
+
+#### The station goes silent
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant St as Station
+    participant Conn as ocppj connection
+    participant Core as core
+
+    St->>Conn: last Heartbeat / StatusNotification
+    Note over Conn: pings keep checking the TCP connection,<br/>but only OCPP messages count as a sign of life
+    Conn->>Conn: nothing for charger.heartbeat_timeout
+    Conn->>Core: Disconnected ("heartbeat timeout")
+    Core->>Core: every EVSE → UNKNOWN
+    Note over St,Core: a real station reconnects on its own,<br/>and its next StatusNotifications restore the real statuses
+```
+
+#### Planned: Fryte reserves over OCPI
+
+Roadmap steps 5–8. The OCPI side ends in the same `control.Reserve` as the terminal.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant F as Fryte
+    participant O as OCPI server
+    participant Ctl as control
+    participant St as Station
+
+    F->>O: POST /ocpi/2.3.0/commands/RESERVE_NOW {token, expiry_date, evse_uid, response_url}
+    O-->>F: CommandResponse ACCEPTED (immediately)
+    O->>Ctl: Reserve (same path as the terminal)
+    Ctl->>St: ReserveNow
+    St-->>Ctl: Accepted
+    O->>F: POST response_url: CommandResult ACCEPTED
+    St->>Ctl: StatusNotification Reserved
+    O->>F: PATCH /locations/.../{evse_uid} {status: RESERVED}
+```
+
+### Design notes
 
 `csms` never learns a message name: it routes `(charge point, action, raw payload)` to the
 `ocpp.Handler` chosen by the negotiated WebSocket subprotocol. That is what lets OCPP 2.0.1
@@ -217,7 +518,7 @@ Built in tracked steps; each lands as its own PR.
 | 1 | Project skeleton, config loader, CI | done |
 | 2 | OCPP 1.6-J CSMS: WebSocket server and message routing | done |
 | 3 | Built-in charge point simulator | done |
-| 4 | Outbound OCPP commands, reservation lifecycle, one-shot CLI | in progress |
+| 4 | Outbound OCPP commands, reservation lifecycle, one-shot CLI | in progress: commands done, `cpms probe` next |
 | 5 | OCPI foundation: versions + credentials handshake | |
 | 6 | OCPI Locations module (sender) | |
 | 7 | PATCH location on status change | |

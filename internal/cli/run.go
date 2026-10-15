@@ -14,6 +14,7 @@ import (
 
 	"github.com/wolffseb/cli-cpms/internal/config"
 	"github.com/wolffseb/cli-cpms/internal/control"
+	"github.com/wolffseb/cli-cpms/internal/control/socket"
 	"github.com/wolffseb/cli-cpms/internal/core"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
 	"github.com/wolffseb/cli-cpms/internal/ocpp/csms"
@@ -44,7 +45,8 @@ func newRunCommand(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return run(cmd, cfg, opts.resolvedStatePath(), logger)
+			statePath := opts.resolvedStatePath()
+			return run(cmd, cfg, statePath, opts.resolvedSocketPath(statePath), logger)
 		},
 	}
 
@@ -52,7 +54,7 @@ func newRunCommand(opts *options) *cobra.Command {
 	return cmd
 }
 
-func run(cmd *cobra.Command, cfg *config.Config, statePath string, logger *slog.Logger) error {
+func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, logger *slog.Logger) error {
 	// OCPP 2.0.1 is a separate adapter that does not exist yet. Failing here
 	// beats accepting the config and then rejecting the charger's handshake
 	// with a confusing "no common version".
@@ -68,6 +70,15 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath string, logger *slog.
 		return err
 	}
 	logger.Debug("state file", "path", store.Path())
+
+	// The control socket is also the single-instance guard, so it is claimed
+	// before anything else listens: a second cpms on the same state stops
+	// here with "already running", not later with "address in use".
+	ctl, err := socket.Listen(socket.Options{Path: socketPath, ChargePointID: cfg.Charger.ID, Log: logger})
+	if err != nil {
+		return err
+	}
+	defer ctl.Close()
 
 	// Reservations and transactions from the previous run come back here,
 	// with their expiry timers re-armed.
@@ -101,20 +112,22 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath string, logger *slog.
 		return err
 	}
 
-	// Everything that acts on the station goes through this. The one-shot
-	// commands and the TUI are its callers; until they exist it has none.
-	_ = control.New(control.Options{
+	// Everything that acts on the station goes through control. The one-shot
+	// commands reach it through the socket.
+	ctl.Attach(control.New(control.Options{
 		Core: svc, Commands: server, Config: cfg, Log: logger,
-	})
+	}), svc)
 
 	events, unsubscribe := svc.Subscribe("log")
 	defer unsubscribe()
 
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	ctl.Serve(ctx)
 
 	cmd.Printf("cpms listening for %s on ws://%s/ocpp/%s\n",
 		cfg.Charger.ID, server.Addr(), cfg.Charger.ID)
+	cmd.Printf("control socket %s\n", ctl.Path())
 	cmd.Println("waiting for the charge point to connect; press Ctrl-C to stop")
 
 	done := make(chan struct{})
@@ -127,6 +140,9 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath string, logger *slog.
 
 	<-ctx.Done()
 	cmd.Println("shutting down")
+	// Stop taking commands before the station connection goes away, so no
+	// command is half-sent into a closing socket.
+	ctl.Close()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
