@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -166,8 +167,21 @@ func (h *Handler) startTransaction(cpID string, payload json.RawMessage) (any, *
 		}, nil
 	}
 
-	at := parseTime(req.Timestamp, h.now())
-	txID := h.core.StartTransaction(cpID, req.ConnectorID, req.IDTag, req.MeterStart, at)
+	// 1.6 transaction ids are integers the central system chooses. Core keeps
+	// ids as strings, because 2.0.1's are strings the station chooses, so the
+	// integer only exists on the wire.
+	txID := h.core.NextTransactionID()
+	start := core.TransactionStart{
+		ID:          strconv.Itoa(txID),
+		ConnectorID: req.ConnectorID,
+		IDTag:       req.IDTag,
+		MeterStart:  req.MeterStart,
+		At:          parseTime(req.Timestamp, h.now()),
+	}
+	if req.ReservationID != nil {
+		start.ReservationID = *req.ReservationID
+	}
+	h.core.StartTransaction(cpID, start)
 
 	return StartTransactionConf{
 		TransactionID: txID,
@@ -182,7 +196,7 @@ func (h *Handler) stopTransaction(cpID string, payload json.RawMessage) (any, *o
 	}
 
 	at := parseTime(req.Timestamp, h.now())
-	if _, ok := h.core.StopTransaction(cpID, req.TransactionID, req.MeterStop, req.Reason, at); !ok {
+	if _, ok := h.core.StopTransaction(cpID, strconv.Itoa(req.TransactionID), req.MeterStop, req.Reason, at); !ok {
 		// The spec has no way to say "no such transaction" here, and refusing
 		// the message would make the charger retry forever. Log and accept.
 		h.log.Warn("stop for unknown transaction",

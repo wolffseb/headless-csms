@@ -21,6 +21,8 @@ const (
 	EventTransactionStarted      EventKind = "transaction_started"
 	EventTransactionStopped      EventKind = "transaction_stopped"
 	EventMeterValues             EventKind = "meter_values"
+	EventReservationCreated      EventKind = "reservation_created"
+	EventReservationEnded        EventKind = "reservation_ended"
 )
 
 // Event is one thing that happened, in a shape a log line, a TUI row and the
@@ -42,11 +44,14 @@ type Event struct {
 	ErrorCode string
 
 	// TransactionID is set for transaction events.
-	TransactionID int
+	TransactionID string
+	// ReservationID is set for reservation events.
+	ReservationID int
 	// IDTag is the RFID tag involved, when there is one.
 	IDTag string
 
-	// Detail is a short human-readable extra, e.g. a disconnect reason.
+	// Detail is a short extra: a disconnect reason, why a reservation ended,
+	// or, on EventReservationCreated, its expiry in RFC 3339.
 	Detail string
 }
 
@@ -74,10 +79,15 @@ func (e Event) String() string {
 	case EventHeartbeat:
 		return e.ChargePointID + " heartbeat"
 	case EventTransactionStarted:
-		return fmt.Sprintf("%s transaction %d started on %s (tag %s)",
+		return fmt.Sprintf("%s transaction %s started on %s (tag %s)",
 			e.ChargePointID, e.TransactionID, e.EVSEUID, e.IDTag)
 	case EventTransactionStopped:
-		return fmt.Sprintf("%s transaction %d stopped", e.ChargePointID, e.TransactionID)
+		return fmt.Sprintf("%s transaction %s stopped", e.ChargePointID, e.TransactionID)
+	case EventReservationCreated:
+		return fmt.Sprintf("%s reserved for tag %s until %s (reservation %d)",
+			e.EVSEUID, e.IDTag, e.Detail, e.ReservationID)
+	case EventReservationEnded:
+		return fmt.Sprintf("%s reservation %d ended: %s", e.EVSEUID, e.ReservationID, e.Detail)
 	case EventMeterValues:
 		return fmt.Sprintf("%s meter values: %s", e.EVSEUID, e.Detail)
 	default:

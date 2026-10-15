@@ -14,9 +14,14 @@ package state
 
 import "time"
 
-// Version is the schema version this build reads and writes. Adding an
-// optional field does not bump it; removing a field or changing its meaning
-// does.
+// Version is the schema version this build reads and writes, and the only one
+// it accepts.
+//
+// Every schema change bumps it, adding an optional field included: an older
+// cpms that read a newer file would silently drop the fields it does not know
+// on its next write, and refusing the file is better than losing data. Each
+// bump ships with a migration from the previous version, so an upgraded cpms
+// still reads the file the old one wrote.
 const Version = 1
 
 // State is the whole of state.json.

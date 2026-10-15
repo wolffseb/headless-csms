@@ -124,7 +124,7 @@ which is commented field by field and is itself checked by the test suite.
 Two files, one rule: **`config.yaml` is read-only to the tool.** It holds what you decide
 (the charger, the static location data, and the two OCPI tokens that are ours to choose).
 `state.json` holds what the tool learns at runtime (the counterparty's token and endpoints,
-active reservations, last known status) and is the only file cpms writes.
+active reservations and transactions, and the id counters) and is the only file cpms writes.
 
 `state.json` sits next to the config file by default, wherever cpms is started from;
 `--state <path>` puts it elsewhere, and `cpms config validate` prints which file is in use.
@@ -133,6 +133,16 @@ leaves no trace. Writes are atomic (temp file, fsync, rename) and the file is `0
 holds the counterparty's bearer token. It is indented JSON, so `cat` works. A file cpms cannot
 parse, or one written by a newer cpms, stops `cpms run` at startup with the file named, and is
 never overwritten: move it aside to start from empty state.
+
+What survives a restart: **active** reservations (with their expiry timers re-armed; one that
+expired while cpms was down is dropped), **active** transactions (so the station can still stop
+a session that began before the restart), and the counters behind reservation, transaction and
+remote-start ids, which are never handed out twice. Reservations still waiting for the
+station's answer, and finished sessions, are deliberately not kept: `state.json` is not a
+history.
+
+Any change to its schema bumps the `version` field. A cpms only reads its own version, so an
+older build refuses a newer file instead of silently dropping fields it does not know.
 
 That split is why `ocpi.token_c` is a fixed value in config rather than being generated
 during the OCPI handshake as implementations usually do.
@@ -146,6 +156,7 @@ be pointed at a randomly chosen port).
 
 ```
 internal/core        domain state and the event bus — the single source of truth
+internal/control     the one place that acts on the station: reserve, cancel, start, stop, unlock
 internal/ocpp        version-agnostic RPC errors, versions, the Handler and ChargePoint interfaces
 internal/ocpp/ocppj  the OCPP-J RPC layer: framing, correlation, connection goroutines
 internal/ocpp/csms   the WebSocket server a charge point dials into
@@ -153,6 +164,8 @@ internal/ocpp/v16    OCPP 1.6-J payloads, the adapter that writes to core, and t
 internal/simulator   a charge point: dials a CSMS and behaves like a station
 internal/ocpptest    a raw OCPP-J client used by the tests
 internal/state       state.json: the persisted DTOs and the atomic-write store
+internal/statetest   a state store whose writes can be made to fail, for tests
+internal/clocktest   a manually advanced clock, for tests that wait on expiry
 ```
 
 `csms` never learns a message name: it routes `(charge point, action, raw payload)` to the
@@ -168,6 +181,16 @@ call itself failing (`ocpp.ErrTimeout`, `ocpp.ErrNotConnected`, `ocpp.ErrUnknown
 station's CALLERROR as `*ocpp.RPCError`). The exact 1.6 payloads are pinned by golden files in
 `internal/ocpp/v16/testdata/golden`; regenerate them deliberately with
 `go test ./internal/ocpp/v16 -run Golden -update`.
+
+Nothing calls `ChargePoint` directly except `internal/control`. It is the single path for
+"do something to the station": it validates the EVSE, allocates and persists the id, sends
+the command, interprets the answer and records the outcome in core, and it returns typed
+errors (`*control.RefusedError` for a station's no, `control.ErrAlreadyReserved`,
+`control.ErrNoReservation`, `control.ErrNoActiveTransaction`, plus the `ocpp` sentinels above)
+so the CLI can turn them into exit codes and OCPI into command results. A reservation becomes
+active only once the station accepts it; on a refusal or a timeout it is dropped at once, so
+nothing lingers that the station may not hold. Core still reports an EVSE as `RESERVED` only
+when the station does: the reservation record sits next to the status, it does not overwrite it.
 
 `ocppj` is direction-agnostic on purpose. A CSMS connection and a charge point connection
 differ only in who performs the handshake, so both ends share one implementation of the

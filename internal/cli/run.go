@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wolffseb/cli-cpms/internal/config"
+	"github.com/wolffseb/cli-cpms/internal/control"
 	"github.com/wolffseb/cli-cpms/internal/core"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
 	"github.com/wolffseb/cli-cpms/internal/ocpp/csms"
@@ -60,15 +61,18 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath string, logger *slog.
 			cfg.Charger.OCPPVersion)
 	}
 
-	// Nothing reads the state yet, but a corrupt or newer file has to stop us
-	// before anything starts depending on it, not halfway through a session.
+	// A corrupt or newer file has to stop us before anything starts, not
+	// halfway through a session.
 	store, err := state.Open(statePath)
 	if err != nil {
 		return err
 	}
 	logger.Debug("state file", "path", store.Path())
 
-	svc := core.New(cfg)
+	// Reservations and transactions from the previous run come back here,
+	// with their expiry timers re-armed.
+	svc := core.New(cfg, core.WithStore(store), core.WithLogger(logger))
+	defer svc.Close()
 	handler := v16.NewHandler(cfg, svc, logger)
 
 	server, err := csms.New(csms.Options{
@@ -96,6 +100,12 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath string, logger *slog.
 	if err := server.Start(); err != nil {
 		return err
 	}
+
+	// Everything that acts on the station goes through this. The one-shot
+	// commands and the TUI are its callers; until they exist it has none.
+	_ = control.New(control.Options{
+		Core: svc, Commands: server, Config: cfg, Log: logger,
+	})
 
 	events, unsubscribe := svc.Subscribe("log")
 	defer unsubscribe()

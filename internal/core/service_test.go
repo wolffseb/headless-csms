@@ -1,6 +1,7 @@
 package core_test
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -207,15 +208,18 @@ func TestTransactionLifecycle(t *testing.T) {
 	defer cancel()
 
 	start := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
-	id := s.StartTransaction(testCP, 1, "04A1B2C3D4", 1000, start)
-	if id < 1 {
-		t.Fatalf("transaction id = %d, want a positive id", id)
-	}
+	id := strconv.Itoa(s.NextTransactionID())
+	s.StartTransaction(testCP, core.TransactionStart{
+		ID: id, ConnectorID: 1, IDTag: "04A1B2C3D4", MeterStart: 1000, At: start,
+	})
 
-	second := s.StartTransaction(testCP, 2, "04A1B2C3D4", 0, start)
+	second := strconv.Itoa(s.NextTransactionID())
 	if second == id {
-		t.Errorf("two transactions share id %d", id)
+		t.Errorf("two transactions share id %s", id)
 	}
+	s.StartTransaction(testCP, core.TransactionStart{
+		ID: second, ConnectorID: 2, IDTag: "04A1B2C3D4", At: start,
+	})
 
 	tx, ok := s.StopTransaction(testCP, id, 4200, "Local", start.Add(time.Hour))
 	if !ok {
@@ -230,7 +234,7 @@ func TestTransactionLifecycle(t *testing.T) {
 	if _, ok := s.StopTransaction(testCP, id, 4200, "Local", start); ok {
 		t.Error("stopping an already-stopped transaction should fail")
 	}
-	if _, ok := s.StopTransaction(testCP, 9999, 0, "Local", start); ok {
+	if _, ok := s.StopTransaction(testCP, "9999", 0, "Local", start); ok {
 		t.Error("stopping an unknown transaction should fail")
 	}
 

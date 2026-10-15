@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -347,7 +348,7 @@ func TestRemoteStartRedeemsTheReservation(t *testing.T) {
 		t.Fatal("simulator has no transaction id")
 	}
 	snap, _ := r.core.Snapshot().ChargePoint(testCP)
-	if len(snap.Transactions) != 1 || snap.Transactions[0].ID != txID {
+	if len(snap.Transactions) != 1 || snap.Transactions[0].ID != strconv.Itoa(txID) {
 		t.Fatalf("csms transactions = %+v, want one with id %d", snap.Transactions, txID)
 	}
 

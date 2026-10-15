@@ -8,11 +8,13 @@ package core
 
 import (
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/wolffseb/cli-cpms/internal/config"
+	"github.com/wolffseb/cli-cpms/internal/state"
 )
 
 // BootInfo is what a charge point told us about itself when it booted.
@@ -38,17 +40,26 @@ func (b BootInfo) String() string {
 
 // Transaction is one charging session.
 type Transaction struct {
-	ID          int
+	// ID is a string because OCPP 2.0.1 transaction ids are strings the
+	// station chooses. 1.6's integers, which we choose, are held in decimal.
+	ID          string
 	EVSEUID     string
 	ConnectorID int
 	IDTag       string
 	MeterStart  int
 	StartedAt   time.Time
+	// ReservationID is the reservation this session redeemed, or 0.
+	ReservationID int
 
 	// StoppedAt is zero while the transaction is running.
 	StoppedAt time.Time
 	MeterStop int
 	Reason    string
+
+	// seq orders transactions by when we learned of them. String ids do not
+	// sort numerically ("10" < "9"), and a station's own ids need not sort
+	// at all.
+	seq uint64
 }
 
 // Active reports whether the transaction is still running.
@@ -78,18 +89,47 @@ type chargePointState struct {
 	// are diffed against.
 	effective map[string]EVSEStatus
 
-	transactions map[int]*Transaction
+	transactions map[string]*Transaction
 }
 
 // Service is the domain state and its event bus.
 type Service struct {
-	cfg *config.Config
-	now func() time.Time
-	bus *bus
+	cfg       *config.Config
+	now       func() time.Time
+	afterFunc func(time.Duration, func()) Stopper
+	bus       *bus
+	log       *slog.Logger
 
-	mu       sync.RWMutex
-	cps      map[string]*chargePointState
-	nextTxID int
+	// store is where active reservations, active transactions and the id
+	// counters survive a restart. nil keeps everything in memory.
+	store Store
+	// persistMu serialises writes to the store, so they land in the order
+	// the changes behind them were made. It is never taken while mu is held.
+	persistMu sync.Mutex
+
+	mu           sync.RWMutex
+	cps          map[string]*chargePointState
+	reservations map[int]*reservation
+	txSeq        uint64
+
+	// The next id to hand out. Ids start at 1: OCPP 1.6 uses transaction id 0
+	// to mean "refused", and a zero reservation id reads as "none".
+	nextReservationID int
+	nextTransactionID int
+	nextRemoteStartID int
+}
+
+// Store persists what core must not forget across a restart. *state.Store
+// satisfies it.
+type Store interface {
+	Get() state.State
+	Update(fn func(*state.State) error) error
+}
+
+// Stopper is a scheduled callback that can be cancelled. *time.Timer
+// satisfies it.
+type Stopper interface {
+	Stop() bool
 }
 
 // Option customises a Service.
@@ -100,18 +140,47 @@ func WithClock(now func() time.Time) Option {
 	return func(s *Service) { s.now = now }
 }
 
+// WithAfterFunc replaces how expiry timers are scheduled. Together with
+// WithClock it lets a test move time forward instead of waiting for it.
+func WithAfterFunc(afterFunc func(time.Duration, func()) Stopper) Option {
+	return func(s *Service) { s.afterFunc = afterFunc }
+}
+
+// WithStore persists reservations, transactions and id counters, and loads
+// them back when the Service is built.
+func WithStore(store Store) Option {
+	return func(s *Service) { s.store = store }
+}
+
+// WithLogger sets where core reports problems it cannot hand back to a
+// caller, such as a failed write after the station has already acted.
+func WithLogger(log *slog.Logger) Option {
+	return func(s *Service) { s.log = log }
+}
+
 // New builds a Service for the configured station.
 //
 // The configured charge point and its EVSEs are registered immediately, all
 // UNKNOWN, so that the OCPI Locations module can serve the station before the
 // charger has ever dialled in.
+//
+// With a store, the reservations, transactions and counters it holds are
+// loaded back. A reservation that expired while cpms was down is dropped;
+// the rest have their expiry timers re-armed.
 func New(cfg *config.Config, opts ...Option) *Service {
 	s := &Service{
-		cfg:      cfg,
-		now:      time.Now,
-		bus:      newBus(),
-		cps:      make(map[string]*chargePointState),
-		nextTxID: 1,
+		cfg: cfg,
+		now: time.Now,
+		afterFunc: func(d time.Duration, fn func()) Stopper {
+			return time.AfterFunc(d, fn)
+		},
+		bus:               newBus(),
+		log:               slog.Default(),
+		cps:               make(map[string]*chargePointState),
+		reservations:      make(map[int]*reservation),
+		nextReservationID: 1,
+		nextTransactionID: 1,
+		nextRemoteStartID: 1,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -124,7 +193,21 @@ func New(cfg *config.Config, opts ...Option) *Service {
 		}
 		s.cps[cp.id] = cp
 	}
+	if s.store != nil {
+		s.load()
+	}
 	return s
+}
+
+// Close stops the expiry timers. Nothing else in the Service needs shutting
+// down; it holds no connections and no goroutines of its own.
+func (s *Service) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, r := range s.reservations {
+		r.stopTimer()
+	}
 }
 
 // Subscribe registers an event consumer. The returned function unsubscribes.
@@ -141,7 +224,7 @@ func (s *Service) newChargePoint(id string) *chargePointState {
 		reported:     make(map[string]EVSEStatus),
 		errorCode:    make(map[string]string),
 		effective:    make(map[string]EVSEStatus),
-		transactions: make(map[int]*Transaction),
+		transactions: make(map[string]*Transaction),
 	}
 }
 
@@ -316,61 +399,6 @@ func (s *Service) SetConnectorStatus(cpID string, connectorID int, status EVSESt
 	s.publishAll(events)
 }
 
-// StartTransaction opens a transaction and returns the id assigned to it.
-func (s *Service) StartTransaction(cpID string, connectorID int, idTag string, meterStart int, at time.Time) int {
-	if at.IsZero() {
-		at = s.now()
-	}
-
-	s.mu.Lock()
-	cp := s.ensure(cpID)
-	uid := s.evseUID(cpID, connectorID)
-	cp.addEVSE(uid, connectorID)
-
-	id := s.nextTxID
-	s.nextTxID++
-	cp.transactions[id] = &Transaction{
-		ID: id, EVSEUID: uid, ConnectorID: connectorID,
-		IDTag: idTag, MeterStart: meterStart, StartedAt: at,
-	}
-	cp.lastSeen = s.now()
-	s.mu.Unlock()
-
-	s.bus.publish(Event{
-		Kind: EventTransactionStarted, At: at, ChargePointID: cpID,
-		EVSEUID: uid, TransactionID: id, IDTag: idTag,
-	})
-	return id
-}
-
-// StopTransaction closes a transaction. Unknown ids are reported so the caller
-// can answer the charger appropriately.
-func (s *Service) StopTransaction(cpID string, txID, meterStop int, reason string, at time.Time) (Transaction, bool) {
-	if at.IsZero() {
-		at = s.now()
-	}
-
-	s.mu.Lock()
-	cp := s.ensure(cpID)
-	tx, ok := cp.transactions[txID]
-	if !ok || !tx.Active() {
-		s.mu.Unlock()
-		return Transaction{}, false
-	}
-	tx.StoppedAt = at
-	tx.MeterStop = meterStop
-	tx.Reason = reason
-	cp.lastSeen = s.now()
-	out := *tx
-	s.mu.Unlock()
-
-	s.bus.publish(Event{
-		Kind: EventTransactionStopped, At: at, ChargePointID: cpID,
-		EVSEUID: out.EVSEUID, TransactionID: txID, IDTag: out.IDTag, Detail: reason,
-	})
-	return out, true
-}
-
 // RecordMeterValues notes a meter reading. The values themselves are not
 // modelled yet; the summary is what the log and the TUI show.
 func (s *Service) RecordMeterValues(cpID string, connectorID int, summary string) {
@@ -426,7 +454,11 @@ type ChargePointSnapshot struct {
 	LastSeen      time.Time
 	StationStatus EVSEStatus
 	EVSEs         []EVSESnapshot
-	Transactions  []Transaction
+	// Transactions holds the active ones and those stopped since this process
+	// started, in the order they began. Only active ones survive a restart.
+	Transactions []Transaction
+	// Reservations holds pending and active reservations, by id.
+	Reservations []Reservation
 }
 
 // Snapshot is a consistent, immutable view of the whole domain state.
@@ -473,8 +505,9 @@ func (s *Service) Snapshot() Snapshot {
 			snap.Transactions = append(snap.Transactions, *tx)
 		}
 		sort.Slice(snap.Transactions, func(i, j int) bool {
-			return snap.Transactions[i].ID < snap.Transactions[j].ID
+			return snap.Transactions[i].seq < snap.Transactions[j].seq
 		})
+		snap.Reservations = s.reservationsLocked(cp.id)
 		out.ChargePoints = append(out.ChargePoints, snap)
 	}
 	sort.Slice(out.ChargePoints, func(i, j int) bool {
