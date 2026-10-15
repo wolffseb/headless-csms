@@ -178,8 +178,10 @@ is `0600` and removed on shutdown. It also stops a second `cpms run` on the same
 second one finds the first answering and exits with "another cpms is already running". A
 socket left behind by a `cpms run` that was killed is detected and replaced.
 
-Socket paths are limited to 103 bytes, a kernel limit on macOS. If your config lives deep in
-a directory tree, point `--socket` somewhere shorter.
+Socket paths are limited to 103 bytes, a kernel limit on macOS. If the default path next to
+the state file is longer than that, cpms falls back to a short path in the temp directory
+(`cpms-<hash of the state path>.sock`), which `run` and the commands both derive on their
+own; `cpms run` prints the path it uses. A `--socket` you give explicitly is used as is.
 
 ## Configuration
 

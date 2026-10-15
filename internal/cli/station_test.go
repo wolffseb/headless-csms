@@ -513,3 +513,48 @@ func TestExitCodeOfPlainErrors(t *testing.T) {
 		t.Error("an unclassified error should exit 1")
 	}
 }
+
+// A config a few directories deep is enough to push cpms.sock past the
+// 103-byte Unix socket limit, which is how macOS CI first broke. The default
+// then falls back to a short path that `run` and the commands both derive
+// from the state file, so neither needs --socket.
+func TestDefaultSocketFallsBackWhenThePathIsTooLong(t *testing.T) {
+	t.Parallel()
+
+	deep := filepath.Join(t.TempDir(), strings.Repeat("d", 60), strings.Repeat("e", 60))
+	if err := os.MkdirAll(deep, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile(runConfig(t, 19314))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(deep, "config.yaml")
+	if err := os.WriteFile(cfg, src, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if next := filepath.Join(deep, "cpms.sock"); len(next) <= socket.MaxPathLen {
+		t.Fatalf("test setup: %s is only %d bytes, not too long", next, len(next))
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	out, done := startRun(t, ctx, "run", "-c", cfg)
+	t.Cleanup(func() { cancel(); <-done })
+	waitForOutput(t, out, "control socket ")
+
+	stdout, _, err := run(t, "status", "--json", "-c", cfg)
+	if err != nil {
+		t.Fatalf("status without --socket: %v\nrun output:\n%s", err, out.String())
+	}
+	if !strings.Contains(stdout, `"id": "ALP-HYC-001"`) {
+		t.Errorf("status printed %s", stdout)
+	}
+
+	// An explicit path is not second-guessed: too long is an error that says
+	// how to fix it.
+	long := filepath.Join(deep, "cpms.sock")
+	_, _, err = run(t, "status", "-c", cfg, "--socket", long)
+	if err == nil || !strings.Contains(err.Error(), "--socket") {
+		t.Errorf("explicit long --socket: err = %v, want one pointing at --socket", err)
+	}
+}

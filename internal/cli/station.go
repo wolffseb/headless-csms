@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
@@ -25,11 +28,33 @@ const socketGrace = 5 * time.Second
 
 // resolvedSocketPath is --socket if given, otherwise cpms.sock next to the
 // state file.
+//
+// Unix socket paths are limited to 103 bytes on macOS, and a config file a
+// few directories deep is enough to exceed that. When the default does not
+// fit, it falls back to a short path in the temp directory, named after the
+// state file, so `cpms run` and the one-shot commands still agree on it
+// without being told. A path given with --socket is used as given, and
+// refused with a clear message if it is too long: an explicit choice is not
+// second-guessed.
 func (o *options) resolvedSocketPath(statePath string) string {
 	if o.socketPath != "" {
 		return o.socketPath
 	}
-	return filepath.Join(filepath.Dir(statePath), DefaultSocketFile)
+	path := filepath.Join(filepath.Dir(statePath), DefaultSocketFile)
+	if len(path) <= socket.MaxPathLen {
+		return path
+	}
+	return fallbackSocketPath(statePath)
+}
+
+// fallbackSocketPath is a short socket path in the temp directory that is
+// unique to one state file.
+func fallbackSocketPath(statePath string) string {
+	if abs, err := filepath.Abs(statePath); err == nil {
+		statePath = abs
+	}
+	sum := sha256.Sum256([]byte(statePath))
+	return filepath.Join(os.TempDir(), "cpms-"+hex.EncodeToString(sum[:6])+".sock")
 }
 
 // newStationCommands builds the one-shot commands that act on the station
