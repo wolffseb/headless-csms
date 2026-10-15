@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/wolffseb/cli-cpms/internal/config"
@@ -112,6 +111,7 @@ func (cp *ChargePoint) TriggerStatus(ctx context.Context, evseUID string) (ocpp.
 
 // Feature profile names as they appear in SupportedFeatureProfiles.
 const (
+	profileCore          = "Core"
 	profileReservation   = "Reservation"
 	profileRemoteTrigger = "RemoteTrigger"
 )
@@ -129,9 +129,8 @@ func (cp *ChargePoint) Capabilities(ctx context.Context) (ocpp.Capabilities, err
 		if k.Key != KeySupportedFeatureProfiles {
 			continue
 		}
-		// A CSL: "Core,Reservation", sometimes with spaces after the commas.
-		for _, p := range strings.Split(k.Value, ",") {
-			switch strings.TrimSpace(p) {
+		for _, p := range parseProfiles(k.Value) {
+			switch p {
 			case profileReservation:
 				caps.Reservation = true
 			case profileRemoteTrigger:
@@ -145,7 +144,7 @@ func (cp *ChargePoint) Capabilities(ctx context.Context) (ocpp.Capabilities, err
 // GetConfiguration reads configuration keys; nil keys means all of them.
 //
 // It is deliberately not part of ocpp.ChargePoint: 2.0.1 has no flat
-// key/value configuration. It is here for Capabilities and for debugging.
+// key/value configuration. It is here for Capabilities, Probe and debugging.
 func (cp *ChargePoint) GetConfiguration(ctx context.Context, keys []string) (GetConfigurationConf, error) {
 	var conf GetConfigurationConf
 	raw, err := cp.c.Call(ctx, ActionGetConfiguration, GetConfigurationReq{Key: keys})

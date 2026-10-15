@@ -287,6 +287,16 @@ func (s *Service) TriggerStatus(ctx context.Context, evseUID string) error {
 	return nil
 }
 
+// Probe asks the station what it supports and how it is set up. It changes
+// nothing, on the station or in core.
+func (s *Service) Probe(ctx context.Context) (ocpp.ProbeReport, error) {
+	cp, err := s.chargePoint()
+	if err != nil {
+		return ocpp.ProbeReport{}, err
+	}
+	return cp.Probe(ctx)
+}
+
 // checkEVSE refuses an EVSE that is not in config before anything else
 // happens: no id is allocated and nothing is sent.
 func (s *Service) checkEVSE(evseUID string) error {

@@ -1,0 +1,170 @@
+{
+  "charge_point": {
+    "id": "ALP-HYC-001",
+    "ocpp_version": "1.6",
+    "vendor": "Alpitronic",
+    "model": "HYC300",
+    "serial_number": "SIM-0001",
+    "firmware": "1.2.3"
+  },
+  "features": [
+    {
+      "name": "Core",
+      "support": "yes",
+      "grants": [
+        "remote_start_stop",
+        "unlock"
+      ]
+    },
+    {
+      "name": "Reservation",
+      "support": "yes",
+      "grants": [
+        "reservation"
+      ]
+    },
+    {
+      "name": "RemoteTrigger",
+      "support": "yes",
+      "grants": [
+        "trigger_status"
+      ]
+    },
+    {
+      "name": "FirmwareManagement",
+      "support": "yes",
+      "grants": []
+    }
+  ],
+  "capabilities": [
+    {
+      "name": "remote_start_stop",
+      "support": "yes"
+    },
+    {
+      "name": "unlock",
+      "support": "yes"
+    },
+    {
+      "name": "reservation",
+      "support": "yes"
+    },
+    {
+      "name": "trigger_status",
+      "support": "yes"
+    }
+  ],
+  "settings": [
+    {
+      "name": "ReserveConnectorZeroSupported",
+      "value": "false",
+      "reported": true,
+      "meaning": "whether the whole station can be reserved at once; cpms always reserves one EVSE, so this is informational"
+    },
+    {
+      "name": "AuthorizeRemoteTxRequests",
+      "value": "false",
+      "reported": true,
+      "meaning": "if true, the station asks cpms to Authorize the tag of a remote start; cpms accepts only auth.default_id_tag"
+    },
+    {
+      "name": "LocalAuthListEnabled",
+      "value": "false",
+      "reported": true,
+      "meaning": "if true, a whitelist held on the station can let tags charge without asking cpms"
+    },
+    {
+      "name": "LocalPreAuthorize",
+      "value": "false",
+      "reported": true,
+      "meaning": "if true, the station starts at once for tags it knows locally, before cpms answers"
+    },
+    {
+      "name": "LocalAuthorizeOffline",
+      "value": "false",
+      "reported": true,
+      "meaning": "if true, the station lets tags it knows locally charge while cpms is unreachable"
+    },
+    {
+      "name": "NumberOfConnectors",
+      "value": "1",
+      "reported": true,
+      "meaning": "how many connectors the station has; checked against the EVSEs in config"
+    },
+    {
+      "name": "HeartbeatInterval",
+      "value": "60",
+      "reported": true,
+      "meaning": "seconds between heartbeats; cpms sets it at boot from charger.heartbeat_interval"
+    },
+    {
+      "name": "ConnectionTimeOut",
+      "value": "60",
+      "reported": true,
+      "meaning": "seconds the station waits for a cable after a remote start or a presented tag"
+    },
+    {
+      "name": "MeterValueSampleInterval",
+      "value": "0",
+      "reported": true,
+      "meaning": "seconds between meter values during a session; 0 means none are sent"
+    }
+  ],
+  "connectors": 1,
+  "heartbeat_interval_s": 60,
+  "raw": [
+    {
+      "key": "SupportedFeatureProfiles",
+      "value": "Core,FirmwareManagement,RemoteTrigger,Reservation",
+      "readonly": true
+    },
+    {
+      "key": "NumberOfConnectors",
+      "value": "1",
+      "readonly": true
+    },
+    {
+      "key": "HeartbeatInterval",
+      "value": "60",
+      "readonly": false
+    },
+    {
+      "key": "ConnectionTimeOut",
+      "value": "60",
+      "readonly": false
+    },
+    {
+      "key": "MeterValueSampleInterval",
+      "value": "0",
+      "readonly": false
+    },
+    {
+      "key": "AuthorizeRemoteTxRequests",
+      "value": "false",
+      "readonly": false
+    },
+    {
+      "key": "LocalAuthListEnabled",
+      "value": "false",
+      "readonly": false
+    },
+    {
+      "key": "LocalPreAuthorize",
+      "value": "false",
+      "readonly": false
+    },
+    {
+      "key": "LocalAuthorizeOffline",
+      "value": "false",
+      "readonly": false
+    },
+    {
+      "key": "ReserveConnectorZeroSupported",
+      "value": "false",
+      "readonly": true
+    }
+  ],
+  "ok": true,
+  "missing": [],
+  "warnings": []
+}

@@ -107,6 +107,10 @@ type Options struct {
 	// SlowDelay overrides how long ScenarioSlow stalls.
 	SlowDelay time.Duration
 
+	// UnreportedKeys are configuration keys left out of every
+	// GetConfiguration answer, as a station that does not know them would.
+	UnreportedKeys []string
+
 	Log *slog.Logger
 	Now func() time.Time
 }

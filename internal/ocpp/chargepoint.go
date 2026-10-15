@@ -42,6 +42,9 @@ type ChargePoint interface {
 	TriggerStatus(ctx context.Context, evseUID string) (Result, error)
 	// Capabilities reports which optional features the station advertises.
 	Capabilities(ctx context.Context) (Capabilities, error)
+	// Probe asks the station what it supports and how it is set up. It
+	// changes nothing on the station.
+	Probe(ctx context.Context) (ProbeReport, error)
 }
 
 // ReserveRequest asks for an EVSE to be held for a token.
