@@ -16,6 +16,8 @@ func main() {
 		if !errors.Is(err, cli.ErrSilent) {
 			fmt.Fprintln(os.Stderr, "cpms: "+err.Error())
 		}
-		os.Exit(1)
+		// The one-shot commands carry distinct exit codes for scripts to
+		// branch on; everything else exits 1.
+		os.Exit(cli.ExitCode(err))
 	}
 }

@@ -1,0 +1,25 @@
+{
+  "charge_point": {
+    "id": "ALP-HYC-001",
+    "online": true,
+    "last_seen": "<timestamp>",
+    "vendor": "Alpitronic",
+    "model": "HYC300",
+    "firmware": "simulator",
+    "station_status": "AVAILABLE"
+  },
+  "evses": [
+    {
+      "uid": "EVSE-1",
+      "status": "RESERVED",
+      "error_code": "NoError",
+      "reservation": {
+        "id": 1,
+        "id_tag": "04A1B2C3D4",
+        "expires_at": "<timestamp>",
+        "state": "active"
+      },
+      "transaction": null
+    }
+  ]
+}

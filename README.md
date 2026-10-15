@@ -116,6 +116,71 @@ config.yaml is not valid:
 3 problems found.
 ```
 
+## Driving the station
+
+While `cpms run` is serving, one-shot commands in another terminal act on the station
+through it. With the simulator from the previous section in a second terminal, a third one
+gives you the whole flow this tool exists for: reserve, redeem with the office tag, stop.
+
+```
+$ cpms reserve --evse ALP-HYC-001-1
+ALP-HYC-001-1 reserved for 04A1B2C3D4 until 14:43:30 (reservation 1)
+
+$ cpms status
+ALP-HYC-001  online  Alpitronic HYC300 fw simulator  last seen 14:28:30
+
+EVSE           STATUS     RESERVATION                   TRANSACTION
+ALP-HYC-001-1  RESERVED   #1 04A1B2C3D4 until 14:43:30  -
+ALP-HYC-001-2  AVAILABLE  -                             -
+
+$ cpms start --evse ALP-HYC-001-1
+ALP-HYC-001-1 remote start accepted
+
+$ cpms status
+...
+ALP-HYC-001-1  CHARGING   -            1 04A1B2C3D4 since 14:28:32
+
+$ cpms stop --evse ALP-HYC-001-1
+ALP-HYC-001-1 remote stop accepted
+```
+
+| Command | Does |
+|---|---|
+| `cpms reserve [--evse UID] [--tag TAG] [--expires 15m]` | Holds an EVSE for a tag. The tag defaults to `auth.default_id_tag`, the length to 15 minutes. |
+| `cpms cancel [--evse UID]` | Releases the reservation on an EVSE |
+| `cpms start [--evse UID] [--tag TAG]` | Asks the station to start a session. It returns once the station accepts; the session shows up in `status` when the station reports it. |
+| `cpms stop [--evse UID]` | Stops the session running on an EVSE |
+| `cpms unlock [--evse UID]` | Releases the cable lock |
+| `cpms status [--json]` | The station, and per EVSE its status, reservation and session. `--json` is a stable format for scripts. |
+
+`--evse` takes the EVSE `uid` from config, and may be left out when only one EVSE is
+configured. A typo is caught from config before anything is sent, and the error lists the
+valid uids.
+
+**Exit codes** are stable, so scripts can branch on them:
+
+| Code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Usage, config, or unexpected error (including an unknown `--evse`) |
+| 2 | `cpms run` is not reachable |
+| 3 | The charge point is not connected to cpms |
+| 4 | The station rejected the command |
+| 5 | The station is occupied |
+| 6 | The station is faulted or unavailable |
+| 7 | The station did not answer within `charger.call_timeout` |
+| 8 | Unlock failed, or the station does not support the command |
+| 9 | Refused by cpms before sending: already reserved, no reservation to cancel, nothing to stop |
+
+**How it works.** `cpms run` listens on a Unix socket, `cpms.sock` next to the state file by
+default (`--socket` overrides it; use the same value for `run` and the commands). The socket
+is `0600` and removed on shutdown. It also stops a second `cpms run` on the same state: the
+second one finds the first answering and exits with "another cpms is already running". A
+socket left behind by a `cpms run` that was killed is detected and replaced.
+
+Socket paths are limited to 103 bytes, a kernel limit on macOS. If your config lives deep in
+a directory tree, point `--socket` somewhere shorter.
+
 ## Configuration
 
 Everything lives in one YAML file — see [`config.example.yaml`](config.example.yaml),
@@ -155,17 +220,18 @@ be pointed at a randomly chosen port).
 ## How it is put together
 
 ```
-internal/core        domain state and the event bus — the single source of truth
-internal/control     the one place that acts on the station: reserve, cancel, start, stop, unlock
-internal/ocpp        version-agnostic RPC errors, versions, the Handler and ChargePoint interfaces
-internal/ocpp/ocppj  the OCPP-J RPC layer: framing, correlation, connection goroutines
-internal/ocpp/csms   the WebSocket server a charge point dials into
-internal/ocpp/v16    OCPP 1.6-J payloads, the adapter that writes to core, and the command adapter
-internal/simulator   a charge point: dials a CSMS and behaves like a station
-internal/ocpptest    a raw OCPP-J client used by the tests
-internal/state       state.json: the persisted DTOs and the atomic-write store
-internal/statetest   a state store whose writes can be made to fail, for tests
-internal/clocktest   a manually advanced clock, for tests that wait on expiry
+internal/core            domain state and the event bus — the single source of truth
+internal/control         the one place that acts on the station: reserve, cancel, start, stop, unlock
+internal/control/socket  the Unix socket the one-shot commands reach `cpms run` through
+internal/ocpp            version-agnostic RPC errors, versions, the Handler and ChargePoint interfaces
+internal/ocpp/ocppj      the OCPP-J RPC layer: framing, correlation, connection goroutines
+internal/ocpp/csms       the WebSocket server a charge point dials into
+internal/ocpp/v16        OCPP 1.6-J payloads, the adapter that writes to core, and the command adapter
+internal/simulator       a charge point: dials a CSMS and behaves like a station
+internal/ocpptest        a raw OCPP-J client used by the tests
+internal/state           state.json: the persisted DTOs and the atomic-write store
+internal/statetest       a state store whose writes can be made to fail, for tests
+internal/clocktest       a manually advanced clock, for tests that wait on expiry
 ```
 
 `csms` never learns a message name: it routes `(charge point, action, raw payload)` to the
@@ -217,7 +283,7 @@ Built in tracked steps; each lands as its own PR.
 | 1 | Project skeleton, config loader, CI | done |
 | 2 | OCPP 1.6-J CSMS: WebSocket server and message routing | done |
 | 3 | Built-in charge point simulator | done |
-| 4 | Outbound OCPP commands, reservation lifecycle, one-shot CLI | in progress |
+| 4 | Outbound OCPP commands, reservation lifecycle, one-shot CLI | in progress: commands done, `cpms probe` next |
 | 5 | OCPI foundation: versions + credentials handshake | |
 | 6 | OCPI Locations module (sender) | |
 | 7 | PATCH location on status change | |
