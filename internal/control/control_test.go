@@ -128,7 +128,7 @@ func (f *fakeStation) TriggerStatus(context.Context, string) (ocpp.Result, error
 }
 
 func (f *fakeStation) Capabilities(context.Context) (ocpp.Capabilities, error) {
-	return ocpp.Capabilities{Reservation: true}, nil
+	return ocpp.Capabilities{Reservation: ocpp.SupportYes}, nil
 }
 
 func (f *fakeStation) Probe(context.Context) (ocpp.ProbeReport, error) {

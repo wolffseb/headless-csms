@@ -168,6 +168,29 @@ func TestProbeMissingKeysAreNotReported(t *testing.T) {
 	}
 }
 
+// The value of SupportedFeatureProfiles is optional in 1.6, and some stations
+// send it empty: that says no more than leaving the key out does.
+func TestProbeEmptyProfilesAreNotReported(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"", "  ", " , "} {
+		cp, _ := newFakeChargePoint(`{"configurationKey":[{"key":"SupportedFeatureProfiles","readonly":true,"value":"` + value + `"}]}`)
+		report, err := cp.Probe(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range ocpp.AllCapabilities() {
+			want := ocpp.SupportUnknown
+			if c == ocpp.CapRemoteStartStop || c == ocpp.CapUnlock {
+				want = ocpp.SupportYes
+			}
+			if got := report.Support(c); got != want {
+				t.Errorf("value %q: %s = %s, want %s", value, c, got, want)
+			}
+		}
+	}
+}
+
 func TestProbeErrorsAreTheCallsErrors(t *testing.T) {
 	t.Parallel()
 

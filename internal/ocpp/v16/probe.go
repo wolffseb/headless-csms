@@ -69,8 +69,7 @@ func (cp *ChargePoint) Probe(ctx context.Context) (ocpp.ProbeReport, error) {
 		report.Raw = append(report.Raw, ocpp.RawSetting{Key: k.Key, Value: k.Value, Readonly: k.Readonly})
 	}
 
-	profiles, reported := values[KeySupportedFeatureProfiles]
-	report.Features = features(profiles, reported)
+	report.Features = features(values[KeySupportedFeatureProfiles])
 
 	for _, s := range probedSettings {
 		value, ok := values[s.key]
@@ -90,11 +89,12 @@ func (cp *ChargePoint) Probe(ctx context.Context) (ocpp.ProbeReport, error) {
 }
 
 // features lists the profiles cpms needs, present or not, then every other
-// profile the station advertises, in its order. Without the key at all,
-// nothing is known about any of them except Core, which every 1.6 station
-// must implement: it is assumed present.
-func features(value string, reported bool) []ocpp.Feature {
+// profile the station advertises, in its order. Without the key, or with an
+// empty value (it is optional in 1.6), nothing is known about any of them
+// except Core, which every 1.6 station must implement: it is assumed present.
+func features(value string) []ocpp.Feature {
 	advertised := parseProfiles(value)
+	reported := len(advertised) > 0
 	has := make(map[string]bool, len(advertised))
 	for _, p := range advertised {
 		has[p] = true
