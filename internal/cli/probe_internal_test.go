@@ -82,3 +82,28 @@ func TestEvaluateProbeHeartbeat(t *testing.T) {
 		}
 	}
 }
+
+func TestEvaluateProbeConnectorIDs(t *testing.T) {
+	t.Parallel()
+	cfg := probeConfig()
+	cfg.Location.EVSEs = []config.EVSE{
+		{UID: "A", OCPPConnectorID: 1},
+		{UID: "B", OCPPConnectorID: 3},
+	}
+	two := 2
+	r := probeResult(60, nil)
+	r.Connectors = &two
+
+	out := evaluateProbe(cfg, r)
+	if len(out.Warnings) != 1 || !strings.Contains(out.Warnings[0], "location.evses[1] (B) maps to ocpp_connector_id 3, but the station reports 2 connectors") {
+		t.Errorf("warnings = %q, want one naming connector id 3", out.Warnings)
+	}
+	if !out.OK {
+		t.Error("a warning must not fail the probe")
+	}
+
+	cfg.Location.EVSEs[1].OCPPConnectorID = 2
+	if out := evaluateProbe(cfg, r); len(out.Warnings) != 0 {
+		t.Errorf("in-range ids: warnings = %q, want none", out.Warnings)
+	}
+}

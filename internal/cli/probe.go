@@ -156,7 +156,19 @@ func configChecks(cfg *config.Config, r socket.ProbeResult) []check {
 			"the station reports %s, but config has %s; check location.evses and their ocpp_connector_id",
 			plural(*r.Connectors, "connector"), plural(evses, "EVSE"))})
 	default:
-		out = append(out, check{markOK, fmt.Sprintf("%s, matching the %s in config", plural(*r.Connectors, "connector"), plural(evses, "EVSE"))})
+		var stray []check
+		for i, e := range cfg.Location.EVSEs {
+			if e.OCPPConnectorID > *r.Connectors {
+				stray = append(stray, check{markWarn, fmt.Sprintf(
+					"location.evses[%d] (%s) maps to ocpp_connector_id %d, but the station reports %s",
+					i, e.UID, e.OCPPConnectorID, plural(*r.Connectors, "connector"))})
+			}
+		}
+		if len(stray) > 0 {
+			out = append(out, stray...)
+		} else {
+			out = append(out, check{markOK, fmt.Sprintf("%s, matching the %s in config", plural(*r.Connectors, "connector"), plural(evses, "EVSE"))})
+		}
 	}
 
 	if r.HeartbeatIntervalSeconds == nil {
