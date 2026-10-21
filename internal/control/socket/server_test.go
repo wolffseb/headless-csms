@@ -123,6 +123,8 @@ func TestErrorCodes(t *testing.T) {
 		{"nothing to stop", socket.OpStop, fakeStation{}, socket.CodeRefused},
 		{"nothing to cancel", socket.OpCancel, fakeStation{}, socket.CodeRefused},
 		{"call error", socket.OpReserve, fakeStation{err: ocpp.Errorf(ocpp.ErrInternalError, "boom")}, socket.CodeInternal},
+		{"call error not implemented", socket.OpReserve, fakeStation{err: ocpp.Errorf(ocpp.ErrNotImplemented, "no")}, socket.CodeUnlockFailed},
+		{"call error not supported", socket.OpUnlock, fakeStation{err: fmt.Errorf("UnlockConnector: %w", ocpp.Errorf(ocpp.ErrNotSupported, "no"))}, socket.CodeUnlockFailed},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

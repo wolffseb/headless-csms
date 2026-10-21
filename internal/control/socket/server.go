@@ -258,6 +258,7 @@ func classify(err error) *Error {
 	e := &Error{Code: CodeInternal, Message: err.Error()}
 
 	var refused *control.RefusedError
+	var callErr *ocpp.RPCError
 	switch {
 	case errors.As(err, &refused):
 		e.Status = refused.Raw
@@ -272,6 +273,11 @@ func classify(err error) *Error {
 			// Rejected, and any status the spec does not define.
 			e.Code = CodeRejected
 		}
+	case errors.As(err, &callErr) &&
+		(callErr.Code == ocpp.ErrNotImplemented || callErr.Code == ocpp.ErrNotSupported):
+		// The station answered with a CALLERROR instead of a status: the same
+		// "cannot do that" as a NotSupported status.
+		e.Code = CodeUnlockFailed
 	case errors.Is(err, ocpp.ErrTimeout):
 		e.Code = CodeTimeout
 	case errors.Is(err, ocpp.ErrNotConnected):
