@@ -258,6 +258,10 @@ func TestAnotherTagStartingEndsTheReservationAsFailed(t *testing.T) {
 	}
 	if logs := r.logs.String(); !strings.Contains(logs, "level=WARN") || !strings.Contains(logs, "SOMEONE-ELSE") {
 		t.Errorf("no warning naming the other tag was logged:\n%s", logs)
+	} else if strings.Contains(logs, "no longer holds") {
+		// The station may have let a sibling tag redeem it, so the log must
+		// not claim the station dropped it.
+		t.Errorf("the warning claims the station dropped the reservation:\n%s", logs)
 	}
 }
 

@@ -29,9 +29,11 @@ const (
 	ReservationConsumed  = "consumed"
 	ReservationRejected  = "rejected"
 	ReservationTimeout   = "timeout"
-	// ReservationFailed means the command failed for a reason that is neither
-	// a refusal nor a timeout: the connection dropped, or the station sent a
-	// CALLERROR.
+	// ReservationFailed means the reservation ended for a reason that is
+	// neither a refusal nor a timeout. Either the command failed (the
+	// connection dropped, or the station sent a CALLERROR), or a session
+	// started on the EVSE with another tag, so the station no longer holds the
+	// reservation or a group tag consumed it.
 	ReservationFailed = "failed"
 )
 

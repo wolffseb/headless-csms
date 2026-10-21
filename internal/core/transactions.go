@@ -62,9 +62,11 @@ func (s *Service) NextRemoteStartID() (int, error) {
 // If the session redeems a reservation, the reservation ends as consumed.
 // The station saying which one (reservationId) is the reliable signal. Some
 // stations leave it out, so a reservation on the same EVSE for the same tag
-// counts too. A session for a different tag ends the reservation as failed:
-// a station only lets the reserved tag (or its parent) start on a reserved
-// connector, so another tag means the station no longer holds it, and ours
+// counts too. A session for a different tag ends the reservation as failed.
+// OCPP 1.6 lets the reserved tag, or one sharing its parentIdTag, start on a
+// reserved connector. cpms never sends a parentIdTag, so a different tag means
+// either the station no longer holds the reservation or a station-side group
+// (local list) let a sibling tag consume it. Both leave ours stale, and it
 // would only block new reservations until it timed out.
 //
 // Like every charger-driven change, this never fails because of the store: a
@@ -97,7 +99,7 @@ func (s *Service) StartTransaction(cpID string, t TransactionStart) Transaction 
 		tx.ReservationID = r.ID
 		events = append(events, s.endLocked(r, ReservationConsumed))
 	} else if r := s.reservationOnEVSELocked(cpID, uid); r != nil {
-		s.log.Warn("a session started on a reserved EVSE with a different tag; the station no longer holds the reservation, dropping it",
+		s.log.Warn("a session started on a reserved EVSE with a tag other than the reserved one; the station has dropped or consumed the reservation, dropping it",
 			"charge_point", cpID, "evse", uid, "reservation_id", r.ID,
 			"reserved_for", r.IDTag, "session_tag", t.IDTag)
 		events = append(events, s.endLocked(r, ReservationFailed))
