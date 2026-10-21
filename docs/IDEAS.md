@@ -91,6 +91,12 @@ authentication.
   API-first daemon probably wants a charger registry. That collides with the principle that
   `config.yaml` is read-only and hand-edited, so chargers would be added through the API
   and stored by idea 3. This is the biggest design question in the fridge.
+- **Locations, EVSEs and connectors without editing config.** The same applies one level
+  down: today the OCPI Location (#14) is assembled from the hand-edited `location:` block.
+  An easy way to create and change locations, EVSEs and connectors (through this API, and
+  from the terminal UI of idea 1) means they become data cpms owns, not config. They need
+  idea 3's storage, and `last_updated` then comes from the store instead of the config
+  file's modification time.
 - Authentication: a static bearer token from config is enough for a LAN, but mTLS if it
   ever leaves the LAN.
 - Packaging: a container image becomes worth having at this point (the roadmap has none).
@@ -150,6 +156,8 @@ as a table: it costs little and doubles as the frame history idea 1 wants.
 - **Immutability.** A CDR that has been sent must never change. Corrections are separate
   credit CDRs. The schema should make editing a sent CDR impossible, not just discouraged.
 - **Retention:** how long history is kept, and whether old rows are pruned.
+- **Managed locations.** If locations, EVSEs and connectors become editable (idea 2), they
+  live in this store too, with the static `location:` config block as a one-time import.
 
 **Needs first.** #8 (the transaction lifecycle), #16 (sessions have to exist before CDRs
 mean anything). For the 2.0.1 transaction model, #18.
