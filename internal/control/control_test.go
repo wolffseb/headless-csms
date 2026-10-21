@@ -45,6 +45,7 @@ type fakeStation struct {
 	reserve []ocpp.ReserveRequest
 	starts  []ocpp.RemoteStartRequest
 	stops   []string
+	cancels []int
 	answer  map[string]ocpp.Result
 	fail    map[string]error
 }
@@ -86,7 +87,10 @@ func (f *fakeStation) ReserveNow(_ context.Context, r ocpp.ReserveRequest) (ocpp
 	return f.respond("reserve")
 }
 
-func (f *fakeStation) CancelReservation(context.Context, int) (ocpp.Result, error) {
+func (f *fakeStation) CancelReservation(_ context.Context, id int) (ocpp.Result, error) {
+	f.mu.Lock()
+	f.cancels = append(f.cancels, id)
+	f.mu.Unlock()
 	return f.respond("cancel")
 }
 
@@ -264,6 +268,52 @@ func TestReserveTimeoutLeavesNothingBehind(t *testing.T) {
 	delete(r.station.fail, "reserve")
 	if _, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1"}); err != nil {
 		t.Errorf("retry after a timeout: %v", err)
+	}
+}
+
+// A ReserveNow that timed out, or whose connection dropped, may still have
+// reached the station. Without a cancel it would hold the EVSE until expiry
+// and every new reservation would come back Occupied.
+func TestReserveFailureCancelsAtTheStation(t *testing.T) {
+	t.Parallel()
+
+	for name, failure := range map[string]error{
+		"timeout": ocpp.ErrTimeout,
+		"dropped": ocpp.ErrNotConnected,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			r.station.fail["reserve"] = failure
+
+			_, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1"})
+			if !errors.Is(err, failure) {
+				t.Fatalf("err = %v, want %v", err, failure)
+			}
+			r.station.mu.Lock()
+			defer r.station.mu.Unlock()
+			if len(r.station.reserve) != 1 || len(r.station.cancels) != 1 ||
+				r.station.cancels[0] != r.station.reserve[0].ReservationID {
+				t.Errorf("reserve %+v, cancels %v; want one cancel of the reservation that was sent",
+					r.station.reserve, r.station.cancels)
+			}
+		})
+	}
+}
+
+// A refusal means the station never held it: nothing to cancel.
+func TestReserveRefusalDoesNotCancel(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.station.answer["reserve"] = ocpp.Result{Status: ocpp.CommandRejected, Raw: "Rejected"}
+
+	if _, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1"}); err == nil {
+		t.Fatal("Reserve succeeded")
+	}
+	r.station.mu.Lock()
+	defer r.station.mu.Unlock()
+	if len(r.station.cancels) != 0 {
+		t.Errorf("cancelled %v after a refusal", r.station.cancels)
 	}
 }
 
