@@ -151,8 +151,8 @@ func TestErrorCodes(t *testing.T) {
 			}
 			// A CALLERROR has no status; the CLI needs its code to name the answer.
 			if strings.HasPrefix(tc.name, "call error ") && tc.want == socket.CodeUnlockFailed &&
-				!strings.HasPrefix(se.Status, socket.CallErrorStatusPrefix) {
-				t.Errorf("status = %q, want the CALLERROR code", se.Status)
+				(se.Status != "" || se.CallError == "") {
+				t.Errorf("status = %q, call_error = %q, want no status and the CALLERROR code", se.Status, se.CallError)
 			}
 		})
 	}

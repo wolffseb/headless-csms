@@ -57,18 +57,16 @@ type Response struct {
 	Error  *Error          `json:"error,omitempty"`
 }
 
-// CallErrorStatusPrefix starts the Status of an Error whose cause was a
-// CALLERROR from the station, such as "CALLERROR NotImplemented".
-const CallErrorStatusPrefix = "CALLERROR "
-
 // Error is a failure, as a closed set of codes the CLI turns into exit codes.
 type Error struct {
 	Code Code `json:"code"`
-	// Status is the station's literal answer, when the station said no. When
-	// it answered with a CALLERROR instead of a status it is
-	// CallErrorStatusPrefix followed by the error code.
-	Status  string `json:"status,omitempty"`
-	Message string `json:"message"`
+	// Status is the station's literal answer, when the station said no.
+	Status string `json:"status,omitempty"`
+	// CallError is the OCPP error code, such as "NotImplemented", when the
+	// station answered with a CALLERROR instead of a status. Status is empty
+	// then.
+	CallError string `json:"call_error,omitempty"`
+	Message   string `json:"message"`
 }
 
 func (e *Error) Error() string { return e.Message }

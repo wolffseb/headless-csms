@@ -19,7 +19,7 @@ func TestExitForNamesTheStationsAnswer(t *testing.T) {
 		want string
 	}{
 		{"callerror on reserve", socket.OpReserve,
-			&socket.Error{Code: socket.CodeUnlockFailed, Status: "CALLERROR NotImplemented"},
+			&socket.Error{Code: socket.CodeUnlockFailed, CallError: "NotImplemented"},
 			"ALP-1: the station does not support this (CALLERROR NotImplemented)"},
 		{"not supported status", socket.OpUnlock,
 			&socket.Error{Code: socket.CodeUnlockFailed, Status: "NotSupported"},

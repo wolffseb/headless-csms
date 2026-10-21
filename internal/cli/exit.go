@@ -3,7 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/wolffseb/cli-cpms/internal/control/socket"
 )
@@ -106,12 +105,12 @@ func exitFor(op socket.Op, evse string, err error) error {
 // empty "(status )".
 func answer(se *socket.Error) string {
 	switch {
-	case se.Status == "":
-		return ""
-	case strings.HasPrefix(se.Status, socket.CallErrorStatusPrefix):
-		return " (" + se.Status + ")"
-	default:
+	case se.Status != "":
 		return " (status " + se.Status + ")"
+	case se.CallError != "":
+		return " (CALLERROR " + se.CallError + ")"
+	default:
+		return ""
 	}
 }
 
