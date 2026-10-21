@@ -197,6 +197,10 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 		return fail(&Error{Code: CodeUsage, Message: fmt.Sprintf(
 			"protocol version %d is not supported (this cpms speaks %d); use matching cpms binaries", req.V, Version)})
 	}
+	// Shutdown stops new requests, not the command already on the wire: the
+	// station may act on it, and abandoning it would leave cpms and the
+	// station disagreeing. Commands are bounded by the call timeout.
+	ctx = context.WithoutCancel(ctx)
 	s.log.Debug("control request", "op", string(req.Op), "evse", req.EVSE)
 
 	switch req.Op {
