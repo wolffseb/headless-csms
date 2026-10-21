@@ -38,6 +38,8 @@ ocpi:
   party_id: FYT
   # The OCPI root we advertise to the counterparty. It has to be reachable
   # from their host, which is why it is not derived from ocpi_bind above.
+  # Its path is also where cpms serves OCPI: this one serves under /ocpi,
+  # with the versions endpoint at <public_base_url>/versions.
   public_base_url: http://192.168.1.10:8080/ocpi
   # Handed to the counterparty out of band so they can start registration.
   token_a: "change-me-token-a"

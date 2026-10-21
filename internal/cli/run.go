@@ -16,6 +16,7 @@ import (
 	"github.com/wolffseb/cli-cpms/internal/control"
 	"github.com/wolffseb/cli-cpms/internal/control/socket"
 	"github.com/wolffseb/cli-cpms/internal/core"
+	"github.com/wolffseb/cli-cpms/internal/ocpi"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
 	"github.com/wolffseb/cli-cpms/internal/ocpp/csms"
 	"github.com/wolffseb/cli-cpms/internal/ocpp/ocppj"
@@ -32,7 +33,7 @@ func newRunCommand(opts *options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run the CSMS and wait for the charger to connect",
-		Long: "Starts the OCPP server and logs what the charge point does.\n\n" +
+		Long: "Starts the OCPP and OCPI servers and logs what the charge point does.\n\n" +
 			"Remember that the charger dials us, not the other way round: point the\n" +
 			"station's CSMS URL at the address printed on startup.",
 		Args: cobra.NoArgs,
@@ -127,6 +128,18 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	})
 	ctl.Attach(commands, svc)
 
+	// OCPI starts last: it is another way in to control, like the socket.
+	// Until registration exists, only TOKEN_A gets anywhere, and only as far
+	// as versions and the credentials stub.
+	ocpiServer, err := startOCPI(cfg, logger)
+	if err != nil {
+		commands.Close()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+		return err
+	}
+
 	events, unsubscribe := svc.Subscribe("log")
 	defer unsubscribe()
 
@@ -136,6 +149,7 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 
 	cmd.Printf("cpms listening for %s on ws://%s/ocpp/%s\n",
 		cfg.Charger.ID, server.Addr(), cfg.Charger.ID)
+	cmd.Printf("OCPI versions endpoint %s (listening on %s)\n", ocpiServer.VersionsURL(), ocpiServer.Addr())
 	cmd.Printf("control socket %s\n", ctl.Path())
 	cmd.Println("waiting for the charge point to connect; press Ctrl-C to stop")
 
@@ -149,15 +163,20 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 
 	<-ctx.Done()
 	cmd.Println("shutting down")
+	// One grace period covers both listeners.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+	defer cancel()
+
 	// Stop taking commands before the station connection goes away, so no
 	// command is half-sent into a closing socket.
+	if err := ocpiServer.Shutdown(shutdownCtx); err != nil {
+		logger.Warn("OCPI shutdown did not complete cleanly", "error", err)
+	}
 	ctl.Close()
 	// Reserve cancels in the background; let those finish while the station
 	// is still connected.
 	commands.Close()
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
-	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Warn("shutdown did not complete cleanly", "error", err)
 	}
@@ -165,6 +184,27 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	unsubscribe()
 	<-done
 	return nil
+}
+
+// startOCPI serves OCPI on server.ocpi_bind under the path of
+// ocpi.public_base_url, with the modules that exist so far.
+func startOCPI(cfg *config.Config, logger *slog.Logger) (*ocpi.Server, error) {
+	s, err := ocpi.New(ocpi.Options{
+		Bind:          cfg.Server.OCPIBind,
+		PublicBaseURL: cfg.OCPI.PublicBaseURL,
+		Auth:          ocpi.NewStaticAuthenticator(cfg.OCPI.TokenA),
+		Log:           logger,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.Register(ocpi.CredentialsStub()); err != nil {
+		return nil, err
+	}
+	if err := s.Start(); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 // newLogger builds the structured logger the protocol layers write to.
