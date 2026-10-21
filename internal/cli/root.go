@@ -24,6 +24,7 @@ var ErrSilent = errors.New("cpms: command reported its own error")
 type options struct {
 	configPath string
 	statePath  string
+	socketPath string
 }
 
 // resolvedStatePath is --state if given, otherwise state.json in the config
@@ -59,6 +60,8 @@ func NewRootCommand() *cobra.Command {
 		"path to the configuration file")
 	root.PersistentFlags().StringVar(&opts.statePath, "state", "",
 		"path to the state file (default: "+DefaultStateFile+" next to the config file)")
+	root.PersistentFlags().StringVar(&opts.socketPath, "socket", "",
+		"path to the control socket of `cpms run` (default: "+DefaultSocketFile+" next to the state file)")
 
 	root.AddCommand(
 		newRunCommand(opts),
@@ -66,5 +69,6 @@ func NewRootCommand() *cobra.Command {
 		newVersionCommand(),
 		newConfigCommand(opts),
 	)
+	root.AddCommand(newStationCommands(opts)...)
 	return root
 }
