@@ -193,6 +193,10 @@ type ProbeFeature struct {
 	Name    string   `json:"name"`
 	Support string   `json:"support"`
 	Grants  []string `json:"grants"`
+	// Assumed is true when the support was inferred rather than reported:
+	// OCPP 1.6 makes Core mandatory, so it is assumed when the station
+	// does not list its profiles.
+	Assumed bool `json:"assumed"`
 }
 
 // ProbeCapability is whether the station supports one capability.

@@ -10,7 +10,8 @@ import (
 )
 
 // The 1.6 feature profiles cpms needs, and what each one gives it. Core is
-// mandatory in 1.6, but a station still has to say it implements it.
+// mandatory in 1.6: a station that does not report its profiles at all is
+// assumed to implement it, while one that lists profiles without it does not.
 var neededProfiles = []struct {
 	name   string
 	grants []ocpp.Capability
@@ -90,7 +91,8 @@ func (cp *ChargePoint) Probe(ctx context.Context) (ocpp.ProbeReport, error) {
 
 // features lists the profiles cpms needs, present or not, then every other
 // profile the station advertises, in its order. Without the key at all,
-// nothing is known about any of them.
+// nothing is known about any of them except Core, which every 1.6 station
+// must implement: it is assumed present.
 func features(value string, reported bool) []ocpp.Feature {
 	advertised := parseProfiles(value)
 	has := make(map[string]bool, len(advertised))
@@ -102,14 +104,17 @@ func features(value string, reported bool) []ocpp.Feature {
 	needed := make(map[string]bool, len(neededProfiles))
 	for _, n := range neededProfiles {
 		needed[n.name] = true
-		support := ocpp.SupportUnknown
+		support, assumed := ocpp.SupportUnknown, false
+		if !reported && n.name == profileCore {
+			support, assumed = ocpp.SupportYes, true
+		}
 		if reported {
 			support = ocpp.SupportNo
 			if has[n.name] {
 				support = ocpp.SupportYes
 			}
 		}
-		out = append(out, ocpp.Feature{Name: n.name, Support: support, Grants: n.grants})
+		out = append(out, ocpp.Feature{Name: n.name, Support: support, Grants: n.grants, Assumed: assumed})
 	}
 	for _, p := range advertised {
 		if !needed[p] {

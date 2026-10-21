@@ -146,6 +146,40 @@ func TestProbeUnreportedKeys(t *testing.T) {
 	)
 }
 
+// A station that lists no feature profiles, like the third-party rey: Core is
+// mandatory in 1.6 and so assumed, the rest is unconfirmed, and none of it is
+// a failure.
+func TestProbeUnreportedProfilesAreUnconfirmedNotMissing(t *testing.T) {
+	t.Parallel()
+	s := newStation(t, 19357)
+	s.connect(func(o *simulator.Options) {
+		o.UnreportedKeys = []string{v16.KeySupportedFeatureProfiles}
+	})
+
+	stdout := s.mustCPMS("probe")
+	expectLines(t, stdout,
+		`Core +✓ +required`,
+		`Reservation +\? +required`,
+		`Core was not reported, but it is mandatory in OCPP 1\.6: assumed present\.`,
+		`Reservation was not reported, so cpms cannot be sure of it\. Try it \(`+"`cpms reserve`"+`\)`,
+	)
+	if strings.Contains(stdout, "cannot start or stop") || strings.Contains(stdout, "cannot release") {
+		t.Errorf("Core is assumed, so no line says it cannot work:\n%s", stdout)
+	}
+
+	var out struct {
+		OK          bool     `json:"ok"`
+		Missing     []string `json:"missing"`
+		Unconfirmed []string `json:"unconfirmed"`
+	}
+	if err := json.Unmarshal([]byte(s.mustCPMS("probe", "--json")), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.OK || len(out.Missing) != 0 || strings.Join(out.Unconfirmed, ",") != "reservation" {
+		t.Errorf("json = %+v, want ok, nothing missing, reservation unconfirmed", out)
+	}
+}
+
 func TestProbeNotConnectedExits3(t *testing.T) {
 	t.Parallel()
 	s := newStation(t, 19355)

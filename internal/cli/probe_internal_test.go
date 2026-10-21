@@ -38,18 +38,30 @@ func TestEvaluateProbeCapabilities(t *testing.T) {
 		name    string
 		support map[string]string
 		missing []string
+		// unconfirmed is what the station did not report either way.
+		unconfirmed []string
 	}{
-		{"everything", nil, nil},
+		{"everything", nil, nil, nil},
 		// RemoteTrigger is optional: without it cpms only refreshes less eagerly.
-		{"no trigger", map[string]string{"trigger_status": "no"}, nil},
-		{"no reservation", map[string]string{"reservation": "no"}, []string{"reservation"}},
-		// Not reported is not proof of support.
-		{"unknown unlock", map[string]string{"unlock": "unknown"}, []string{"unlock"}},
+		{"no trigger", map[string]string{"trigger_status": "no"}, nil, nil},
+		// Optional and unreported: nothing to say.
+		{"unknown trigger", map[string]string{"trigger_status": "unknown"}, nil, nil},
+		{"no reservation", map[string]string{"reservation": "no"}, []string{"reservation"}, nil},
+		// Not reported is not absent: the station may support it. Exit 0.
+		{"unknown reservation", map[string]string{"reservation": "unknown"}, nil, []string{"reservation"}},
+		{"absent unlock, unknown reservation", map[string]string{"unlock": "no", "reservation": "unknown"},
+			[]string{"unlock"}, []string{"reservation"}},
 	}
 	for _, c := range cases {
 		out := evaluateProbe(cfg, probeResult(60, c.support))
 		if got := strings.Join(out.Missing, ","); got != strings.Join(c.missing, ",") {
 			t.Errorf("%s: missing = %v, want %v", c.name, out.Missing, c.missing)
+		}
+		if got := strings.Join(out.Unconfirmed, ","); got != strings.Join(c.unconfirmed, ",") {
+			t.Errorf("%s: unconfirmed = %v, want %v", c.name, out.Unconfirmed, c.unconfirmed)
+		}
+		if out.Missing == nil || out.Unconfirmed == nil {
+			t.Errorf("%s: lists must be empty, not nil, for JSON", c.name)
 		}
 		if out.OK != (len(c.missing) == 0) {
 			t.Errorf("%s: ok = %v", c.name, out.OK)
