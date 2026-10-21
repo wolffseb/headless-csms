@@ -99,7 +99,7 @@ Scenarios make it misbehave on purpose, which is how the unhappy paths get teste
 | `occupied` | Answers `ReserveNow` with `Occupied` |
 | `slow` | Stalls every answer past the call timeout |
 | `unlock-fails` | Refuses to release the cable lock |
-| `silent` | Boots, then stops sending anything while still answering pings — a station whose OCPP layer has hung but whose connection is fine. This is what `heartbeat_timeout` exists to catch, and the only way to exercise it by hand |
+| `silent` | Boots, then stops sending anything and stops answering pings — a station that has vanished without closing the connection. This is what `heartbeat_timeout` exists to catch, and the only way to exercise it by hand |
 
 `--connectors`, `--id`, `--csms`, `--tag`, `--vendor` and `--model` override the config
 when you want to point it somewhere else or fake a different station.
@@ -496,6 +496,12 @@ allocation, and on load they are also kept ahead of every id still in the file.
 
 #### The station goes silent
 
+The watchdog is `charger.heartbeat_timeout`. It is reset by any frame from the station
+(call, result or error, not only `Heartbeat`) and by any WebSocket pong or ping, so a
+station that ignores the heartbeat interval cpms hands it but answers pings stays online.
+A station that sends nothing and answers no pings is dropped after the timeout. A station
+whose OCPP layer hung while its WebSocket stack still pongs is not noticed.
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -504,8 +510,8 @@ sequenceDiagram
     participant Core as core
 
     St->>Conn: last Heartbeat / StatusNotification
-    Note over Conn: pings keep checking the TCP connection,<br/>but only OCPP messages count as a sign of life
-    Conn->>Conn: nothing for charger.heartbeat_timeout
+    Note over Conn: cpms pings every heartbeat_timeout/3;<br/>any OCPP message, pong or ping from the station is a sign of life
+    Conn->>Conn: nothing at all for charger.heartbeat_timeout
     Conn->>Core: Disconnected ("heartbeat timeout")
     Core->>Core: every EVSE → UNKNOWN
     Note over St,Core: a real station reconnects on its own,<br/>and its next StatusNotifications restore the real statuses

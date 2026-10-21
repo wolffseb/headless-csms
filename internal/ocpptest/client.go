@@ -80,6 +80,11 @@ type Handshake struct {
 // are tested.
 func Dial(tb testing.TB, url string, subprotocols ...string) (*Client, *Handshake, error) {
 	tb.Helper()
+	return dial(tb, url, false, subprotocols...)
+}
+
+func dial(tb testing.TB, url string, ignorePings bool, subprotocols ...string) (*Client, *Handshake, error) {
+	tb.Helper()
 
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 5 * time.Second,
@@ -107,9 +112,35 @@ func Dial(tb testing.TB, url string, subprotocols ...string) (*Client, *Handshak
 		unsolicited: make(chan Response, 16),
 		done:        make(chan struct{}),
 	}
+	if ignorePings {
+		// Must be set before the read loop starts: gorilla does not
+		// synchronise the handler with reads.
+		ws.SetPingHandler(func(string) error { return nil })
+	}
 	go c.readLoop()
 	tb.Cleanup(c.Close)
 	return c, hs, nil
+}
+
+// MustDialIgnoringPings connects like MustDial but never answers a WebSocket
+// ping, which is what a station that has gone completely quiet looks like: any
+// real WebSocket stack would pong.
+func MustDialIgnoringPings(tb testing.TB, url string) *Client {
+	tb.Helper()
+
+	c, _, err := dial(tb, url, true, "ocpp1.6")
+	if err != nil {
+		tb.Fatalf("dialling %s: %v", url, err)
+	}
+	return c
+}
+
+// Ping sends a WebSocket ping to the server, as a station does when its
+// WebSocketPingInterval is set.
+func (c *Client) Ping() error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(time.Second))
 }
 
 // MustDial connects with the ocpp1.6 subprotocol and fails the test if it

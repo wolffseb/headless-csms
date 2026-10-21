@@ -89,7 +89,7 @@ type Conn struct {
 	// idleTimeout doubles as the heartbeat watchdog: it is applied as a read
 	// deadline and refreshed by every inbound OCPP message, so a station that
 	// stops talking is dropped without a second timer to keep in sync.
-	// WebSocket pongs pointedly do not refresh it; see readLoop.
+	// WebSocket pongs and pings refresh it too; see readLoop.
 	idleTimeout time.Duration
 
 	send  chan []byte
@@ -113,7 +113,8 @@ type Options struct {
 	Version ocpp.Version
 	// CallTimeout bounds an outbound request.
 	CallTimeout time.Duration
-	// IdleTimeout drops a connection with no inbound traffic for this long.
+	// IdleTimeout drops a connection with no inbound traffic (OCPP message,
+	// WebSocket pong or ping) for this long.
 	IdleTimeout time.Duration
 	Log         *slog.Logger
 }
@@ -236,7 +237,7 @@ func (c *Conn) Run(ctx context.Context, handler ocpp.Handler) string {
 
 // refreshDeadline restarts the idle watchdog. Any inbound OCPP message counts
 // as a sign of life, not only Heartbeat: the spec treats any message as one.
-// Pongs do not count; see readLoop.
+// So do WebSocket pongs and pings; see readLoop.
 func (c *Conn) refreshDeadline() {
 	_ = c.ws.SetReadDeadline(time.Now().Add(c.idleTimeout))
 }
@@ -244,19 +245,28 @@ func (c *Conn) refreshDeadline() {
 func (c *Conn) readLoop() string {
 	c.refreshDeadline()
 
-	// A pong deliberately does NOT refresh the deadline.
+	// A pong, or a ping from the station, counts as a sign of life.
 	//
-	// We ping every idleTimeout/3, and any WebSocket stack answers a ping with
-	// a pong automatically, without the peer's application being involved. If
-	// a pong counted as a sign of life, our own keepalive would reset the
-	// watchdog on every cycle and it could never fire — least of all in the
-	// case it exists for: a station whose TCP connection is healthy but whose
-	// OCPP layer has stopped talking.
+	// Plenty of stations ignore the heartbeat interval we hand them in
+	// BootNotification and heartbeat every few minutes, or not at all, and rely
+	// on WebSocket ping/pong instead; OCPP-J allows that. We ping every
+	// idleTimeout/3, so a station whose WebSocket stack answers stays online and
+	// one that answers neither pings nor OCPP is dropped after idleTimeout.
 	//
-	// So the watchdog measures application liveness (inbound OCPP messages)
-	// and the ping measures transport liveness (a failed write drops the
-	// connection from writeLoop). They are separate on purpose.
-	c.ws.SetPongHandler(func(string) error { return nil })
+	// The price: a station whose OCPP layer has hung while its WebSocket stack
+	// still pongs is no longer noticed. A hung application behind a live
+	// transport is far rarer than a quiet but healthy station.
+	c.ws.SetPongHandler(func(string) error {
+		c.refreshDeadline()
+		return nil
+	})
+	// Replace the default ping handler only to add the refresh; it must still
+	// answer with a pong.
+	defaultPing := c.ws.PingHandler()
+	c.ws.SetPingHandler(func(data string) error {
+		c.refreshDeadline()
+		return defaultPing(data)
+	})
 
 	for {
 		_, data, err := c.ws.ReadMessage()

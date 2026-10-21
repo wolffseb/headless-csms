@@ -674,12 +674,12 @@ func configValue(conf v16.GetConfigurationConf, key string) string {
 }
 
 // TestSilentStationIsDropped is the end-to-end half of the heartbeat watchdog:
-// a station that boots and then stops talking, while its WebSocket stack keeps
-// answering pings, must still be noticed as gone.
+// a station that boots and then stops talking, and answers no pings either,
+// must be noticed as gone.
 //
-// The unit-level guard is TestPongsDoNotKeepAnIdleConnectionAlive in the csms
-// package; this proves the same thing through a real simulator, which is what
-// makes the failure reproducible by hand with `--scenario silent`.
+// The unit-level guard is TestSilentStationIsDropped in the csms package; this
+// proves the same thing through a real simulator, which is what makes it
+// reproducible by hand with `--scenario silent`.
 func TestSilentStationIsDropped(t *testing.T) {
 	t.Parallel()
 

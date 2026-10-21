@@ -17,8 +17,10 @@ charger:
   # What we tell the station in the BootNotification response: how often it
   # should check in.
   heartbeat_interval: 60s
-  # Silence longer than this marks the station offline. Must exceed the
-  # interval above, or a punctual station gets marked offline between beats.
+  # Silence longer than this marks the station offline. Any OCPP message and
+  # any WebSocket ping/pong counts as a sign of life, not only Heartbeat; we
+  # ping every third of this. Must exceed the interval above, or a punctual
+  # station gets marked offline between beats.
   heartbeat_timeout: 90s
   # How long an outbound command waits for the station to answer.
   call_timeout: 30s

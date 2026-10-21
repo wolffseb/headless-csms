@@ -3,6 +3,7 @@ package csms
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -445,67 +446,129 @@ func TestOutboundCallAfterDisconnect(t *testing.T) {
 	}
 }
 
-func TestIdleConnectionIsDropped(t *testing.T) {
-	t.Parallel()
-
-	// The read deadline is the heartbeat watchdog: a station that stops
-	// talking is dropped and everything it reported becomes UNKNOWN.
-	//
-	// This timeout is below the one-second floor on the ping period, so no
-	// ping goes out during it and WebSocket keepalive plays no part. The
-	// case where pings do fire is TestPongsDoNotKeepAnIdleConnectionAlive,
-	// and it is the one that matters in production.
-	h := newHarness(t, func(o *Options) { o.IdleTimeout = 250 * time.Millisecond })
-	client := ocpptest.MustDial(t, h.url(testCP))
-	defer client.Close()
-
-	waitFor(t, "the charge point to register", func() bool { return h.core.IsOnline(testCP) })
-	waitFor(t, "the idle connection to be dropped", func() bool { return !h.core.IsOnline(testCP) })
-}
-
-// TestPongsDoNotKeepAnIdleConnectionAlive guards the distinction the whole
-// heartbeat timeout rests on.
-//
-// We ping the station every idleTimeout/3, and any WebSocket stack answers a
-// ping with a pong automatically. If a pong counted as a sign of life, our own
-// keepalive would refresh the watchdog on every cycle and heartbeat_timeout
-// could never fire against a station whose TCP connection is healthy but whose
-// OCPP layer has stopped talking — exactly the failure it exists to catch.
-//
-// The timeout here is deliberately above the one-second ping floor, so pings
-// really do go out during the test.
-func TestPongsDoNotKeepAnIdleConnectionAlive(t *testing.T) {
-	t.Parallel()
-
-	// Above the one-second ping floor so pings really fire, but short enough
-	// to keep the test quick.
-	const idle = 2 * time.Second
-
-	h := newHarness(t, func(o *Options) { o.IdleTimeout = idle })
-
-	// A plain WebSocket client: silent at the OCPP level, but answering our
-	// pings the way any charger's stack would.
-	client := ocpptest.MustDial(t, h.url(testCP))
-	defer client.Close()
-
-	waitFor(t, "the charge point to register", func() bool { return h.core.IsOnline(testCP) })
-
-	// A budget of its own: the shared waitFor caps at 3s, which would race the
-	// timeout under test rather than observe it.
-	start := time.Now()
-	deadline := time.Now().Add(idle + 5*time.Second)
-	for h.core.IsOnline(testCP) {
-		if time.Now().After(deadline) {
-			t.Fatalf("silent station still online %s after connecting; "+
-				"pongs are keeping the watchdog alive", time.Since(start))
+// stayOnline fails the test if the station goes offline within d.
+func stayOnline(t *testing.T, h *harness, d time.Duration) {
+	t.Helper()
+	end := time.Now().Add(d)
+	for time.Now().Before(end) {
+		if !h.core.IsOnline(testCP) {
+			t.Fatalf("station went offline with %s of the observation window left", time.Until(end))
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
 
-	// It must not have been dropped early either: that would mean the
-	// watchdog is firing on something other than the timeout.
-	if elapsed := time.Since(start); elapsed < idle/2 {
-		t.Errorf("dropped after %s, well before the %s timeout", elapsed, idle)
+// goesOffline waits up to idle+5s for the station to be marked offline and
+// returns how long that took.
+func goesOffline(t *testing.T, h *harness, idle time.Duration) time.Duration {
+	t.Helper()
+	// A budget of its own: the shared waitFor caps at 3s, which would race the
+	// timeout under test rather than observe it.
+	start := time.Now()
+	deadline := start.Add(idle + 5*time.Second)
+	for h.core.IsOnline(testCP) {
+		if time.Now().After(deadline) {
+			t.Fatalf("station still online %s after connecting", time.Since(start))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return time.Since(start)
+}
+
+// Above the one-second ping floor, so pings really go out, yet short enough to
+// keep the tests quick.
+const idleWithPings = 2 * time.Second
+
+// TestSilentStationIsDropped: a station that answers neither OCPP nor pings is
+// marked offline after the timeout, and not much before it.
+func TestSilentStationIsDropped(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, func(o *Options) { o.IdleTimeout = idleWithPings })
+	client := ocpptest.MustDialIgnoringPings(t, h.url(testCP))
+	defer client.Close()
+
+	waitFor(t, "the charge point to register", func() bool { return h.core.IsOnline(testCP) })
+
+	if elapsed := goesOffline(t, h, idleWithPings); elapsed < idleWithPings/2 {
+		t.Errorf("dropped after %s, well before the %s timeout", elapsed, idleWithPings)
+	}
+}
+
+// TestPongsKeepAQuietStationOnline is the rey case: it heartbeats every 300s
+// regardless of the interval we hand out, but its WebSocket stack answers our
+// pings. That is a live station and must stay online well past the timeout.
+func TestPongsKeepAQuietStationOnline(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, func(o *Options) { o.IdleTimeout = idleWithPings })
+	client := ocpptest.MustDial(t, h.url(testCP))
+	defer client.Close()
+
+	waitFor(t, "the charge point to register", func() bool { return h.core.IsOnline(testCP) })
+	client.MustCall("Echo", map[string]any{}) // its one heartbeat; the next is 300s away
+
+	stayOnline(t, h, 2*idleWithPings+time.Second)
+}
+
+// TestStationPingsKeepTheConnectionAlive covers WebSocketPingInterval: a
+// station that pings us, and ignores ours, is alive.
+func TestStationPingsKeepTheConnectionAlive(t *testing.T) {
+	t.Parallel()
+
+	const idle = 600 * time.Millisecond // below the ping floor: our pings play no part
+	h := newHarness(t, func(o *Options) { o.IdleTimeout = idle })
+	client := ocpptest.MustDialIgnoringPings(t, h.url(testCP))
+	defer client.Close()
+
+	waitFor(t, "the charge point to register", func() bool { return h.core.IsOnline(testCP) })
+
+	end := time.Now().Add(3 * idle)
+	for time.Now().Before(end) {
+		if err := client.Ping(); err != nil {
+			t.Fatalf("ping: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+		if !h.core.IsOnline(testCP) {
+			t.Fatal("a station sending WebSocket pings was dropped as idle")
+		}
+	}
+}
+
+// TestAnswersToOurCallsKeepTheConnectionAlive: CALLRESULTs and CALLERRORs are
+// inbound frames too. The station ignores pings, so the answers are the only
+// thing that can keep it alive.
+func TestAnswersToOurCallsKeepTheConnectionAlive(t *testing.T) {
+	t.Parallel()
+
+	for name, answer := range map[string]func(ocpptest.Call) (any, error){
+		"CALLRESULT": func(ocpptest.Call) (any, error) { return map[string]any{}, nil },
+		"CALLERROR":  func(ocpptest.Call) (any, error) { return nil, errors.New("no") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			const idle = 600 * time.Millisecond
+			h := newHarness(t, func(o *Options) { o.IdleTimeout = idle })
+			client := ocpptest.MustDialIgnoringPings(t, h.url(testCP))
+			defer client.Close()
+			client.OnCall(answer)
+
+			waitFor(t, "the charge point to register", func() bool { return h.core.IsOnline(testCP) })
+			conn, ok := h.ChargePoint(testCP)
+			if !ok {
+				t.Fatal("not connected")
+			}
+
+			end := time.Now().Add(3 * idle)
+			for time.Now().Before(end) {
+				_, _ = conn.Call(context.Background(), "Ping", map[string]any{})
+				time.Sleep(100 * time.Millisecond)
+				if !h.core.IsOnline(testCP) {
+					t.Fatalf("a station answering with a %s was dropped as idle", name)
+				}
+			}
+		})
 	}
 }
 
@@ -514,7 +577,7 @@ func TestTrafficKeepsTheConnectionAlive(t *testing.T) {
 
 	// Any inbound message counts as a sign of life, not only Heartbeat.
 	h := newHarness(t, func(o *Options) { o.IdleTimeout = 400 * time.Millisecond })
-	client := ocpptest.MustDial(t, h.url(testCP))
+	client := ocpptest.MustDialIgnoringPings(t, h.url(testCP))
 	defer client.Close()
 
 	waitFor(t, "the charge point to register", func() bool { return h.core.IsOnline(testCP) })

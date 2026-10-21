@@ -46,7 +46,8 @@ type Options struct {
 	// CallTimeout bounds an outbound request.
 	CallTimeout time.Duration
 	// IdleTimeout is the heartbeat watchdog: a connection with no inbound
-	// traffic for this long is dropped.
+	// traffic for this long is dropped. Any OCPP frame and any WebSocket
+	// pong or ping counts as traffic, and we ping at a third of this.
 	IdleTimeout time.Duration
 	Log         *slog.Logger
 }
