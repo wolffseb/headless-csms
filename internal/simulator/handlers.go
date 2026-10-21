@@ -278,6 +278,9 @@ func (s *Simulator) getConfiguration(payload json.RawMessage) (any, *ocpp.RPCErr
 	if s.opts.Scenario == ScenarioRejectReserve {
 		profiles = "Core,FirmwareManagement,RemoteTrigger"
 	}
+	if s.opts.FeatureProfiles != "" {
+		profiles = s.opts.FeatureProfiles
+	}
 
 	// The values are what a station set up for a CSMS that decides every
 	// authorization itself: no local whitelist, no shortcuts.

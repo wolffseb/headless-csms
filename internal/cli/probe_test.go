@@ -119,6 +119,21 @@ func TestProbeWithoutReservationExits10(t *testing.T) {
 	)
 }
 
+// Listing profiles without Core is a statement, not an omission: nothing is
+// assumed, and a station that cannot start sessions fails the probe.
+func TestProbeProfileListWithoutCoreExits10(t *testing.T) {
+	t.Parallel()
+	s := newStation(t, 19358)
+	s.connect(func(o *simulator.Options) { o.FeatureProfiles = "Reservation,RemoteTrigger" })
+
+	stdout, stderr, code := s.cpms("probe")
+	expectExit(t, "probe", code, cli.ExitMissingCapability, stderr, "remote_start_stop", "unlock")
+	expectLines(t, stdout, `Core +✗ +required`)
+	if strings.Contains(stdout, "assumed present") {
+		t.Errorf("Core was listed as absent, not omitted:\n%s", stdout)
+	}
+}
+
 func TestProbeWarnsAboutConnectorCount(t *testing.T) {
 	t.Parallel()
 	s := newStation(t, 19353)
