@@ -172,7 +172,7 @@ valid uids.
 | 7 | The station did not answer within `charger.call_timeout` |
 | 8 | Unlock failed, or the station does not support the command |
 | 9 | Refused by cpms before sending: already reserved (including while the cancel of a timed-out reservation is in flight), no reservation to cancel, nothing to stop, shutting down |
-| 10 | `cpms probe`: the station lacks a capability cpms requires |
+| 10 | `cpms probe`: the station reported that it lacks a capability cpms requires (one it merely did not report is not an error) |
 
 **How it works.** `cpms run` listens on a Unix socket, `cpms.sock` next to the state file by
 default (`--socket` overrides it; use the same value for `run` and the commands). The socket
@@ -237,13 +237,19 @@ cpms: the station lacks 1 capability that cpms requires: reservation
 - **Features** are named as the station names them (1.6 feature profiles). Core and
   Reservation are required; without RemoteTrigger cpms only learns about status changes when
   the station reports them by itself.
+- **Missing is not the same as not reported.** A capability the station reports as absent
+  is *missing*, and makes the command exit 10. A required capability the station says
+  nothing about (`?`) is *unconfirmed*: a warning that suggests trying it, such as
+  `cpms reserve`, with exit 0. Some stations list no `SupportedFeatureProfiles` at all;
+  Core is mandatory in OCPP 1.6, so it is then assumed present, and the probe says so.
 - **Settings** are the keys that change how the station behaves towards cpms. A key the
   station does not report shows as `not reported`; that is not an error.
 - **Checks** compare the station with config. A connector count that differs from the EVSEs
   in config, or a heartbeat interval other than `charger.heartbeat_interval`, is a warning
   (`!`); it does not change the exit code.
 - `--raw` adds every key the station reported, with whether it is read-only. `--json` prints
-  the whole report, including every key, with `ok`, `missing` and `warnings` for scripts.
+  the whole report, including every key, with `ok`, `missing`, `unconfirmed` and `warnings`
+  for scripts. `ok` is false only when `missing` is not empty.
 
 If the station is not connected, `cpms probe` exits 3 and prints the CSMS URL to configure on
 the station, the same one `cpms config validate` prints, plus when and why it last

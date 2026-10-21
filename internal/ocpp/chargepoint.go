@@ -75,11 +75,12 @@ type Result struct {
 	Raw string
 }
 
-// Capabilities are the optional features a station advertises. A feature
-// that is not advertised is false; "not advertised" is not an error.
+// Capabilities are the optional features a station advertises. Each is
+// yes, no or unknown, like a probe's: a station that does not list its
+// features has said nothing, which is not the same as saying no.
 type Capabilities struct {
-	Reservation   bool
-	RemoteTrigger bool
+	Reservation   Support
+	RemoteTrigger Support
 }
 
 // CommandStatus is a station's answer to a command, covering every outcome a

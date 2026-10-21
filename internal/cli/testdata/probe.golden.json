@@ -14,26 +14,30 @@
       "grants": [
         "remote_start_stop",
         "unlock"
-      ]
+      ],
+      "assumed": false
     },
     {
       "name": "Reservation",
       "support": "yes",
       "grants": [
         "reservation"
-      ]
+      ],
+      "assumed": false
     },
     {
       "name": "RemoteTrigger",
       "support": "yes",
       "grants": [
         "trigger_status"
-      ]
+      ],
+      "assumed": false
     },
     {
       "name": "FirmwareManagement",
       "support": "yes",
-      "grants": []
+      "grants": [],
+      "assumed": false
     }
   ],
   "capabilities": [
@@ -166,5 +170,6 @@
   ],
   "ok": true,
   "missing": [],
+  "unconfirmed": [],
   "warnings": []
 }

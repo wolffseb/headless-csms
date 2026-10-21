@@ -61,8 +61,12 @@ type Response struct {
 type Error struct {
 	Code Code `json:"code"`
 	// Status is the station's literal answer, when the station said no.
-	Status  string `json:"status,omitempty"`
-	Message string `json:"message"`
+	Status string `json:"status,omitempty"`
+	// CallError is the OCPP error code, such as "NotImplemented", when the
+	// station answered with a CALLERROR instead of a status. Status is empty
+	// then.
+	CallError string `json:"call_error,omitempty"`
+	Message   string `json:"message"`
 }
 
 func (e *Error) Error() string { return e.Message }
@@ -196,6 +200,10 @@ type ProbeFeature struct {
 	Name    string   `json:"name"`
 	Support string   `json:"support"`
 	Grants  []string `json:"grants"`
+	// Assumed is true when the support was inferred rather than reported:
+	// OCPP 1.6 makes Core mandatory, so it is assumed when the station
+	// does not list its profiles.
+	Assumed bool `json:"assumed"`
 }
 
 // ProbeCapability is whether the station supports one capability.

@@ -119,6 +119,21 @@ func TestProbeWithoutReservationExits10(t *testing.T) {
 	)
 }
 
+// Listing profiles without Core is a statement, not an omission: nothing is
+// assumed, and a station that cannot start sessions fails the probe.
+func TestProbeProfileListWithoutCoreExits10(t *testing.T) {
+	t.Parallel()
+	s := newStation(t, 19358)
+	s.connect(func(o *simulator.Options) { o.FeatureProfiles = "Reservation,RemoteTrigger" })
+
+	stdout, stderr, code := s.cpms("probe")
+	expectExit(t, "probe", code, cli.ExitMissingCapability, stderr, "remote_start_stop", "unlock")
+	expectLines(t, stdout, `Core +✗ +required`)
+	if strings.Contains(stdout, "assumed present") {
+		t.Errorf("Core was listed as absent, not omitted:\n%s", stdout)
+	}
+}
+
 func TestProbeWarnsAboutConnectorCount(t *testing.T) {
 	t.Parallel()
 	s := newStation(t, 19353)
@@ -144,6 +159,40 @@ func TestProbeUnreportedKeys(t *testing.T) {
 		`ok +heartbeat every 60s`,
 		`Every capability cpms requires is present\.`,
 	)
+}
+
+// A station that lists no feature profiles, like the third-party rey: Core is
+// mandatory in 1.6 and so assumed, the rest is unconfirmed, and none of it is
+// a failure.
+func TestProbeUnreportedProfilesAreUnconfirmedNotMissing(t *testing.T) {
+	t.Parallel()
+	s := newStation(t, 19357)
+	s.connect(func(o *simulator.Options) {
+		o.UnreportedKeys = []string{v16.KeySupportedFeatureProfiles}
+	})
+
+	stdout := s.mustCPMS("probe")
+	expectLines(t, stdout,
+		`Core +✓ +required`,
+		`Reservation +\? +required`,
+		`Core was not reported, but it is mandatory in OCPP 1\.6: assumed present\.`,
+		`Reservation was not reported, so cpms cannot be sure of it\. Try it \(`+"`cpms reserve`"+`\)`,
+	)
+	if strings.Contains(stdout, "cannot start or stop") || strings.Contains(stdout, "cannot release") {
+		t.Errorf("Core is assumed, so no line says it cannot work:\n%s", stdout)
+	}
+
+	var out struct {
+		OK          bool     `json:"ok"`
+		Missing     []string `json:"missing"`
+		Unconfirmed []string `json:"unconfirmed"`
+	}
+	if err := json.Unmarshal([]byte(s.mustCPMS("probe", "--json")), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.OK || len(out.Missing) != 0 || strings.Join(out.Unconfirmed, ",") != "reservation" {
+		t.Errorf("json = %+v, want ok, nothing missing, reservation unconfirmed", out)
+	}
 }
 
 func TestProbeNotConnectedExits3(t *testing.T) {
