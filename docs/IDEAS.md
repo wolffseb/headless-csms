@@ -178,6 +178,13 @@ where it was decided.
   other tags at start. The office Alpitronic is known to support ReserveNow (tested with
   another CSMS, chargecloud), so it does not need this; the hardware check, #11, confirms
   it against cpms.
+- **Set the station's HeartbeatInterval after boot.** Send `ChangeConfiguration
+  HeartbeatInterval=<charger.heartbeat_interval>` once the station has booted, so its
+  setting matches the interval cpms gave it in the BootNotification response (standard 1.6
+  Core). A v16-only method, not on the version-agnostic interface, and the simulator needs
+  a handler for it. Some stations, such as rey, report a stale setting while heartbeating at
+  the BootNotification interval, which is what made `cpms probe` overclaim; see the review
+  on #31 (https://github.com/wolffseb/headless-csms/pull/31#pullrequestreview-5605519636).
 - **OCPI Sessions module**, minimal, so Fryte can learn the `session_id` it needs for
   `STOP_SESSION`. See the decision in #16. It overlaps with idea 3.
 - **Recording and replaying OCPP traffic.** Record a real Alpitronic session to a file, and
