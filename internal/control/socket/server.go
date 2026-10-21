@@ -197,6 +197,10 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 		return fail(&Error{Code: CodeUsage, Message: fmt.Sprintf(
 			"protocol version %d is not supported (this cpms speaks %d); use matching cpms binaries", req.V, Version)})
 	}
+	// Shutdown stops new requests, not the command already on the wire: the
+	// station may act on it, and abandoning it would leave cpms and the
+	// station disagreeing. Commands are bounded by the call timeout.
+	ctx = context.WithoutCancel(ctx)
 	s.log.Debug("control request", "op", string(req.Op), "evse", req.EVSE)
 
 	switch req.Op {
@@ -265,6 +269,7 @@ func classify(err error) *Error {
 	e := &Error{Code: CodeInternal, Message: err.Error()}
 
 	var refused *control.RefusedError
+	var callErr *ocpp.RPCError
 	switch {
 	case errors.As(err, &refused):
 		e.Status = refused.Raw
@@ -279,6 +284,11 @@ func classify(err error) *Error {
 			// Rejected, and any status the spec does not define.
 			e.Code = CodeRejected
 		}
+	case errors.As(err, &callErr) &&
+		(callErr.Code == ocpp.ErrNotImplemented || callErr.Code == ocpp.ErrNotSupported):
+		// The station answered with a CALLERROR instead of a status: the same
+		// "cannot do that" as a NotSupported status.
+		e.Code = CodeUnlockFailed
 	case errors.Is(err, ocpp.ErrTimeout):
 		e.Code = CodeTimeout
 	case errors.Is(err, ocpp.ErrNotConnected):

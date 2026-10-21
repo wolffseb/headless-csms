@@ -77,6 +77,11 @@ func (c commands) Command(string) (ocpp.ChargePoint, error) {
 // returns the socket path.
 func serve(t *testing.T, station ocpp.ChargePoint) string {
 	t.Helper()
+	return serveCtx(t, context.Background(), station)
+}
+
+func serveCtx(t *testing.T, ctx context.Context, station ocpp.ChargePoint) string {
+	t.Helper()
 
 	cfg := &config.Config{
 		Charger:  config.Charger{ID: "CP"},
@@ -93,7 +98,7 @@ func serve(t *testing.T, station ocpp.ChargePoint) string {
 		t.Fatal(err)
 	}
 	srv.Attach(ctl, c)
-	srv.Serve(context.Background())
+	srv.Serve(ctx)
 	t.Cleanup(srv.Close)
 	return path
 }
@@ -128,6 +133,8 @@ func TestErrorCodes(t *testing.T) {
 		{"call error", socket.OpReserve, fakeStation{err: ocpp.Errorf(ocpp.ErrInternalError, "boom")}, socket.CodeInternal},
 		{"probe timeout", socket.OpProbe, fakeStation{err: fmt.Errorf("GetConfiguration: %w", ocpp.ErrTimeout)}, socket.CodeTimeout},
 		{"probe not connected", socket.OpProbe, nil, socket.CodeNotConnected},
+		{"call error not implemented", socket.OpReserve, fakeStation{err: ocpp.Errorf(ocpp.ErrNotImplemented, "no")}, socket.CodeUnlockFailed},
+		{"call error not supported", socket.OpUnlock, fakeStation{err: fmt.Errorf("UnlockConnector: %w", ocpp.Errorf(ocpp.ErrNotSupported, "no"))}, socket.CodeUnlockFailed},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -157,6 +164,51 @@ func TestErrorCodes(t *testing.T) {
 			t.Errorf("second reserve err = %v, want code %s", err, socket.CodeRefused)
 		}
 	})
+}
+
+// gatedStation holds ReserveNow until released and reports a cancelled
+// context as the error, like a real command on the wire would.
+type gatedStation struct {
+	fakeStation
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (g gatedStation) ReserveNow(ctx context.Context, _ ocpp.ReserveRequest) (ocpp.Result, error) {
+	close(g.entered)
+	select {
+	case <-g.release:
+		return ocpp.Result{Status: ocpp.CommandAccepted}, nil
+	case <-ctx.Done():
+		return ocpp.Result{}, ctx.Err()
+	}
+}
+
+// Ctrl-C on `cpms run` stops accepting new requests but must not cancel a
+// command already sent to the station: the station may act on it, and the
+// reservation would then be dropped locally.
+func TestShutdownDoesNotCancelCommandsOnTheWire(t *testing.T) {
+	t.Parallel()
+
+	g := gatedStation{entered: make(chan struct{}), release: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	path := serveCtx(t, ctx, g)
+
+	errc := make(chan error, 1)
+	go func() {
+		_, err := call(t, path, socket.Request{Op: socket.OpReserve, EVSE: "EVSE-1"})
+		errc <- err
+	}()
+
+	<-g.entered
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+	close(g.release)
+
+	if err := <-errc; err != nil {
+		t.Fatalf("reserve after shutdown began: %v", err)
+	}
 }
 
 func TestBadRequestsAreUsageErrors(t *testing.T) {
