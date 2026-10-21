@@ -111,6 +111,10 @@ type Options struct {
 	// GetConfiguration answer, as a station that does not know them would.
 	UnreportedKeys []string
 
+	// FeatureProfiles, when set, is the SupportedFeatureProfiles value the
+	// simulator reports instead of the one its scenario implies.
+	FeatureProfiles string
+
 	Log *slog.Logger
 	Now func() time.Time
 }

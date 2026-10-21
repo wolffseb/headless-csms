@@ -68,6 +68,10 @@ type Feature struct {
 	// Grants are the capabilities this feature provides. A feature cpms has
 	// no use for grants none.
 	Grants []Capability
+	// Assumed is true when Support was not read from the station but
+	// inferred: Core is mandatory in OCPP 1.6, so a station that does not
+	// list its profiles at all is taken to implement it.
+	Assumed bool
 }
 
 // Setting is one behaviour-relevant setting.

@@ -94,5 +94,14 @@ func plural(n int, noun string) string {
 	if n == 1 {
 		return fmt.Sprintf("%d %s", n, noun)
 	}
-	return fmt.Sprintf("%d %ss", n, noun)
+	return fmt.Sprintf("%d %s", n, pluralNoun(noun))
+}
+
+// pluralNoun is the regular English plural: "capability" becomes
+// "capabilities", but "day" stays "days".
+func pluralNoun(noun string) string {
+	if n := len(noun); n > 1 && noun[n-1] == 'y' && !strings.ContainsRune("aeiou", rune(noun[n-2])) {
+		return noun[:n-1] + "ies"
+	}
+	return noun + "s"
 }

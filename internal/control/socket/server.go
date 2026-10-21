@@ -287,8 +287,10 @@ func classify(err error) *Error {
 	case errors.As(err, &callErr) &&
 		(callErr.Code == ocpp.ErrNotImplemented || callErr.Code == ocpp.ErrNotSupported):
 		// The station answered with a CALLERROR instead of a status: the same
-		// "cannot do that" as a NotSupported status.
+		// "cannot do that" as a NotSupported status. There is no status to
+		// report, so the CALLERROR code goes in its own field.
 		e.Code = CodeUnlockFailed
+		e.CallError = string(callErr.Code)
 	case errors.Is(err, ocpp.ErrTimeout):
 		e.Code = CodeTimeout
 	case errors.Is(err, ocpp.ErrNotConnected):

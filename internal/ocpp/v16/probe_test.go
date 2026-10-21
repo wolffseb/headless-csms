@@ -109,6 +109,21 @@ func TestProbeWithoutReservationProfile(t *testing.T) {
 	}
 }
 
+// Listing profiles without Core is a statement, not an omission: nothing is
+// assumed then.
+func TestProbeCoreAbsentFromAListIsMissing(t *testing.T) {
+	t.Parallel()
+
+	cp, _ := newFakeChargePoint(`{"configurationKey":[{"key":"SupportedFeatureProfiles","readonly":true,"value":"Reservation"}]}`)
+	report, err := cp.Probe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := report.Support(ocpp.CapUnlock); got != ocpp.SupportNo {
+		t.Errorf("unlock = %s, want no", got)
+	}
+}
+
 // A station that leaves keys out has not said no to anything: every missing
 // key is "not reported", and what it did report is still read.
 func TestProbeMissingKeysAreNotReported(t *testing.T) {
@@ -123,9 +138,19 @@ func TestProbeMissingKeysAreNotReported(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Core is mandatory in 1.6, so it is assumed; the rest is not known.
 	for _, c := range ocpp.AllCapabilities() {
-		if got := report.Support(c); got != ocpp.SupportUnknown {
-			t.Errorf("%s = %s without SupportedFeatureProfiles, want unknown", c, got)
+		want := ocpp.SupportUnknown
+		if c == ocpp.CapRemoteStartStop || c == ocpp.CapUnlock {
+			want = ocpp.SupportYes
+		}
+		if got := report.Support(c); got != want {
+			t.Errorf("%s = %s without SupportedFeatureProfiles, want %s", c, got, want)
+		}
+	}
+	for _, f := range report.Features {
+		if f.Assumed != (f.Name == "Core") {
+			t.Errorf("%s assumed = %v", f.Name, f.Assumed)
 		}
 	}
 	if report.Connectors == nil || *report.Connectors != 1 {
@@ -139,6 +164,29 @@ func TestProbeMissingKeysAreNotReported(t *testing.T) {
 		reported := s.Name == "NumberOfConnectors" || s.Name == "HeartbeatInterval"
 		if s.Reported != reported {
 			t.Errorf("%s reported = %v, want %v", s.Name, s.Reported, reported)
+		}
+	}
+}
+
+// The value of SupportedFeatureProfiles is optional in 1.6, and some stations
+// send it empty: that says no more than leaving the key out does.
+func TestProbeEmptyProfilesAreNotReported(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"", "  ", " , "} {
+		cp, _ := newFakeChargePoint(`{"configurationKey":[{"key":"SupportedFeatureProfiles","readonly":true,"value":"` + value + `"}]}`)
+		report, err := cp.Probe(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range ocpp.AllCapabilities() {
+			want := ocpp.SupportUnknown
+			if c == ocpp.CapRemoteStartStop || c == ocpp.CapUnlock {
+				want = ocpp.SupportYes
+			}
+			if got := report.Support(c); got != want {
+				t.Errorf("value %q: %s = %s, want %s", value, c, got, want)
+			}
 		}
 	}
 }

@@ -116,29 +116,26 @@ const (
 	profileRemoteTrigger = "RemoteTrigger"
 )
 
-// Capabilities reads SupportedFeatureProfiles. A station that does not know
-// the key advertises nothing, which is an answer rather than a failure.
+// Capabilities reads SupportedFeatureProfiles. A station that does not report
+// the key, or reports it empty, has not said anything about its optional
+// features: they are unknown, as in Probe, not absent.
 func (cp *ChargePoint) Capabilities(ctx context.Context) (ocpp.Capabilities, error) {
 	conf, err := cp.GetConfiguration(ctx, []string{KeySupportedFeatureProfiles})
 	if err != nil {
 		return ocpp.Capabilities{}, err
 	}
 
-	var caps ocpp.Capabilities
+	var value string
 	for _, k := range conf.ConfigurationKey {
-		if k.Key != KeySupportedFeatureProfiles {
-			continue
-		}
-		for _, p := range parseProfiles(k.Value) {
-			switch p {
-			case profileReservation:
-				caps.Reservation = true
-			case profileRemoteTrigger:
-				caps.RemoteTrigger = true
-			}
+		if k.Key == KeySupportedFeatureProfiles {
+			value = k.Value
 		}
 	}
-	return caps, nil
+	report := ocpp.ProbeReport{Features: features(value)}
+	return ocpp.Capabilities{
+		Reservation:   report.Support(ocpp.CapReservation),
+		RemoteTrigger: report.Support(ocpp.CapTriggerStatus),
+	}, nil
 }
 
 // GetConfiguration reads configuration keys; nil keys means all of them.

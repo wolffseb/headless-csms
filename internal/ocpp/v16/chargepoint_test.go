@@ -297,29 +297,34 @@ func TestCapabilities(t *testing.T) {
 		{
 			name:     "both advertised",
 			response: `{"configurationKey":[{"key":"SupportedFeatureProfiles","readonly":true,"value":"Core,Reservation,RemoteTrigger"}]}`,
-			want:     ocpp.Capabilities{Reservation: true, RemoteTrigger: true},
+			want:     ocpp.Capabilities{Reservation: ocpp.SupportYes, RemoteTrigger: ocpp.SupportYes},
 		},
 		{
 			name:     "spaces after commas",
 			response: `{"configurationKey":[{"key":"SupportedFeatureProfiles","readonly":true,"value":"Core, Reservation"}]}`,
-			want:     ocpp.Capabilities{Reservation: true},
+			want:     ocpp.Capabilities{Reservation: ocpp.SupportYes, RemoteTrigger: ocpp.SupportNo},
 		},
 		{
 			name:     "core only",
 			response: `{"configurationKey":[{"key":"SupportedFeatureProfiles","readonly":true,"value":"Core"}]}`,
-			want:     ocpp.Capabilities{},
+			want:     ocpp.Capabilities{Reservation: ocpp.SupportNo, RemoteTrigger: ocpp.SupportNo},
 		},
 		{
-			// The value is optional in 1.6.
+			// The value is optional in 1.6; without it nothing is known.
 			name:     "no value",
 			response: `{"configurationKey":[{"key":"SupportedFeatureProfiles","readonly":true}]}`,
-			want:     ocpp.Capabilities{},
+			want:     ocpp.Capabilities{Reservation: ocpp.SupportUnknown, RemoteTrigger: ocpp.SupportUnknown},
 		},
 		{
-			// Unknown means "not advertised", not a failure.
+			name:     "blank value",
+			response: `{"configurationKey":[{"key":"SupportedFeatureProfiles","readonly":true,"value":" "}]}`,
+			want:     ocpp.Capabilities{Reservation: ocpp.SupportUnknown, RemoteTrigger: ocpp.SupportUnknown},
+		},
+		{
+			// An unknown key is not a failure, and not a "no" either.
 			name:     "unknown key",
 			response: `{"unknownKey":["SupportedFeatureProfiles"]}`,
-			want:     ocpp.Capabilities{},
+			want:     ocpp.Capabilities{Reservation: ocpp.SupportUnknown, RemoteTrigger: ocpp.SupportUnknown},
 		},
 	}
 

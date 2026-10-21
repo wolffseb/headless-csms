@@ -49,11 +49,16 @@ func needOf(name string) (need, bool) {
 // cpms's verdict on it. Its field names are a public interface.
 type probeOutput struct {
 	socket.ProbeResult
-	// OK is true when every capability cpms requires is present.
+	// OK is true when no capability cpms requires is missing. Unconfirmed
+	// ones do not make it false.
 	OK bool `json:"ok"`
-	// Missing lists the required capabilities that are absent or that the
-	// station did not report.
+	// Missing lists the required capabilities the station reported as
+	// absent. Only these make `cpms probe` exit 10.
 	Missing []string `json:"missing"`
+	// Unconfirmed lists the required capabilities the station did not
+	// report either way, such as Reservation from a station that lists no
+	// feature profiles. They may well work; try them.
+	Unconfirmed []string `json:"unconfirmed"`
 	// Warnings are mismatches with config, and values the station did not
 	// report that would have been checked.
 	Warnings []string `json:"warnings"`
@@ -71,7 +76,11 @@ func newProbeCommand(opts *options) *cobra.Command {
 			"capabilities cpms relies on it has, the settings that change how it\n" +
 			"behaves towards cpms, and where it disagrees with config. It changes\n" +
 			"nothing on the station.\n\n" +
-			"Exits 10 if a capability cpms requires is missing.",
+			"A capability the station reports as absent is missing, and the command\n" +
+			"exits 10. One it does not report either way is unconfirmed: that is\n" +
+			"a warning, not a failure, and the command exits 0. Core is mandatory in\n" +
+			"OCPP 1.6, so it is assumed present when the station lists no feature\n" +
+			"profiles at all.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			env, err := newStationEnv(cmd, opts)
@@ -117,11 +126,19 @@ func newProbeCommand(opts *options) *cobra.Command {
 // evaluateProbe checks a probe result against what cpms needs and against
 // config.
 func evaluateProbe(cfg *config.Config, r socket.ProbeResult) probeOutput {
-	out := probeOutput{ProbeResult: r, Missing: []string{}, Warnings: []string{}}
+	out := probeOutput{ProbeResult: r, Missing: []string{}, Unconfirmed: []string{}, Warnings: []string{}}
 
 	for _, c := range r.Capabilities {
-		if n, ok := needOf(c.Name); ok && n.required && c.Support != string(ocpp.SupportYes) {
+		n, ok := needOf(c.Name)
+		if !ok || !n.required {
+			continue
+		}
+		switch ocpp.Support(c.Support) {
+		case ocpp.SupportYes:
+		case ocpp.SupportNo:
 			out.Missing = append(out.Missing, c.Name)
+		default:
+			out.Unconfirmed = append(out.Unconfirmed, c.Name)
 		}
 	}
 	out.OK = len(out.Missing) == 0
@@ -180,11 +197,16 @@ func configChecks(cfg *config.Config, r socket.ProbeResult) []check {
 	switch {
 	case got >= timeout:
 		out = append(out, check{markWarn, fmt.Sprintf(
-			"the station heartbeats every %s, not before charger.heartbeat_timeout (%s) runs out: cpms will drop it as silent",
+			"the station's HeartbeatInterval setting is %s, which is not before charger.heartbeat_timeout (%s) runs out. "+
+				"It may be a stale setting (some stations heartbeat at the BootNotification interval regardless): "+
+				"check the heartbeat spacing in the `--log-level debug` log. "+
+				"If the station really heartbeats that slowly, cpms will mark it offline after charger.heartbeat_timeout",
 			seconds(got), seconds(timeout))})
 	case got != want:
 		out = append(out, check{markWarn, fmt.Sprintf(
-			"the station heartbeats every %s, but charger.heartbeat_interval is %s; it did not take the interval cpms gave it at boot",
+			"the station's HeartbeatInterval setting is %s, but charger.heartbeat_interval is %s. "+
+				"It may be a stale setting (some stations heartbeat at the BootNotification interval regardless): "+
+				"check the heartbeat spacing in the `--log-level debug` log",
 			seconds(got), seconds(want))})
 	default:
 		out = append(out, check{markOK, fmt.Sprintf("heartbeat every %s, as charger.heartbeat_interval says", seconds(got))})
@@ -271,19 +293,37 @@ func printProbe(cmd *cobra.Command, out probeOutput, raw bool) {
 	}
 
 	cmd.Println()
-	if out.OK {
-		cmd.Println("Every capability cpms requires is present.")
-		return
+	for _, f := range r.Features {
+		if f.Assumed {
+			cmd.Printf("%s was not reported, but it is mandatory in OCPP %s: assumed present.\n", f.Name, r.ChargePoint.OCPPVersion)
+		}
 	}
 	for _, name := range out.Missing {
 		n, _ := needOf(name)
-		state := "is missing"
-		for _, c := range r.Capabilities {
-			if c.Name == name && c.Support == string(ocpp.SupportUnknown) {
-				state = "was not reported, so cpms cannot count on it"
-			}
-		}
-		cmd.Printf("%s %s: %s\n", grantedBy(r, name), state, n.without)
+		cmd.Printf("%s is missing: %s\n", grantedBy(r, name), n.without)
+	}
+	for _, name := range out.Unconfirmed {
+		n, _ := needOf(name)
+		cmd.Printf("%s was not reported, so cpms cannot be sure of it. Try it (%s); if the station refuses, this is what stops working: %s\n",
+			grantedBy(r, name), tryIt(name), n.without)
+	}
+	if len(out.Missing) == 0 && len(out.Unconfirmed) == 0 {
+		cmd.Println("Every capability cpms requires is present.")
+	}
+}
+
+// tryIt names a command that exercises a capability, for the user to run
+// when the station did not say whether it has it.
+func tryIt(capability string) string {
+	switch ocpp.Capability(capability) {
+	case ocpp.CapRemoteStartStop:
+		return "`cpms start`"
+	case ocpp.CapUnlock:
+		return "`cpms unlock`"
+	case ocpp.CapReservation:
+		return "`cpms reserve`"
+	default:
+		return "the matching command"
 	}
 }
 
