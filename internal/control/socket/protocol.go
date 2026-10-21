@@ -57,10 +57,16 @@ type Response struct {
 	Error  *Error          `json:"error,omitempty"`
 }
 
+// CallErrorStatusPrefix starts the Status of an Error whose cause was a
+// CALLERROR from the station, such as "CALLERROR NotImplemented".
+const CallErrorStatusPrefix = "CALLERROR "
+
 // Error is a failure, as a closed set of codes the CLI turns into exit codes.
 type Error struct {
 	Code Code `json:"code"`
-	// Status is the station's literal answer, when the station said no.
+	// Status is the station's literal answer, when the station said no. When
+	// it answered with a CALLERROR instead of a status it is
+	// CallErrorStatusPrefix followed by the error code.
 	Status  string `json:"status,omitempty"`
 	Message string `json:"message"`
 }

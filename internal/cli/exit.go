@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/wolffseb/cli-cpms/internal/control/socket"
 )
@@ -79,23 +80,38 @@ func exitFor(op socket.Op, evse string, err error) error {
 		if op == socket.OpReserve {
 			hint = ". If it does not support the Reservation profile, `cpms probe` will say so"
 		}
-		return &ExitStatus{Code: ExitRejected, Err: msg("the station rejected the %s (status %s)%s", noun(op), se.Status, hint)}
+		return &ExitStatus{Code: ExitRejected, Err: msg("the station rejected the %s%s%s", noun(op), answer(se), hint)}
 	case socket.CodeOccupied:
-		return &ExitStatus{Code: ExitOccupied, Err: msg("the station says it is occupied (status %s)", se.Status)}
+		return &ExitStatus{Code: ExitOccupied, Err: msg("the station says it is occupied%s", answer(se))}
 	case socket.CodeFaulted:
-		return &ExitStatus{Code: ExitFaulted, Err: msg("the station says it is faulted or unavailable (status %s)", se.Status)}
+		return &ExitStatus{Code: ExitFaulted, Err: msg("the station says it is faulted or unavailable%s", answer(se))}
 	case socket.CodeTimeout:
 		return &ExitStatus{Code: ExitTimeout, Err: msg("the station did not answer within charger.call_timeout")}
 	case socket.CodeUnlockFailed:
 		if se.Status == "UnlockFailed" {
-			return &ExitStatus{Code: ExitUnlockFailed, Err: msg("the station could not release the cable lock (status %s)", se.Status)}
+			return &ExitStatus{Code: ExitUnlockFailed, Err: msg("the station could not release the cable lock%s", answer(se))}
 		}
-		return &ExitStatus{Code: ExitUnlockFailed, Err: msg("the station does not support this (status %s)", se.Status)}
+		return &ExitStatus{Code: ExitUnlockFailed, Err: msg("the station does not support this%s", answer(se))}
 	case socket.CodeRefused:
 		// control's message already names the EVSE.
 		return &ExitStatus{Code: ExitRefused, Err: errors.New(se.Message)}
 	default:
 		return &ExitStatus{Code: ExitError, Err: errors.New(se.Message)}
+	}
+}
+
+// answer is the station's own answer, for the end of a message: " (status
+// Rejected)", or " (CALLERROR NotImplemented)" when it answered with an error
+// instead of a status. It is empty when there is nothing to say, never an
+// empty "(status )".
+func answer(se *socket.Error) string {
+	switch {
+	case se.Status == "":
+		return ""
+	case strings.HasPrefix(se.Status, socket.CallErrorStatusPrefix):
+		return " (" + se.Status + ")"
+	default:
+		return " (status " + se.Status + ")"
 	}
 }
 
