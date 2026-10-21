@@ -310,10 +310,12 @@ func TestTimeoutExitCode(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Errorf("timeout took %s, want about the 1s call timeout", elapsed)
 	}
-	// The timed-out reservation must not linger.
-	if r := s.status().EVSEs[0].Reservation; r != nil {
+	// The timed-out reservation is not held. While the cancel sent after it is
+	// in flight, status says so; then it is gone.
+	if r := s.status().EVSEs[0].Reservation; r != nil && r.State != "cancelling" {
 		t.Errorf("a timed-out reservation is held: %+v", r)
 	}
+	s.waitStatus("the cancel to finish", func(st socket.Status) bool { return st.EVSEs[0].Reservation == nil })
 }
 
 func TestNoRunningCPMSExits2(t *testing.T) {

@@ -201,6 +201,19 @@ func drain(ch <-chan core.Event) []core.Event {
 	}
 }
 
+// waitCancelled waits until the background cancel of an orphan has an answer,
+// which is when core drops the cancelling record.
+func (r *rig) waitCancelled(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(r.reservations()) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("the cancel never finished; reservations = %+v", r.reservations())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func endedAs(events []core.Event) []string {
 	var out []string
 	for _, e := range events {
@@ -275,15 +288,19 @@ func TestReserveTimeoutLeavesNothingBehind(t *testing.T) {
 	if !errors.Is(err, ocpp.ErrTimeout) {
 		t.Fatalf("err = %v, want ErrTimeout", err)
 	}
-	if got := r.reservations(); len(got) != 0 {
-		t.Errorf("a timed-out reservation is dangling: %+v", got)
+	// At most the cancelling record that keeps the EVSE occupied; never a
+	// reservation we claim to hold.
+	for _, got := range r.reservations() {
+		if got.Status != core.ReservationCancelling {
+			t.Errorf("a timed-out reservation is dangling: %+v", got)
+		}
 	}
 	if got := endedAs(drain(r.events)); len(got) != 1 || got[0] != core.ReservationTimeout {
 		t.Errorf("ended = %v, want [timeout]", got)
 	}
 
 	// And the EVSE is free for the next attempt, once the cancel is through.
-	r.ctl.Close()
+	r.waitCancelled(t)
 	delete(r.station.fail, "reserve")
 	if _, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1"}); err != nil {
 		t.Errorf("retry after a timeout: %v", err)
@@ -302,7 +319,7 @@ func TestReserveTimeoutCancelsAtTheStation(t *testing.T) {
 	if !errors.Is(err, ocpp.ErrTimeout) {
 		t.Fatalf("err = %v, want ErrTimeout", err)
 	}
-	r.ctl.Close() // the cancel runs in the background
+	r.waitCancelled(t) // the cancel runs in the background
 	r.station.mu.Lock()
 	defer r.station.mu.Unlock()
 	if len(r.station.reserve) != 1 || len(r.station.cancels) != 1 ||
@@ -327,7 +344,7 @@ func TestReserveDroppedConnectionFreesTheEVSELocally(t *testing.T) {
 	if !errors.Is(err, ocpp.ErrNotConnected) {
 		t.Fatalf("err = %v, want ErrNotConnected", err)
 	}
-	r.ctl.Close()
+	r.waitCancelled(t)
 	if got := r.reservations(); len(got) != 0 {
 		t.Errorf("reservations = %+v, want none", got)
 	}
@@ -360,8 +377,12 @@ func TestEVSEStaysBlockedWhileTheOrphanIsCancelled(t *testing.T) {
 	}
 	<-r.station.cancelEntered // the cancel is now blocked at the station
 
-	if got := r.reservations(); len(got) != 0 {
-		t.Errorf("reservations after the timeout = %+v, want none recorded", got)
+	// Status shows why the EVSE is blocked; it is not a reservation we hold.
+	if got := r.reservations(); len(got) != 1 || got[0].Status != core.ReservationCancelling {
+		t.Errorf("reservations during the cancel = %+v, want one cancelling", got)
+	}
+	if _, ok := r.core.ActiveReservation("EVSE-1"); ok {
+		t.Error("a cancelling reservation counts as active")
 	}
 	_, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1", IDTag: "OTHER"})
 	if !errors.Is(err, control.ErrAlreadyReserved) {
@@ -375,7 +396,7 @@ func TestEVSEStaysBlockedWhileTheOrphanIsCancelled(t *testing.T) {
 	}
 
 	close(gate)
-	r.ctl.Close()
+	r.waitCancelled(t)
 	delete(r.station.fail, "reserve")
 	if _, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1", IDTag: "OTHER"}); err != nil {
 		t.Errorf("Reserve after the cancel answered: %v", err)
@@ -694,5 +715,55 @@ func TestCloseWaitsForTheOrphanCancel(t *testing.T) {
 	case <-closed:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Close did not return after the cancel answered")
+	}
+}
+
+// After Close, a Reserve is refused before anything is recorded or sent, so
+// no cancel can start that nobody waits for.
+func TestReserveAfterCloseIsRefused(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.station.fail["reserve"] = ocpp.ErrTimeout
+
+	r.ctl.Close()
+	r.ctl.Close() // twice is fine
+	_, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1"})
+	if !errors.Is(err, control.ErrShuttingDown) {
+		t.Fatalf("err = %v, want ErrShuttingDown", err)
+	}
+	if n := r.station.callCount(); n != 0 {
+		t.Errorf("station saw %d calls, want none", n)
+	}
+	if got := r.reservations(); len(got) != 0 {
+		t.Errorf("reservations = %+v, want none", got)
+	}
+}
+
+// Reserve and Close race: under -race this fails if a cancel can be added
+// while Close is waiting.
+func TestReserveRacesClose(t *testing.T) {
+	t.Parallel()
+	for range 50 {
+		r := newRig(t)
+		r.station.fail["reserve"] = ocpp.ErrTimeout
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1"})
+			if err != nil && !errors.Is(err, ocpp.ErrTimeout) && !errors.Is(err, control.ErrShuttingDown) {
+				t.Errorf("Reserve: %v", err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			r.ctl.Close()
+		}()
+		wg.Wait()
+		r.ctl.Close()
+		// Whatever Close let through has finished its cancel.
+		if got := r.reservations(); len(got) != 0 {
+			t.Fatalf("reservations after Close = %+v, want none", got)
+		}
 	}
 }

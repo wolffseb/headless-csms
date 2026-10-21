@@ -20,6 +20,13 @@ const (
 	ReservationPending ReservationStatus = "pending"
 	// ReservationActive means the station accepted it.
 	ReservationActive ReservationStatus = "active"
+	// ReservationCancelling means ReserveNow got no usable answer, so the
+	// station may still hold the reservation, and a CancelReservation is on
+	// its way. It no longer counts as a reservation we hold (it is not
+	// ActiveReservation, never expires and is never persisted), but it
+	// occupies the EVSE so that a second ReserveNow cannot overtake the
+	// cancel and be answered Occupied.
+	ReservationCancelling ReservationStatus = "cancelling"
 )
 
 // Why a reservation ended, as carried in EventReservationEnded.Detail.
@@ -37,8 +44,8 @@ const (
 	ReservationFailed = "failed"
 )
 
-// ErrAlreadyReserved means the EVSE already holds a reservation, pending or
-// active. It is refused locally, before anything is sent.
+// ErrAlreadyReserved means the EVSE already holds a reservation: pending,
+// active or being cancelled. It is refused locally, before anything is sent.
 var ErrAlreadyReserved = errors.New("EVSE already has a reservation")
 
 // Reservation holds an EVSE for an RFID tag until it expires.
@@ -139,7 +146,7 @@ func (s *Service) ActivateReservation(id int) (Reservation, bool) {
 	return out, true
 }
 
-// EndReservation removes a reservation, pending or active, and reports why
+// EndReservation removes a reservation, in any status, and reports why
 // with EventReservationEnded. It returns false if there was no such
 // reservation, for instance because it expired a moment earlier.
 func (s *Service) EndReservation(id int, reason string) (Reservation, bool) {
@@ -149,12 +156,43 @@ func (s *Service) EndReservation(id int, reason string) (Reservation, bool) {
 		s.mu.Unlock()
 		return Reservation{}, false
 	}
+	cancelling := r.Status == ReservationCancelling
 	event := s.endLocked(r, reason)
 	s.mu.Unlock()
 
+	if cancelling {
+		// Already reported by OrphanReservation, and never persisted.
+		return r.Reservation, true
+	}
 	s.persistOrLog("ended reservation", id)
 	s.bus.publish(event)
 	return r.Reservation, true
+}
+
+// OrphanReservation marks a pending reservation whose ReserveNow timed out or
+// failed as cancelling and reports why with EventReservationEnded, as
+// EndReservation would: from here on nothing claims we hold it. The record
+// stays, so the EVSE stays occupied, until the caller has an answer to its
+// CancelReservation and calls EndReservation, which then removes the record
+// without a second event. It returns false if there is no such pending
+// reservation.
+func (s *Service) OrphanReservation(id int, reason string) (Reservation, bool) {
+	s.mu.Lock()
+	r, ok := s.reservations[id]
+	if !ok || r.Status != ReservationPending {
+		s.mu.Unlock()
+		return Reservation{}, false
+	}
+	r.stopTimer()
+	r.Status = ReservationCancelling
+	out := r.Reservation
+	s.mu.Unlock()
+
+	s.bus.publish(Event{
+		Kind: EventReservationEnded, At: s.now(), ChargePointID: out.ChargePointID,
+		EVSEUID: out.EVSEUID, ReservationID: out.ID, IDTag: out.IDTag, Detail: reason,
+	})
+	return out, true
 }
 
 // ActiveReservation returns the active reservation on an EVSE, if any.

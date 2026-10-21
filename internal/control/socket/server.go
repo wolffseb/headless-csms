@@ -294,6 +294,7 @@ func classify(err error) *Error {
 	case errors.Is(err, ocpp.ErrNotConnected):
 		e.Code = CodeNotConnected
 	case errors.Is(err, control.ErrAlreadyReserved),
+		errors.Is(err, control.ErrShuttingDown),
 		errors.Is(err, control.ErrNoReservation),
 		errors.Is(err, control.ErrNoActiveTransaction):
 		e.Code = CodeRefused

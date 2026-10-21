@@ -23,6 +23,9 @@ var (
 	ErrAlreadyReserved = core.ErrAlreadyReserved
 	// ErrNoReservation means there is no active reservation to cancel.
 	ErrNoReservation = errors.New("no active reservation")
+	// ErrShuttingDown means Close has been called: no new reservation is
+	// accepted, because its cancel could not be waited for.
+	ErrShuttingDown = errors.New("shutting down")
 	// ErrNoActiveTransaction means there is no running session to stop.
 	ErrNoActiveTransaction = errors.New("no active transaction")
 )

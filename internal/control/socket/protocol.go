@@ -91,7 +91,8 @@ const (
 	// not support the command.
 	CodeUnlockFailed Code = "unlock_failed"
 	// CodeRefused means cpms refused locally, before sending anything:
-	// already reserved, nothing to cancel, nothing to stop.
+	// already reserved, nothing to cancel, nothing to stop, or cpms is
+	// shutting down.
 	CodeRefused Code = "refused"
 	// CodeInternal is anything else.
 	CodeInternal Code = "internal"
@@ -149,7 +150,9 @@ type ReservationStatus struct {
 	ID        int       `json:"id"`
 	IDTag     string    `json:"id_tag"`
 	ExpiresAt time.Time `json:"expires_at"`
-	// State is "pending" while the station has not answered, then "active".
+	// State is "pending" while the station has not answered, then "active". A
+	// reservation whose ReserveNow timed out or failed is "cancelling" until
+	// the cancel sent after it has an answer.
 	State string `json:"state"`
 }
 

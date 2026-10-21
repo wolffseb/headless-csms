@@ -496,3 +496,61 @@ func TestLoadIsSafeAgainstATimerFiringImmediately(t *testing.T) {
 type noStop struct{}
 
 func (noStop) Stop() bool { return false }
+
+// An orphaned reservation (ReserveNow got no usable answer) keeps the EVSE
+// occupied while its cancel is in flight, without claiming we hold it.
+func TestOrphanedReservationOccupiesTheEVSEUntilEnded(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, clocktest.New(t0), statetest.New(t))
+
+	pending, err := r.svc.BeginReservation(core.Reservation{
+		ChargePointID: testCP, EVSEUID: "EVSE-1", IDTag: "A", ExpiresAt: t0.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.svc.OrphanReservation(pending.ID, core.ReservationTimeout); !ok {
+		t.Fatal("OrphanReservation found nothing pending")
+	}
+	// Only a pending reservation can be orphaned.
+	if _, ok := r.svc.OrphanReservation(pending.ID, core.ReservationTimeout); ok {
+		t.Error("OrphanReservation took a reservation that is already cancelling")
+	}
+
+	got := r.reservations(t)
+	if len(got) != 1 || got[0].ID != pending.ID || got[0].Status != core.ReservationCancelling {
+		t.Fatalf("reservations = %+v, want %d cancelling", got, pending.ID)
+	}
+	if _, ok := r.svc.ActiveReservation("EVSE-1"); ok {
+		t.Error("a cancelling reservation counts as active")
+	}
+	_, err = r.svc.BeginReservation(core.Reservation{
+		ChargePointID: testCP, EVSEUID: "EVSE-1", IDTag: "B", ExpiresAt: t0.Add(time.Hour),
+	})
+	if !errors.Is(err, core.ErrAlreadyReserved) {
+		t.Errorf("reserve on a cancelling EVSE: err = %v, want ErrAlreadyReserved", err)
+	}
+	if got := r.store.Get().Reservations; len(got) != 0 {
+		t.Errorf("a cancelling reservation reached state.json: %+v", got)
+	}
+
+	// The timer of an active reservation does not apply to it.
+	r.clk.Advance(time.Hour)
+	if got := r.reservations(t); len(got) != 1 {
+		t.Errorf("reservations after the expiry time = %+v, want the cancelling one still there", got)
+	}
+
+	r.svc.EndReservation(pending.ID, core.ReservationTimeout)
+	if got := r.reservations(t); len(got) != 0 {
+		t.Errorf("reservations after EndReservation = %+v, want none", got)
+	}
+	// Reported once, when it was orphaned, not again when it is removed.
+	if got := ended(collect(t, r.events)); len(got) != 1 || got[0] != core.ReservationTimeout {
+		t.Errorf("ended = %v, want [timeout] once", got)
+	}
+	if _, err := r.svc.BeginReservation(core.Reservation{
+		ChargePointID: testCP, EVSEUID: "EVSE-1", IDTag: "B", ExpiresAt: t0.Add(time.Hour),
+	}); err != nil {
+		t.Errorf("reserve after the cancel finished: %v", err)
+	}
+}

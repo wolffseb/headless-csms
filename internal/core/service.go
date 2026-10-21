@@ -470,7 +470,7 @@ type ChargePointSnapshot struct {
 	// Transactions holds the active ones and those stopped since this process
 	// started, in the order they began. Only active ones survive a restart.
 	Transactions []Transaction
-	// Reservations holds pending and active reservations, by id.
+	// Reservations holds pending, active and cancelling reservations, by id.
 	Reservations []Reservation
 }
 
