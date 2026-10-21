@@ -195,8 +195,10 @@ func TestReserveTimeoutAgainstTheSimulator(t *testing.T) {
 		t.Fatalf("err = %v, want ErrTimeout", err)
 	}
 	snap, _ := r.core.Snapshot().ChargePoint(testCP)
-	if len(snap.Reservations) != 0 {
-		t.Errorf("a timed-out reservation is dangling: %+v", snap.Reservations)
+	for _, got := range snap.Reservations {
+		if got.Status != core.ReservationCancelling {
+			t.Errorf("a timed-out reservation is dangling: %+v", got)
+		}
 	}
 
 	// The slow station does get ReserveNow in the end. The cancel sent after

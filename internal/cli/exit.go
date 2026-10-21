@@ -19,7 +19,7 @@ const (
 	ExitFaulted      = 6 // Faulted or Unavailable
 	ExitTimeout      = 7 // no answer within charger.call_timeout
 	ExitUnlockFailed = 8 // unlock failed, or not supported by the station
-	ExitRefused      = 9 // refused locally: already reserved, nothing to cancel or stop
+	ExitRefused      = 9 // refused locally: already reserved, nothing to cancel or stop, shutting down
 	// ExitMissingCapability means `cpms probe` found the station lacks a
 	// capability cpms requires. It is distinct so the on-site hardware
 	// check can script it.

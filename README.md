@@ -171,7 +171,7 @@ valid uids.
 | 6 | The station is faulted or unavailable |
 | 7 | The station did not answer within `charger.call_timeout` |
 | 8 | Unlock failed, or the station does not support the command |
-| 9 | Refused by cpms before sending: already reserved, no reservation to cancel, nothing to stop |
+| 9 | Refused by cpms before sending: already reserved (including while the cancel of a timed-out reservation is in flight), no reservation to cancel, nothing to stop, shutting down |
 | 10 | `cpms probe`: the station reported that it lacks a capability cpms requires (one it merely did not report is not an error) |
 
 **How it works.** `cpms run` listens on a Unix socket, `cpms.sock` next to the state file by
@@ -277,7 +277,7 @@ What survives a restart: **active** reservations (with their expiry timers re-ar
 expired while cpms was down is dropped), **active** transactions (so the station can still stop
 a session that began before the restart), and the counters behind reservation, transaction and
 remote-start ids, which are never handed out twice. Reservations still waiting for the
-station's answer, and finished sessions, are deliberately not kept: `state.json` is not a
+station's answer (or for the answer to their cancel), and finished sessions, are deliberately not kept: `state.json` is not a
 history.
 
 Any change to its schema bumps the `version` field. A cpms only reads its own version, so an
@@ -436,7 +436,10 @@ sequenceDiagram
 
 If the station answers anything but `Accepted`, or does not answer within
 `charger.call_timeout`, the pending reservation is ended at once and the CLI exits with the
-matching code (4–7). `core` only shows `RESERVED` when the station reports it; the
+matching code (4–7). After a timeout or a failure the station may still have received the
+request, so `cpms run` sends a `CancelReservation` in the background and the reservation shows
+as `state: cancelling` in `cpms status` until that has an answer; the EVSE refuses a new
+reservation (exit 9) meanwhile. It is not persisted, like a pending one. `core` only shows `RESERVED` when the station reports it; the
 reservation record sits next to the status rather than overwriting it.
 
 #### Redeeming the reservation: start and stop

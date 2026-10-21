@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wolffseb/cli-cpms/internal/config"
@@ -48,6 +49,13 @@ type Service struct {
 	cfg      *config.Config
 	now      func() time.Time
 	log      *slog.Logger
+
+	// inflight counts Reserve calls and the background cancels they start,
+	// so Close can wait for them. mu orders Add before Close's Wait: Reserve
+	// adds only while closed is false, and Close sets it before it waits.
+	inflight sync.WaitGroup
+	mu       sync.Mutex
+	closed   bool
 }
 
 // New builds a Service.
@@ -87,16 +95,40 @@ type ReserveParams struct {
 	ResponseURL       string
 }
 
+// Close refuses further reservations (ErrShuttingDown), then waits for the
+// Reserve calls in flight and the background cancels they started (each is
+// bounded by the call timeout). Call it after no more commands are accepted
+// and before the station connection is closed, so the cancels can still be
+// sent. It is safe to call more than once.
+func (s *Service) Close() {
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+	s.inflight.Wait()
+}
+
 // Reserve holds an EVSE for a tag.
 //
 // The reservation is recorded before ReserveNow goes out, and only becomes
-// active once the station accepts it. On any other outcome, including a
-// timeout, it is ended straight away: a reservation the station may not
-// hold must not linger in core. After a timeout or a failure the station may
-// still have received the request, so a best-effort CancelReservation follows
-// (see cancelOrphan). If the connection dropped, that cancel cannot reach the
-// station, and the reservation it may hold is left to expire there.
+// active once the station accepts it. A refusal ends it straight away: the
+// station never held it. After a timeout or a failure the station may still
+// have received the request, so a best-effort CancelReservation follows (see
+// cancelOrphan), but Reserve does not wait for it: the caller gets the
+// original error at once and the record in core is ended, so nothing in
+// status or events claims a reservation we hold. The record stays in core as
+// cancelling, which keeps the EVSE occupied (ErrAlreadyReserved) until the
+// cancel has an answer. If the connection dropped, that cancel cannot reach
+// the station, and the reservation it may hold is left to expire there.
 func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservation, error) {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return core.Reservation{}, ErrShuttingDown
+	}
+	s.inflight.Add(1)
+	s.mu.Unlock()
+	defer s.inflight.Done()
+
 	if err := s.checkEVSE(p.EVSEUID); err != nil {
 		return core.Reservation{}, err
 	}
@@ -134,11 +166,19 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		ExpiresAt:     r.ExpiresAt,
 	})
 	if err != nil {
-		// The pending record keeps the EVSE blocked until the cancel has an
-		// answer: freeing it first would let a second ReserveNow overtake
-		// the cancel and be answered Occupied.
-		s.cancelOrphan(ctx, cp, r)
-		s.core.EndReservation(r.ID, endReason(err))
+		// Ending the record before the cancel has an answer would free the
+		// EVSE for a second ReserveNow that overtakes it and is answered
+		// Occupied, so it stays in core as cancelling. Waiting for the
+		// answer here would make the caller wait a second call timeout for
+		// nothing.
+		reason := endReason(err)
+		s.core.OrphanReservation(r.ID, reason)
+		s.inflight.Add(1) // the counter is above zero here, so this cannot race Close's Wait
+		go func() {
+			defer s.inflight.Done()
+			s.cancelOrphan(ctx, cp, r)
+			s.core.EndReservation(r.ID, reason)
+		}()
 		return core.Reservation{}, err
 	}
 	if res.Status != ocpp.CommandAccepted {
@@ -162,9 +202,10 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 //
 // Ids are never reused, so cancelling by id cannot hit a later reservation;
 // Rejected just means the station never held it. It is best effort: the
-// outcome is logged, and the caller still gets the original error. It
-// outlives the caller's context, which is typically what ended the wait, but
-// is bounded by the call timeout.
+// outcome is logged, and the caller still gets the original error. It runs
+// in the background (see Reserve and Close) and outlives the caller's
+// context, which is typically what ended the wait, but is bounded by the
+// call timeout. The caller ends the cancelling record once it returns.
 //
 // Known limitation: cp stays bound to the connection that carried the
 // ReserveNow. If that connection dropped, the cancel fails at once and is not
