@@ -173,9 +173,11 @@ where it was decided.
   reservation until it expires and answers Occupied meanwhile. Fix: persist the orphan ids
   in `state.json` and send the cancel when the station next connects. Left out of #26 and
   its follow-ups, see the review on #29.
-- **Soft reservations.** If `cpms probe` shows the real station lacks the Reservation
-  profile, OCPI `RESERVE_NOW` needs a reservation held in cpms that refuses other tags at
-  start. Decided by the hardware check, #11.
+- **Soft reservations.** Only for stations without the Reservation profile, such as the
+  third-party rey: OCPI `RESERVE_NOW` would need a reservation held in cpms that refuses
+  other tags at start. The office Alpitronic is known to support ReserveNow (tested with
+  another CSMS, chargecloud), so it does not need this; the hardware check, #11, confirms
+  it against cpms.
 - **OCPI Sessions module**, minimal, so Fryte can learn the `session_id` it needs for
   `STOP_SESSION`. See the decision in #16. It overlaps with idea 3.
 - **Recording and replaying OCPP traffic.** Record a real Alpitronic session to a file, and
