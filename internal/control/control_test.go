@@ -48,6 +48,11 @@ type fakeStation struct {
 	cancels []int
 	answer  map[string]ocpp.Result
 	fail    map[string]error
+
+	// cancelEntered, if set, receives when the first CancelReservation
+	// arrives, which then waits for cancelGate to be closed.
+	cancelEntered chan struct{}
+	cancelGate    chan struct{}
 }
 
 func newFakeStation() *fakeStation {
@@ -90,7 +95,13 @@ func (f *fakeStation) ReserveNow(_ context.Context, r ocpp.ReserveRequest) (ocpp
 func (f *fakeStation) CancelReservation(_ context.Context, id int) (ocpp.Result, error) {
 	f.mu.Lock()
 	f.cancels = append(f.cancels, id)
+	entered, gate := f.cancelEntered, f.cancelGate
+	f.cancelGate = nil // only the first cancel waits
 	f.mu.Unlock()
+	if gate != nil {
+		entered <- struct{}{}
+		<-gate
+	}
 	return f.respond("cancel")
 }
 
@@ -298,6 +309,44 @@ func TestReserveFailureCancelsAtTheStation(t *testing.T) {
 					r.station.reserve, r.station.cancels)
 			}
 		})
+	}
+}
+
+// While the cancel of an orphan is in flight the station may still hold it,
+// so the EVSE stays blocked locally: a second ReserveNow sent now would be
+// answered Occupied.
+func TestEVSEStaysBlockedWhileTheOrphanIsCancelled(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.station.fail["reserve"] = ocpp.ErrTimeout
+	r.station.cancelEntered = make(chan struct{}, 1)
+	gate := make(chan struct{})
+	r.station.cancelGate = gate
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1"})
+		done <- err
+	}()
+	<-r.station.cancelEntered // the cancel is now blocked at the station
+
+	_, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1", IDTag: "OTHER"})
+	if !errors.Is(err, control.ErrAlreadyReserved) {
+		t.Errorf("second Reserve during the cancel: err = %v, want ErrAlreadyReserved", err)
+	}
+	r.station.mu.Lock()
+	reserves := len(r.station.reserve)
+	r.station.mu.Unlock()
+	if reserves != 1 {
+		t.Errorf("station saw %d ReserveNow calls, want only the first", reserves)
+	}
+
+	close(gate)
+	if err := <-done; !errors.Is(err, ocpp.ErrTimeout) {
+		t.Errorf("first Reserve: err = %v, want ErrTimeout", err)
+	}
+	if got := r.reservations(); len(got) != 0 {
+		t.Errorf("reservations after the cancel answered = %+v, want none", got)
 	}
 }
 

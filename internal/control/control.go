@@ -133,8 +133,11 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		ExpiresAt:     r.ExpiresAt,
 	})
 	if err != nil {
-		s.core.EndReservation(r.ID, endReason(err))
+		// The pending record keeps the EVSE blocked until the cancel has an
+		// answer: freeing it first would let a second ReserveNow overtake
+		// the cancel and be answered Occupied.
 		s.cancelOrphan(ctx, cp, r)
+		s.core.EndReservation(r.ID, endReason(err))
 		return core.Reservation{}, err
 	}
 	if res.Status != ocpp.CommandAccepted {
