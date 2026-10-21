@@ -94,7 +94,8 @@ type ReserveParams struct {
 // timeout, it is ended straight away: a reservation the station may not
 // hold must not linger in core. After a timeout or a failure the station may
 // still have received the request, so a best-effort CancelReservation follows
-// (see cancelOrphan).
+// (see cancelOrphan). If the connection dropped, that cancel cannot reach the
+// station, and the reservation it may hold is left to expire there.
 func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservation, error) {
 	if err := s.checkEVSE(p.EVSEUID); err != nil {
 		return core.Reservation{}, err
@@ -164,6 +165,13 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 // outcome is logged, and the caller still gets the original error. It
 // outlives the caller's context, which is typically what ended the wait, but
 // is bounded by the call timeout.
+//
+// Known limitation: cp stays bound to the connection that carried the
+// ReserveNow. If that connection dropped, the cancel fails at once and is not
+// retried after the station reconnects, so a reservation it accepted stays
+// held at the station until it expires, and new reservations on that EVSE
+// are answered Occupied until then. Cancelling on reconnect would need the
+// orphan ids persisted (see docs/IDEAS.md).
 func (s *Service) cancelOrphan(ctx context.Context, cp ocpp.ChargePoint, r core.Reservation) {
 	ctx = context.WithoutCancel(ctx)
 	if timeout := s.cfg.Charger.CallTimeout.Duration(); timeout > 0 {

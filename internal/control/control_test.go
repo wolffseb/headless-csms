@@ -282,33 +282,44 @@ func TestReserveTimeoutLeavesNothingBehind(t *testing.T) {
 	}
 }
 
-// A ReserveNow that timed out, or whose connection dropped, may still have
-// reached the station. Without a cancel it would hold the EVSE until expiry
-// and every new reservation would come back Occupied.
-func TestReserveFailureCancelsAtTheStation(t *testing.T) {
+// A ReserveNow that timed out may still have reached the station. Without a
+// cancel it would hold the EVSE until expiry and every new reservation would
+// come back Occupied.
+func TestReserveTimeoutCancelsAtTheStation(t *testing.T) {
 	t.Parallel()
+	r := newRig(t)
+	r.station.fail["reserve"] = ocpp.ErrTimeout
 
-	for name, failure := range map[string]error{
-		"timeout": ocpp.ErrTimeout,
-		"dropped": ocpp.ErrNotConnected,
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			r := newRig(t)
-			r.station.fail["reserve"] = failure
+	_, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1"})
+	if !errors.Is(err, ocpp.ErrTimeout) {
+		t.Fatalf("err = %v, want ErrTimeout", err)
+	}
+	r.station.mu.Lock()
+	defer r.station.mu.Unlock()
+	if len(r.station.reserve) != 1 || len(r.station.cancels) != 1 ||
+		r.station.cancels[0] != r.station.reserve[0].ReservationID {
+		t.Errorf("reserve %+v, cancels %v; want one cancel of the reservation that was sent",
+			r.station.reserve, r.station.cancels)
+	}
+}
 
-			_, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1"})
-			if !errors.Is(err, failure) {
-				t.Fatalf("err = %v, want %v", err, failure)
-			}
-			r.station.mu.Lock()
-			defer r.station.mu.Unlock()
-			if len(r.station.reserve) != 1 || len(r.station.cancels) != 1 ||
-				r.station.cancels[0] != r.station.reserve[0].ReservationID {
-				t.Errorf("reserve %+v, cancels %v; want one cancel of the reservation that was sent",
-					r.station.reserve, r.station.cancels)
-			}
-		})
+// A dropped connection is a known gap: the cancel goes to the dead
+// connection and cannot reach the station, which keeps the reservation until
+// it expires. This only pins what cpms itself does: the original error comes
+// back and the local record is freed. fakeStation records a cancel whatever
+// its connection state is, so it says nothing about the station.
+func TestReserveDroppedConnectionFreesTheEVSELocally(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.station.fail["reserve"] = ocpp.ErrNotConnected
+	r.station.fail["cancel"] = ocpp.ErrNotConnected
+
+	_, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1"})
+	if !errors.Is(err, ocpp.ErrNotConnected) {
+		t.Fatalf("err = %v, want ErrNotConnected", err)
+	}
+	if got := r.reservations(); len(got) != 0 {
+		t.Errorf("reservations = %+v, want none", got)
 	}
 }
 
