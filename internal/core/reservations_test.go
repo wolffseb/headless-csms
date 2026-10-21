@@ -191,7 +191,6 @@ func TestStartingASessionConsumesTheReservation(t *testing.T) {
 		// Some stations leave reservationId out; the same tag on the same
 		// connector is enough, compared case-insensitively like every tag.
 		{"without reservationId, same tag", "04a1b2c3d4", func(core.Reservation) int { return 0 }, true},
-		{"without reservationId, other tag", "SOMEONE-ELSE", func(core.Reservation) int { return 0 }, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -204,13 +203,6 @@ func TestStartingASessionConsumesTheReservation(t *testing.T) {
 
 			snap, _ := r.svc.Snapshot().ChargePoint(testCP)
 			events := ended(collect(t, r.events))
-			if !tc.consumed {
-				if len(snap.Reservations) != 1 || len(events) != 0 {
-					t.Fatalf("reservation should survive another tag's session; reservations %+v, ended %v",
-						snap.Reservations, events)
-				}
-				return
-			}
 			if !tc.consumed {
 				if len(snap.Reservations) != 1 || len(events) != 0 {
 					t.Fatalf("reservation should survive another tag's session; reservations %+v, ended %v",
@@ -237,6 +229,35 @@ func TestStartingASessionConsumesTheReservation(t *testing.T) {
 				t.Errorf("a consumed reservation ended again: %v", got)
 			}
 		})
+	}
+}
+
+// The station only lets the reserved tag (or its parent) start on a reserved
+// connector. A session for any other tag means the station no longer holds the
+// reservation, so ours is stale and must not linger.
+func TestAnotherTagStartingEndsTheReservationAsFailed(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, clocktest.New(t0), statetest.New(t))
+	r.reserve(t, "EVSE-1", "04A1B2C3D4", 15*time.Minute)
+	collect(t, r.events)
+
+	txID := r.startTx(1, "SOMEONE-ELSE", 0)
+
+	snap, _ := r.svc.Snapshot().ChargePoint(testCP)
+	if len(snap.Reservations) != 0 {
+		t.Fatalf("reservation still held after another tag started: %+v", snap.Reservations)
+	}
+	if got := ended(collect(t, r.events)); len(got) != 1 || got[0] != core.ReservationFailed {
+		t.Errorf("ended events = %v, want [%s]", got, core.ReservationFailed)
+	}
+	if tx := snap.Transactions[0]; tx.ID != txID || tx.ReservationID != 0 {
+		t.Errorf("transaction = %+v, want %s redeeming nothing", tx, txID)
+	}
+	if got := r.store.Get().Reservations; len(got) != 0 {
+		t.Errorf("state.json still holds %+v", got)
+	}
+	if logs := r.logs.String(); !strings.Contains(logs, "level=WARN") || !strings.Contains(logs, "SOMEONE-ELSE") {
+		t.Errorf("no warning naming the other tag was logged:\n%s", logs)
 	}
 }
 
