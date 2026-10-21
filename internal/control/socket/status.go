@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/wolffseb/cli-cpms/internal/core"
+	"github.com/wolffseb/cli-cpms/internal/ocpp"
 )
 
 // BuildStatus renders a core snapshot as the status a person or a script
@@ -30,6 +31,9 @@ func BuildStatus(snap core.Snapshot, chargePointID string) Status {
 		Model:         cp.Boot.Model,
 		Firmware:      cp.Boot.FirmwareVersion,
 		StationStatus: string(cp.StationStatus),
+	}
+	if d := cp.LastDisconnect; !d.At.IsZero() {
+		out.ChargePoint.LastDisconnect = &DisconnectStatus{At: d.At.UTC(), Reason: d.Reason}
 	}
 
 	reservations := make(map[string]core.Reservation, len(cp.Reservations))
@@ -64,4 +68,46 @@ func utcOrNil(t time.Time) *time.Time {
 	}
 	u := t.UTC()
 	return &u
+}
+
+// BuildProbe renders a probe report, with the identity the station gave at
+// boot, as the result a person or a script reads. Like BuildStatus it is a
+// pure function, so its JSON shape can be pinned without a station.
+func BuildProbe(report ocpp.ProbeReport, snap core.Snapshot, chargePointID string) ProbeResult {
+	out := ProbeResult{
+		ChargePoint:  ProbeChargePoint{ID: chargePointID, OCPPVersion: string(report.Version)},
+		Features:     make([]ProbeFeature, 0, len(report.Features)),
+		Capabilities: make([]ProbeCapability, 0, len(ocpp.AllCapabilities())),
+		Settings:     make([]ProbeSetting, 0, len(report.Settings)),
+		Raw:          make([]ProbeRawKey, 0, len(report.Raw)),
+		Connectors:   report.Connectors,
+	}
+	if cp, ok := snap.ChargePoint(chargePointID); ok {
+		out.ChargePoint.Vendor = cp.Boot.Vendor
+		out.ChargePoint.Model = cp.Boot.Model
+		out.ChargePoint.SerialNumber = cp.Boot.SerialNumber
+		out.ChargePoint.Firmware = cp.Boot.FirmwareVersion
+	}
+
+	for _, f := range report.Features {
+		grants := make([]string, 0, len(f.Grants))
+		for _, g := range f.Grants {
+			grants = append(grants, string(g))
+		}
+		out.Features = append(out.Features, ProbeFeature{Name: f.Name, Support: string(f.Support), Grants: grants})
+	}
+	for _, c := range ocpp.AllCapabilities() {
+		out.Capabilities = append(out.Capabilities, ProbeCapability{Name: string(c), Support: string(report.Support(c))})
+	}
+	for _, s := range report.Settings {
+		out.Settings = append(out.Settings, ProbeSetting{Name: s.Name, Value: s.Value, Reported: s.Reported, Meaning: s.Meaning})
+	}
+	if d := report.HeartbeatInterval; d != nil {
+		secs := int(d.Seconds())
+		out.HeartbeatIntervalSeconds = &secs
+	}
+	for _, k := range report.Raw {
+		out.Raw = append(out.Raw, ProbeRawKey{Key: k.Key, Value: k.Value, Readonly: k.Readonly})
+	}
+	return out
 }

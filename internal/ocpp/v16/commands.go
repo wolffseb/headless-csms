@@ -143,9 +143,16 @@ type GetConfigurationConf struct {
 
 // Configuration keys cpms cares about.
 const (
-	KeySupportedFeatureProfiles = "SupportedFeatureProfiles"
-	KeyHeartbeatInterval        = "HeartbeatInterval"
-	KeyNumberOfConnectors       = "NumberOfConnectors"
+	KeySupportedFeatureProfiles      = "SupportedFeatureProfiles"
+	KeyHeartbeatInterval             = "HeartbeatInterval"
+	KeyNumberOfConnectors            = "NumberOfConnectors"
+	KeyReserveConnectorZeroSupported = "ReserveConnectorZeroSupported"
+	KeyAuthorizeRemoteTxRequests     = "AuthorizeRemoteTxRequests"
+	KeyLocalAuthListEnabled          = "LocalAuthListEnabled"
+	KeyLocalPreAuthorize             = "LocalPreAuthorize"
+	KeyLocalAuthorizeOffline         = "LocalAuthorizeOffline"
+	KeyConnectionTimeOut             = "ConnectionTimeOut"
+	KeyMeterValueSampleInterval      = "MeterValueSampleInterval"
 )
 
 // ChangeAvailabilityReq takes a connector, or the whole station with

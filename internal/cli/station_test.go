@@ -130,7 +130,7 @@ func (s *station) connect(mutate ...func(*simulator.Options)) {
 	}
 	s.sim = sim
 	s.waitStatus("the station to be online and AVAILABLE", func(st socket.Status) bool {
-		return st.ChargePoint.Online && len(st.EVSEs) == 1 && st.EVSEs[0].Status == "AVAILABLE"
+		return st.ChargePoint.Online && len(st.EVSEs) >= 1 && st.EVSEs[0].Status == "AVAILABLE"
 	})
 }
 

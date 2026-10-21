@@ -152,6 +152,7 @@ ALP-HYC-001-1 remote stop accepted
 | `cpms stop [--evse UID]` | Stops the session running on an EVSE |
 | `cpms unlock [--evse UID]` | Releases the cable lock |
 | `cpms status [--json]` | The station, and per EVSE its status, reservation and session. `--json` is a stable format for scripts. |
+| `cpms probe [--json] [--raw]` | What the station supports and how it is set up; see [Probing the station](#probing-the-station). |
 
 `--evse` takes the EVSE `uid` from config, and may be left out when only one EVSE is
 configured. A typo is caught from config before anything is sent, and the error lists the
@@ -171,6 +172,7 @@ valid uids.
 | 7 | The station did not answer within `charger.call_timeout` |
 | 8 | Unlock failed, or the station does not support the command |
 | 9 | Refused by cpms before sending: already reserved, no reservation to cancel, nothing to stop |
+| 10 | `cpms probe`: the station lacks a capability cpms requires |
 
 **How it works.** `cpms run` listens on a Unix socket, `cpms.sock` next to the state file by
 default (`--socket` overrides it; use the same value for `run` and the commands). The socket
@@ -182,6 +184,70 @@ Socket paths are limited to 103 bytes, a kernel limit on macOS. If the default p
 the state file is longer than that, cpms falls back to a short path in the temp directory
 (`cpms-<hash of the state path>.sock`), which `run` and the commands both derive on their
 own; `cpms run` prints the path it uses. A `--socket` you give explicitly is used as is.
+
+## Probing the station
+
+The reservation path assumes the station implements OCPP reservations, and not every unit
+does. `cpms probe` is the first thing to run against a new station: it asks for the station's
+whole configuration and reports what cpms can rely on. It is read-only and changes nothing
+on the station.
+
+```
+$ cpms probe
+ALP-HYC-001  OCPP 1.6
+  Alpitronic HYC300, firmware simulator
+
+Features
+  Core                ✓  required  start, stop, unlock
+  Reservation         ✓  required  reserve, cancel, OCPI RESERVE_NOW
+  RemoteTrigger       ✓  optional  status refresh on demand
+  FirmwareManagement  ✓            not used by cpms
+
+Settings
+  ReserveConnectorZeroSupported  false  whether the whole station can be reserved at once; cpms always reserves one EVSE, so this is informational
+  AuthorizeRemoteTxRequests      false  if true, the station asks cpms to Authorize the tag of a remote start; cpms accepts only auth.default_id_tag
+  LocalAuthListEnabled           false  if true, a whitelist held on the station can let tags charge without asking cpms
+  LocalPreAuthorize              false  if true, the station starts at once for tags it knows locally, before cpms answers
+  LocalAuthorizeOffline          false  if true, the station lets tags it knows locally charge while cpms is unreachable
+  NumberOfConnectors             2      how many connectors the station has; checked against the EVSEs in config
+  HeartbeatInterval              60     seconds between heartbeats; cpms sets it at boot from charger.heartbeat_interval
+  ConnectionTimeOut              60     seconds the station waits for a cable after a remote start or a presented tag
+  MeterValueSampleInterval       0      seconds between meter values during a session; 0 means none are sent
+
+Checks
+  ok  2 connectors, matching the 2 EVSEs in config
+  ok  heartbeat every 60s, as charger.heartbeat_interval says
+
+Every capability cpms requires is present.
+```
+
+A station without the Reservation profile, here `cpms simulate charger --scenario
+reject-reserve`, exits **10**:
+
+```
+Features
+  Core                ✓  required  start, stop, unlock
+  Reservation         ✗  required  reserve, cancel, OCPI RESERVE_NOW
+  ...
+
+Reservation is missing: OCPI RESERVE_NOW cannot be passed on to the station, so cpms would have to hold reservations itself.
+cpms: the station lacks 1 capability that cpms requires: reservation
+```
+
+- **Features** are named as the station names them (1.6 feature profiles). Core and
+  Reservation are required; without RemoteTrigger cpms only learns about status changes when
+  the station reports them by itself.
+- **Settings** are the keys that change how the station behaves towards cpms. A key the
+  station does not report shows as `not reported`; that is not an error.
+- **Checks** compare the station with config. A connector count that differs from the EVSEs
+  in config, or a heartbeat interval other than `charger.heartbeat_interval`, is a warning
+  (`!`); it does not change the exit code.
+- `--raw` adds every key the station reported, with whether it is read-only. `--json` prints
+  the whole report, including every key, with `ok`, `missing` and `warnings` for scripts.
+
+If the station is not connected, `cpms probe` exits 3 and prints the CSMS URL to configure on
+the station, the same one `cpms config validate` prints, plus when and why it last
+disconnected.
 
 ## Configuration
 
@@ -284,9 +350,9 @@ A few rules hold the design together:
 
 ```
 internal/core            domain state and the event bus — the single source of truth
-internal/control         the one place that acts on the station: reserve, cancel, start, stop, unlock
+internal/control         the one place that acts on the station: reserve, cancel, start, stop, unlock, probe
 internal/control/socket  the Unix socket the one-shot commands reach `cpms run` through
-internal/ocpp            version-agnostic RPC errors, versions, the Handler and ChargePoint interfaces
+internal/ocpp            version-agnostic RPC errors, versions, the Handler and ChargePoint interfaces, ProbeReport
 internal/ocpp/ocppj      the OCPP-J RPC layer: framing, correlation, connection goroutines
 internal/ocpp/csms       the WebSocket server a charge point dials into
 internal/ocpp/v16        OCPP 1.6-J payloads, the adapter that writes to core, and the command adapter
@@ -518,7 +584,7 @@ Built in tracked steps; each lands as its own PR.
 | 1 | Project skeleton, config loader, CI | done |
 | 2 | OCPP 1.6-J CSMS: WebSocket server and message routing | done |
 | 3 | Built-in charge point simulator | done |
-| 4 | Outbound OCPP commands, reservation lifecycle, one-shot CLI | in progress: commands done, `cpms probe` next |
+| 4 | Outbound OCPP commands, reservation lifecycle, one-shot CLI | in progress: commands and `cpms probe` done, on-site hardware check next |
 | 5 | OCPI foundation: versions + credentials handshake | |
 | 6 | OCPI Locations module (sender) | |
 | 7 | PATCH location on status change | |

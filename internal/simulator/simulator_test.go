@@ -495,6 +495,31 @@ func TestGetConfigurationReportsFeatureProfiles(t *testing.T) {
 	})
 }
 
+func TestUnreportedKeysAreLeftOut(t *testing.T) {
+	t.Parallel()
+
+	r := newRig(t, func(o *simulator.Options) { o.UnreportedKeys = []string{v16.KeyLocalPreAuthorize} })
+	waitFor(t, "the station to come online", func() bool { return r.core.IsOnline(testCP) })
+
+	var all v16.GetConfigurationConf
+	r.call(t, v16.ActionGetConfiguration, v16.GetConfigurationReq{}, &all)
+	for _, k := range all.ConfigurationKey {
+		if k.Key == v16.KeyLocalPreAuthorize {
+			t.Errorf("%s reported in the full answer", k.Key)
+		}
+	}
+	if configValue(all, v16.KeyNumberOfConnectors) == "" {
+		t.Errorf("the other keys went missing too: %+v", all)
+	}
+
+	// Asked for by name, it is an unknown key, as on a station without it.
+	var one v16.GetConfigurationConf
+	r.call(t, v16.ActionGetConfiguration, v16.GetConfigurationReq{Key: []string{v16.KeyLocalPreAuthorize}}, &one)
+	if len(one.ConfigurationKey) != 0 || len(one.UnknownKey) != 1 {
+		t.Errorf("asked by name: %+v, want it as an unknown key", one)
+	}
+}
+
 func TestSlowScenarioOutlastsTheCallTimeout(t *testing.T) {
 	t.Parallel()
 

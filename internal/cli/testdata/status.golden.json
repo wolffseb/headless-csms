@@ -6,7 +6,8 @@
     "vendor": "Alpitronic",
     "model": "HYC300",
     "firmware": "simulator",
-    "station_status": "AVAILABLE"
+    "station_status": "AVAILABLE",
+    "last_disconnect": null
   },
   "evses": [
     {

@@ -1,0 +1,25 @@
+ALP-HYC-001  OCPP 1.6
+  Alpitronic HYC300, serial SIM-0001, firmware 1.2.3
+
+Features
+  Core                ✓  required  start, stop, unlock
+  Reservation         ✓  required  reserve, cancel, OCPI RESERVE_NOW
+  RemoteTrigger       ✓  optional  status refresh on demand
+  FirmwareManagement  ✓            not used by cpms
+
+Settings
+  ReserveConnectorZeroSupported  false  whether the whole station can be reserved at once; cpms always reserves one EVSE, so this is informational
+  AuthorizeRemoteTxRequests      false  if true, the station asks cpms to Authorize the tag of a remote start; cpms accepts only auth.default_id_tag
+  LocalAuthListEnabled           false  if true, a whitelist held on the station can let tags charge without asking cpms
+  LocalPreAuthorize              false  if true, the station starts at once for tags it knows locally, before cpms answers
+  LocalAuthorizeOffline          false  if true, the station lets tags it knows locally charge while cpms is unreachable
+  NumberOfConnectors             1      how many connectors the station has; checked against the EVSEs in config
+  HeartbeatInterval              60     seconds between heartbeats; cpms sets it at boot from charger.heartbeat_interval
+  ConnectionTimeOut              60     seconds the station waits for a cable after a remote start or a presented tag
+  MeterValueSampleInterval       0      seconds between meter values during a session; 0 means none are sent
+
+Checks
+  ok  1 connector, matching the 1 EVSE in config
+  ok  heartbeat every 60s, as charger.heartbeat_interval says
+
+Every capability cpms requires is present.

@@ -207,6 +207,13 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 	case OpStatus:
 		return ok(BuildStatus(s.opts.Core.Snapshot(), s.opts.ChargePointID))
 
+	case OpProbe:
+		report, err := s.opts.Control.Probe(ctx)
+		if err != nil {
+			return fail(classify(err))
+		}
+		return ok(BuildProbe(report, s.opts.Core.Snapshot(), s.opts.ChargePointID))
+
 	case OpReserve:
 		var expiresIn time.Duration
 		if req.ExpiresIn != "" {

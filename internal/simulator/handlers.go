@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
@@ -278,12 +279,26 @@ func (s *Simulator) getConfiguration(payload json.RawMessage) (any, *ocpp.RPCErr
 		profiles = "Core,FirmwareManagement,RemoteTrigger"
 	}
 
-	all := []v16.ConfigurationKey{
+	// The values are what a station set up for a CSMS that decides every
+	// authorization itself: no local whitelist, no shortcuts.
+	var all []v16.ConfigurationKey
+	for _, key := range []v16.ConfigurationKey{
 		{Key: v16.KeySupportedFeatureProfiles, Readonly: true, Value: profiles},
-		{Key: v16.KeyHeartbeatInterval, Readonly: false,
-			Value: fmt.Sprintf("%d", int(s.heartbeatInterval().Seconds()))},
 		{Key: v16.KeyNumberOfConnectors, Readonly: true,
 			Value: fmt.Sprintf("%d", s.opts.Connectors)},
+		{Key: v16.KeyHeartbeatInterval, Readonly: false,
+			Value: fmt.Sprintf("%d", int(s.heartbeatInterval().Seconds()))},
+		{Key: v16.KeyConnectionTimeOut, Readonly: false, Value: "60"},
+		{Key: v16.KeyMeterValueSampleInterval, Readonly: false, Value: "0"},
+		{Key: v16.KeyAuthorizeRemoteTxRequests, Readonly: false, Value: "false"},
+		{Key: v16.KeyLocalAuthListEnabled, Readonly: false, Value: "false"},
+		{Key: v16.KeyLocalPreAuthorize, Readonly: false, Value: "false"},
+		{Key: v16.KeyLocalAuthorizeOffline, Readonly: false, Value: "false"},
+		{Key: v16.KeyReserveConnectorZeroSupported, Readonly: true, Value: "false"},
+	} {
+		if !slices.Contains(s.opts.UnreportedKeys, key.Key) {
+			all = append(all, key)
+		}
 	}
 
 	if len(req.Key) == 0 {

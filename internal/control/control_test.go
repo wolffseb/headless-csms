@@ -116,6 +116,13 @@ func (f *fakeStation) Capabilities(context.Context) (ocpp.Capabilities, error) {
 	return ocpp.Capabilities{Reservation: true}, nil
 }
 
+func (f *fakeStation) Probe(context.Context) (ocpp.ProbeReport, error) {
+	if _, err := f.respond("probe"); err != nil {
+		return ocpp.ProbeReport{}, err
+	}
+	return ocpp.ProbeReport{Version: ocpp.Version16}, nil
+}
+
 // commands is a control.Commander over the fake, or over nothing at all.
 type commands struct{ station *fakeStation }
 
@@ -507,4 +514,28 @@ func TestLocalRefusalsSendNothing(t *testing.T) {
 			t.Errorf("core holds %+v", got)
 		}
 	})
+}
+
+func TestProbe(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+
+	report, err := r.ctl.Probe(ctx)
+	if err != nil || report.Version != ocpp.Version16 {
+		t.Fatalf("Probe = %+v, %v; want the station's report", report, err)
+	}
+	if events := drain(r.events); len(events) != 0 {
+		t.Errorf("probing published %d events; it must change nothing", len(events))
+	}
+
+	r.station.fail["probe"] = ocpp.ErrTimeout
+	if _, err := r.ctl.Probe(ctx); !errors.Is(err, ocpp.ErrTimeout) {
+		t.Errorf("err = %v, want ErrTimeout", err)
+	}
+
+	ctl := control.New(control.Options{Core: r.core, Commands: commands{}, Config: testConfig()})
+	if _, err := ctl.Probe(ctx); !errors.Is(err, ocpp.ErrNotConnected) {
+		t.Errorf("err = %v, want ErrNotConnected", err)
+	}
 }
