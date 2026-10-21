@@ -318,6 +318,31 @@ func TestTimeoutExitCode(t *testing.T) {
 	s.waitStatus("the cancel to finish", func(st socket.Status) bool { return st.EVSEs[0].Reservation == nil })
 }
 
+// Shutting down right after a timed-out reserve must still wait for the
+// cancel of the orphan: it reaches its own outcome (here a timeout, as the
+// slow station sits on every answer) before cpms run returns, instead of being
+// cut off when the connection closes.
+func TestShutdownWaitsForTheOrphanCancel(t *testing.T) {
+	t.Parallel()
+	s := newStation(t, 19317, "heartbeat_timeout: 90s", "heartbeat_timeout: 90s\n  call_timeout: 1s")
+	s.connect(func(o *simulator.Options) {
+		o.Scenario = simulator.ScenarioSlow
+		o.SlowDelay = 3 * time.Second
+	})
+
+	_, stderr, code := s.cpms("reserve")
+	expectExit(t, "reserve", code, cli.ExitTimeout, stderr, "did not answer")
+	s.stopRun()
+
+	logs := s.runOut.String()
+	// Cut off by the closing connection, the cancel would fail at once with
+	// "connection closed"; waited for, it runs into its own call timeout.
+	if !strings.Contains(logs, "could not cancel a reservation") || !strings.Contains(logs, "reservation_id=1") ||
+		!strings.Contains(logs, "no answer within") {
+		t.Errorf("cpms run did not wait for the cancel to have its own outcome; log:\n%s", logs)
+	}
+}
+
 func TestNoRunningCPMSExits2(t *testing.T) {
 	t.Parallel()
 
