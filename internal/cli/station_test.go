@@ -427,6 +427,24 @@ func TestSecondRunIsRefused(t *testing.T) {
 	}
 }
 
+// The guard is the state file, not the socket path: two runs with different
+// --socket values would otherwise write the same file.
+func TestSecondRunOnTheSameStateFileIsRefused(t *testing.T) {
+	t.Parallel()
+	first := newStation(t, 19315)
+	state := filepath.Join(filepath.Dir(first.configPath), cli.DefaultStateFile)
+
+	other := runConfig(t, 19316)
+	sock := filepath.Join(shortDir(t), "other.sock")
+	_, _, err := run(t, "run", "-c", other, "--state", state, "--socket", sock)
+	if err == nil || !strings.Contains(err.Error(), "in use by another cpms") {
+		t.Fatalf("second run returned %v, want an in-use error", err)
+	}
+	if cli.ExitCode(err) != cli.ExitError {
+		t.Errorf("second run exit code %d, want 1", cli.ExitCode(err))
+	}
+}
+
 func TestStaleSocketIsReplaced(t *testing.T) {
 	t.Parallel()
 

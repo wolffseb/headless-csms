@@ -63,6 +63,14 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 			cfg.Charger.OCPPVersion)
 	}
 
+	// One cpms per state file, whatever --socket says: two writers would
+	// overwrite each other's reservations and tokens.
+	lock, err := state.LockPath(statePath)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+
 	// A corrupt or newer file has to stop us before anything starts, not
 	// halfway through a session.
 	store, err := state.Open(statePath)
@@ -71,9 +79,9 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	}
 	logger.Debug("state file", "path", store.Path())
 
-	// The control socket is also the single-instance guard, so it is claimed
-	// before anything else listens: a second cpms on the same state stops
-	// here with "already running", not later with "address in use".
+	// The control socket is claimed before anything else listens, so a second
+	// cpms on the same socket stops here with "already running", not later
+	// with "address in use".
 	ctl, err := socket.Listen(socket.Options{Path: socketPath, ChargePointID: cfg.Charger.ID, Log: logger})
 	if err != nil {
 		return err
