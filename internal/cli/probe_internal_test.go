@@ -78,7 +78,7 @@ func TestEvaluateProbeHeartbeat(t *testing.T) {
 		warning string
 	}{
 		{60, ""},
-		{30, "the station heartbeats every 30s, but charger.heartbeat_interval is 60s"},
+		{30, "the station's HeartbeatInterval setting is 30s, but charger.heartbeat_interval is 60s"},
 		// At or past the timeout the watchdog fires between heartbeats.
 		{90, "not before charger.heartbeat_timeout (90s) runs out"},
 		{300, "not before charger.heartbeat_timeout (90s) runs out"},
@@ -91,6 +91,20 @@ func TestEvaluateProbeHeartbeat(t *testing.T) {
 		}
 		if !out.OK {
 			t.Errorf("heartbeat %ds: a warning must not fail the probe", c.seconds)
+		}
+		// The setting can be stale, so a warning says what is known and
+		// how to find out the rest, and never claims what cpms will do.
+		if c.warning != "" {
+			for _, want := range []string{"may be a stale setting", "--log-level debug"} {
+				if !strings.Contains(got, want) {
+					t.Errorf("heartbeat %ds: warning %q lacks %q", c.seconds, got, want)
+				}
+			}
+			for _, bad := range []string{"drop it as silent", "did not take the interval"} {
+				if strings.Contains(got, bad) {
+					t.Errorf("heartbeat %ds: warning %q overclaims with %q", c.seconds, got, bad)
+				}
+			}
 		}
 	}
 }

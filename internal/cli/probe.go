@@ -197,11 +197,16 @@ func configChecks(cfg *config.Config, r socket.ProbeResult) []check {
 	switch {
 	case got >= timeout:
 		out = append(out, check{markWarn, fmt.Sprintf(
-			"the station heartbeats every %s, not before charger.heartbeat_timeout (%s) runs out: cpms will drop it as silent",
+			"the station's HeartbeatInterval setting is %s, which is not before charger.heartbeat_timeout (%s) runs out. "+
+				"It may be a stale setting (some stations heartbeat at the BootNotification interval regardless): "+
+				"check the heartbeat spacing in the `--log-level debug` log. "+
+				"If the station really heartbeats that slowly, cpms will mark it offline after charger.heartbeat_timeout",
 			seconds(got), seconds(timeout))})
 	case got != want:
 		out = append(out, check{markWarn, fmt.Sprintf(
-			"the station heartbeats every %s, but charger.heartbeat_interval is %s; it did not take the interval cpms gave it at boot",
+			"the station's HeartbeatInterval setting is %s, but charger.heartbeat_interval is %s. "+
+				"It may be a stale setting (some stations heartbeat at the BootNotification interval regardless): "+
+				"check the heartbeat spacing in the `--log-level debug` log",
 			seconds(got), seconds(want))})
 	default:
 		out = append(out, check{markOK, fmt.Sprintf("heartbeat every %s, as charger.heartbeat_interval says", seconds(got))})
