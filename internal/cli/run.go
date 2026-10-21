@@ -122,9 +122,10 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 
 	// Everything that acts on the station goes through control. The one-shot
 	// commands reach it through the socket.
-	ctl.Attach(control.New(control.Options{
+	commands := control.New(control.Options{
 		Core: svc, Commands: server, Config: cfg, Log: logger,
-	}), svc)
+	})
+	ctl.Attach(commands, svc)
 
 	events, unsubscribe := svc.Subscribe("log")
 	defer unsubscribe()
@@ -151,6 +152,9 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	// Stop taking commands before the station connection goes away, so no
 	// command is half-sent into a closing socket.
 	ctl.Close()
+	// Reserve cancels in the background; let those finish while the station
+	// is still connected.
+	commands.Close()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()

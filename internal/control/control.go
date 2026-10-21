@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wolffseb/cli-cpms/internal/config"
@@ -48,6 +49,13 @@ type Service struct {
 	cfg      *config.Config
 	now      func() time.Time
 	log      *slog.Logger
+
+	// orphans tracks the background cancels started by Reserve, so Close can
+	// wait for them. mu guards blocked and makes "is the EVSE blocked" and
+	// "record the reservation" one step.
+	orphans sync.WaitGroup
+	mu      sync.Mutex
+	blocked map[string]bool // EVSE UID -> a cancel of an orphan is in flight
 }
 
 // New builds a Service.
@@ -59,6 +67,7 @@ func New(opts Options) *Service {
 		opts.Log = slog.Default()
 	}
 	return &Service{
+		blocked:  make(map[string]bool),
 		core:     opts.Core,
 		commands: opts.Commands,
 		cfg:      opts.Config,
@@ -87,15 +96,26 @@ type ReserveParams struct {
 	ResponseURL       string
 }
 
+// Close waits for the background cancels that Reserve started (each is
+// bounded by the call timeout). Call it after no more commands are accepted
+// and before the station connection is closed, so the cancels can still be
+// sent.
+func (s *Service) Close() {
+	s.orphans.Wait()
+}
+
 // Reserve holds an EVSE for a tag.
 //
 // The reservation is recorded before ReserveNow goes out, and only becomes
-// active once the station accepts it. On any other outcome, including a
-// timeout, it is ended straight away: a reservation the station may not
-// hold must not linger in core. After a timeout or a failure the station may
-// still have received the request, so a best-effort CancelReservation follows
-// (see cancelOrphan). If the connection dropped, that cancel cannot reach the
-// station, and the reservation it may hold is left to expire there.
+// active once the station accepts it. A refusal ends it straight away: the
+// station never held it. After a timeout or a failure the station may still
+// have received the request, so a best-effort CancelReservation follows (see
+// cancelOrphan), but Reserve does not wait for it: the caller gets the
+// original error at once and the record in core is ended, so nothing in
+// status or events claims a reservation we do not have. The EVSE stays
+// blocked inside control (ErrAlreadyReserved) until the cancel has an
+// answer. If the connection dropped, that cancel cannot reach the station,
+// and the reservation it may hold is left to expire there.
 func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservation, error) {
 	if err := s.checkEVSE(p.EVSEUID); err != nil {
 		return core.Reservation{}, err
@@ -114,6 +134,12 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		expiresAt = s.now().Add(length)
 	}
 
+	s.mu.Lock()
+	if s.blocked[p.EVSEUID] {
+		s.mu.Unlock()
+		return core.Reservation{}, fmt.Errorf("%s: a cancel of the previous reservation is still in flight: %w",
+			p.EVSEUID, ErrAlreadyReserved)
+	}
 	r, err := s.core.BeginReservation(core.Reservation{
 		OCPIReservationID: p.OCPIReservationID,
 		ChargePointID:     cp.ID(),
@@ -123,6 +149,7 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		Source:            p.Source,
 		ResponseURL:       p.ResponseURL,
 	})
+	s.mu.Unlock()
 	if err != nil {
 		return core.Reservation{}, err
 	}
@@ -134,11 +161,23 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		ExpiresAt:     r.ExpiresAt,
 	})
 	if err != nil {
-		// The pending record keeps the EVSE blocked until the cancel has an
-		// answer: freeing it first would let a second ReserveNow overtake
-		// the cancel and be answered Occupied.
-		s.cancelOrphan(ctx, cp, r)
+		// Freeing the EVSE before the cancel has an answer would let a
+		// second ReserveNow overtake it and be answered Occupied, so it
+		// stays blocked until then. Waiting for the answer here would make
+		// the caller wait a second call timeout for nothing. The block is
+		// set before the record is ended so there is no gap.
+		s.mu.Lock()
+		s.blocked[r.EVSEUID] = true
+		s.mu.Unlock()
 		s.core.EndReservation(r.ID, endReason(err))
+		s.orphans.Add(1)
+		go func() {
+			defer s.orphans.Done()
+			s.cancelOrphan(ctx, cp, r)
+			s.mu.Lock()
+			delete(s.blocked, r.EVSEUID)
+			s.mu.Unlock()
+		}()
 		return core.Reservation{}, err
 	}
 	if res.Status != ocpp.CommandAccepted {
@@ -162,9 +201,10 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 //
 // Ids are never reused, so cancelling by id cannot hit a later reservation;
 // Rejected just means the station never held it. It is best effort: the
-// outcome is logged, and the caller still gets the original error. It
-// outlives the caller's context, which is typically what ended the wait, but
-// is bounded by the call timeout.
+// outcome is logged, and the caller still gets the original error. It runs
+// in the background (see Reserve and Close) and outlives the caller's
+// context, which is typically what ended the wait, but is bounded by the
+// call timeout. The caller lifts the EVSE block once it returns.
 //
 // Known limitation: cp stays bound to the connection that carried the
 // ReserveNow. If that connection dropped, the cancel fails at once and is not
