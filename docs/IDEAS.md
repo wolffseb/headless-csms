@@ -168,6 +168,11 @@ without floats.
 Smaller things that came up while planning and were deliberately left out. Each links to
 where it was decided.
 
+- **Cancel orphaned reservations on reconnect.** If a ReserveNow fails because the connection
+  dropped, the CancelReservation in `control` cannot reach the station, which keeps the
+  reservation until it expires and answers Occupied meanwhile. Fix: persist the orphan ids
+  in `state.json` and send the cancel when the station next connects. Left out of #26 and
+  its follow-ups, see the review on #29.
 - **Soft reservations.** If `cpms probe` shows the real station lacks the Reservation
   profile, OCPI `RESERVE_NOW` needs a reservation held in cpms that refuses other tags at
   start. Decided by the hardware check, #11.

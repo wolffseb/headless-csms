@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -190,7 +191,6 @@ func TestStartingASessionConsumesTheReservation(t *testing.T) {
 		// Some stations leave reservationId out; the same tag on the same
 		// connector is enough, compared case-insensitively like every tag.
 		{"without reservationId, same tag", "04a1b2c3d4", func(core.Reservation) int { return 0 }, true},
-		{"without reservationId, other tag", "SOMEONE-ELSE", func(core.Reservation) int { return 0 }, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -229,6 +229,39 @@ func TestStartingASessionConsumesTheReservation(t *testing.T) {
 				t.Errorf("a consumed reservation ended again: %v", got)
 			}
 		})
+	}
+}
+
+// The station only lets the reserved tag (or its parent) start on a reserved
+// connector. A session for any other tag means the station no longer holds the
+// reservation, so ours is stale and must not linger.
+func TestAnotherTagStartingEndsTheReservationAsFailed(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, clocktest.New(t0), statetest.New(t))
+	r.reserve(t, "EVSE-1", "04A1B2C3D4", 15*time.Minute)
+	collect(t, r.events)
+
+	txID := r.startTx(1, "SOMEONE-ELSE", 0)
+
+	snap, _ := r.svc.Snapshot().ChargePoint(testCP)
+	if len(snap.Reservations) != 0 {
+		t.Fatalf("reservation still held after another tag started: %+v", snap.Reservations)
+	}
+	if got := ended(collect(t, r.events)); len(got) != 1 || got[0] != core.ReservationFailed {
+		t.Errorf("ended events = %v, want [%s]", got, core.ReservationFailed)
+	}
+	if tx := snap.Transactions[0]; tx.ID != txID || tx.ReservationID != 0 {
+		t.Errorf("transaction = %+v, want %s redeeming nothing", tx, txID)
+	}
+	if got := r.store.Get().Reservations; len(got) != 0 {
+		t.Errorf("state.json still holds %+v", got)
+	}
+	if logs := r.logs.String(); !strings.Contains(logs, "level=WARN") || !strings.Contains(logs, "SOMEONE-ELSE") {
+		t.Errorf("no warning naming the other tag was logged:\n%s", logs)
+	} else if strings.Contains(logs, "no longer holds") {
+		// The station may have let a sibling tag redeem it, so the log must
+		// not claim the station dropped it.
+		t.Errorf("the warning claims the station dropped the reservation:\n%s", logs)
 	}
 }
 
@@ -418,3 +451,48 @@ func TestCountersNeverFallBehindTheIDsInTheFile(t *testing.T) {
 		t.Errorf("next reservation id = %d, want 8", next.ID)
 	}
 }
+
+// A reservation that expires the instant it is loaded fires its timer while
+// load is still working. The timer goroutine must not read the reservations
+// before load has finished writing them; run with -race.
+func TestLoadIsSafeAgainstATimerFiringImmediately(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "state.json")
+	clk := clocktest.New(t0)
+
+	first := newRig(t, clk, statetest.Open(t, path))
+	first.reserve(t, "EVSE-1", "04A1B2C3D4", 15*time.Minute)
+	first.reserve(t, "EVSE-2", "04A1B2C3D4", 15*time.Minute)
+	first.svc.Close()
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for range 200 {
+		// Each run expires both reservations and rewrites the file.
+		if err := os.WriteFile(path, saved, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		svc := core.New(testConfig(),
+			core.WithClock(clk.Now),
+			core.WithAfterFunc(func(_ time.Duration, fn func()) core.Stopper {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					fn()
+				}()
+				return noStop{}
+			}),
+			core.WithStore(statetest.Open(t, path)),
+			core.WithLogger(slog.New(slog.NewTextHandler(&syncBuffer{}, nil))),
+		)
+		wg.Wait()
+		svc.Close()
+	}
+}
+
+type noStop struct{}
+
+func (noStop) Stop() bool { return false }

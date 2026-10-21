@@ -198,4 +198,9 @@ func TestReserveTimeoutAgainstTheSimulator(t *testing.T) {
 	if len(snap.Reservations) != 0 {
 		t.Errorf("a timed-out reservation is dangling: %+v", snap.Reservations)
 	}
+
+	// The slow station does get ReserveNow in the end. The cancel sent after
+	// the timeout must leave it without the reservation.
+	r.waitFor(t, "the simulator to take the reservation", func() bool { return r.sim.ReservationID(1) != 0 })
+	r.waitFor(t, "the simulator to lose the reservation again", func() bool { return r.sim.ReservationID(1) == 0 })
 }

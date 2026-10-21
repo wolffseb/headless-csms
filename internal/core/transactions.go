@@ -62,8 +62,12 @@ func (s *Service) NextRemoteStartID() (int, error) {
 // If the session redeems a reservation, the reservation ends as consumed.
 // The station saying which one (reservationId) is the reliable signal. Some
 // stations leave it out, so a reservation on the same EVSE for the same tag
-// counts too. A different tag leaves the reservation alone: someone else
-// plugged in, and the reserved driver may still be on the way.
+// counts too. A session for a different tag ends the reservation as failed.
+// OCPP 1.6 lets the reserved tag, or one sharing its parentIdTag, start on a
+// reserved connector. cpms never sends a parentIdTag, so a different tag means
+// either the station no longer holds the reservation or a station-side group
+// (local list) let a sibling tag consume it. Both leave ours stale, and it
+// would only block new reservations until it timed out.
 //
 // Like every charger-driven change, this never fails because of the store: a
 // failed write is logged.
@@ -94,6 +98,11 @@ func (s *Service) StartTransaction(cpID string, t TransactionStart) Transaction 
 	if r := s.redeemedLocked(cpID, uid, t); r != nil {
 		tx.ReservationID = r.ID
 		events = append(events, s.endLocked(r, ReservationConsumed))
+	} else if r := s.reservationOnEVSELocked(cpID, uid); r != nil {
+		s.log.Warn("a session started on a reserved EVSE with a tag other than the reserved one; the station has dropped or consumed the reservation, dropping it",
+			"charge_point", cpID, "evse", uid, "reservation_id", r.ID,
+			"reserved_for", r.IDTag, "session_tag", t.IDTag)
+		events = append(events, s.endLocked(r, ReservationFailed))
 	}
 	cp.transactions[t.ID] = tx
 	cp.lastSeen = s.now()
@@ -124,6 +133,16 @@ func (s *Service) redeemedLocked(cpID, evseUID string, t TransactionStart) *rese
 	for _, r := range s.reservations {
 		if r.ChargePointID == cpID && r.EVSEUID == evseUID && r.Status == ReservationActive &&
 			strings.EqualFold(r.IDTag, t.IDTag) {
+			return r
+		}
+	}
+	return nil
+}
+
+// reservationOnEVSELocked finds the active reservation on an EVSE, if any.
+func (s *Service) reservationOnEVSELocked(cpID, evseUID string) *reservation {
+	for _, r := range s.reservations {
+		if r.ChargePointID == cpID && r.EVSEUID == evseUID && r.Status == ReservationActive {
 			return r
 		}
 	}

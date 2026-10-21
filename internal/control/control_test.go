@@ -45,8 +45,14 @@ type fakeStation struct {
 	reserve []ocpp.ReserveRequest
 	starts  []ocpp.RemoteStartRequest
 	stops   []string
+	cancels []int
 	answer  map[string]ocpp.Result
 	fail    map[string]error
+
+	// cancelEntered, if set, receives when the first CancelReservation
+	// arrives, which then waits for cancelGate to be closed.
+	cancelEntered chan struct{}
+	cancelGate    chan struct{}
 }
 
 func newFakeStation() *fakeStation {
@@ -86,7 +92,16 @@ func (f *fakeStation) ReserveNow(_ context.Context, r ocpp.ReserveRequest) (ocpp
 	return f.respond("reserve")
 }
 
-func (f *fakeStation) CancelReservation(context.Context, int) (ocpp.Result, error) {
+func (f *fakeStation) CancelReservation(_ context.Context, id int) (ocpp.Result, error) {
+	f.mu.Lock()
+	f.cancels = append(f.cancels, id)
+	entered, gate := f.cancelEntered, f.cancelGate
+	f.cancelGate = nil // only the first cancel waits
+	f.mu.Unlock()
+	if gate != nil {
+		entered <- struct{}{}
+		<-gate
+	}
 	return f.respond("cancel")
 }
 
@@ -271,6 +286,101 @@ func TestReserveTimeoutLeavesNothingBehind(t *testing.T) {
 	delete(r.station.fail, "reserve")
 	if _, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1"}); err != nil {
 		t.Errorf("retry after a timeout: %v", err)
+	}
+}
+
+// A ReserveNow that timed out may still have reached the station. Without a
+// cancel it would hold the EVSE until expiry and every new reservation would
+// come back Occupied.
+func TestReserveTimeoutCancelsAtTheStation(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.station.fail["reserve"] = ocpp.ErrTimeout
+
+	_, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1"})
+	if !errors.Is(err, ocpp.ErrTimeout) {
+		t.Fatalf("err = %v, want ErrTimeout", err)
+	}
+	r.station.mu.Lock()
+	defer r.station.mu.Unlock()
+	if len(r.station.reserve) != 1 || len(r.station.cancels) != 1 ||
+		r.station.cancels[0] != r.station.reserve[0].ReservationID {
+		t.Errorf("reserve %+v, cancels %v; want one cancel of the reservation that was sent",
+			r.station.reserve, r.station.cancels)
+	}
+}
+
+// A dropped connection is a known gap: the cancel goes to the dead
+// connection and cannot reach the station, which keeps the reservation until
+// it expires. This only pins what cpms itself does: the original error comes
+// back and the local record is freed. fakeStation records a cancel whatever
+// its connection state is, so it says nothing about the station.
+func TestReserveDroppedConnectionFreesTheEVSELocally(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.station.fail["reserve"] = ocpp.ErrNotConnected
+	r.station.fail["cancel"] = ocpp.ErrNotConnected
+
+	_, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1"})
+	if !errors.Is(err, ocpp.ErrNotConnected) {
+		t.Fatalf("err = %v, want ErrNotConnected", err)
+	}
+	if got := r.reservations(); len(got) != 0 {
+		t.Errorf("reservations = %+v, want none", got)
+	}
+}
+
+// While the cancel of an orphan is in flight the station may still hold it,
+// so the EVSE stays blocked locally: a second ReserveNow sent now would be
+// answered Occupied.
+func TestEVSEStaysBlockedWhileTheOrphanIsCancelled(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.station.fail["reserve"] = ocpp.ErrTimeout
+	r.station.cancelEntered = make(chan struct{}, 1)
+	gate := make(chan struct{})
+	r.station.cancelGate = gate
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1"})
+		done <- err
+	}()
+	<-r.station.cancelEntered // the cancel is now blocked at the station
+
+	_, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1", IDTag: "OTHER"})
+	if !errors.Is(err, control.ErrAlreadyReserved) {
+		t.Errorf("second Reserve during the cancel: err = %v, want ErrAlreadyReserved", err)
+	}
+	r.station.mu.Lock()
+	reserves := len(r.station.reserve)
+	r.station.mu.Unlock()
+	if reserves != 1 {
+		t.Errorf("station saw %d ReserveNow calls, want only the first", reserves)
+	}
+
+	close(gate)
+	if err := <-done; !errors.Is(err, ocpp.ErrTimeout) {
+		t.Errorf("first Reserve: err = %v, want ErrTimeout", err)
+	}
+	if got := r.reservations(); len(got) != 0 {
+		t.Errorf("reservations after the cancel answered = %+v, want none", got)
+	}
+}
+
+// A refusal means the station never held it: nothing to cancel.
+func TestReserveRefusalDoesNotCancel(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.station.answer["reserve"] = ocpp.Result{Status: ocpp.CommandRejected, Raw: "Rejected"}
+
+	if _, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1"}); err == nil {
+		t.Fatal("Reserve succeeded")
+	}
+	r.station.mu.Lock()
+	defer r.station.mu.Unlock()
+	if len(r.station.cancels) != 0 {
+		t.Errorf("cancelled %v after a refusal", r.station.cancels)
 	}
 }
 

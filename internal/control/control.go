@@ -92,7 +92,10 @@ type ReserveParams struct {
 // The reservation is recorded before ReserveNow goes out, and only becomes
 // active once the station accepts it. On any other outcome, including a
 // timeout, it is ended straight away: a reservation the station may not
-// hold must not linger in core.
+// hold must not linger in core. After a timeout or a failure the station may
+// still have received the request, so a best-effort CancelReservation follows
+// (see cancelOrphan). If the connection dropped, that cancel cannot reach the
+// station, and the reservation it may hold is left to expire there.
 func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservation, error) {
 	if err := s.checkEVSE(p.EVSEUID); err != nil {
 		return core.Reservation{}, err
@@ -131,6 +134,10 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		ExpiresAt:     r.ExpiresAt,
 	})
 	if err != nil {
+		// The pending record keeps the EVSE blocked until the cancel has an
+		// answer: freeing it first would let a second ReserveNow overtake
+		// the cancel and be answered Occupied.
+		s.cancelOrphan(ctx, cp, r)
 		s.core.EndReservation(r.ID, endReason(err))
 		return core.Reservation{}, err
 	}
@@ -146,6 +153,41 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		return core.Reservation{}, fmt.Errorf("reservation %d vanished while it was pending", r.ID)
 	}
 	return active, nil
+}
+
+// cancelOrphan asks the station to drop a reservation whose ReserveNow timed
+// out or failed. The request may have reached the station even though the
+// answer did not reach us, and a reservation we have forgotten would block
+// the EVSE until it expired, answering every new reserve with Occupied.
+//
+// Ids are never reused, so cancelling by id cannot hit a later reservation;
+// Rejected just means the station never held it. It is best effort: the
+// outcome is logged, and the caller still gets the original error. It
+// outlives the caller's context, which is typically what ended the wait, but
+// is bounded by the call timeout.
+//
+// Known limitation: cp stays bound to the connection that carried the
+// ReserveNow. If that connection dropped, the cancel fails at once and is not
+// retried after the station reconnects, so a reservation it accepted stays
+// held at the station until it expires, and new reservations on that EVSE
+// are answered Occupied until then. Cancelling on reconnect would need the
+// orphan ids persisted (see docs/IDEAS.md).
+func (s *Service) cancelOrphan(ctx context.Context, cp ocpp.ChargePoint, r core.Reservation) {
+	ctx = context.WithoutCancel(ctx)
+	if timeout := s.cfg.Charger.CallTimeout.Duration(); timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	res, err := cp.CancelReservation(ctx, r.ID)
+	if err != nil {
+		s.log.Warn("could not cancel a reservation that may be held at the station",
+			"reservation_id", r.ID, "evse", r.EVSEUID, "error", err)
+		return
+	}
+	s.log.Info("cancelled a reservation whose ReserveNow got no answer",
+		"reservation_id", r.ID, "evse", r.EVSEUID, "status", res.Raw)
 }
 
 // Cancel releases the active reservation on an EVSE.
