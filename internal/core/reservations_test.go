@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -203,6 +204,13 @@ func TestStartingASessionConsumesTheReservation(t *testing.T) {
 
 			snap, _ := r.svc.Snapshot().ChargePoint(testCP)
 			events := ended(collect(t, r.events))
+			if !tc.consumed {
+				if len(snap.Reservations) != 1 || len(events) != 0 {
+					t.Fatalf("reservation should survive another tag's session; reservations %+v, ended %v",
+						snap.Reservations, events)
+				}
+				return
+			}
 			if !tc.consumed {
 				if len(snap.Reservations) != 1 || len(events) != 0 {
 					t.Fatalf("reservation should survive another tag's session; reservations %+v, ended %v",
@@ -418,3 +426,48 @@ func TestCountersNeverFallBehindTheIDsInTheFile(t *testing.T) {
 		t.Errorf("next reservation id = %d, want 8", next.ID)
 	}
 }
+
+// A reservation that expires the instant it is loaded fires its timer while
+// load is still working. The timer goroutine must not read the reservations
+// before load has finished writing them; run with -race.
+func TestLoadIsSafeAgainstATimerFiringImmediately(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "state.json")
+	clk := clocktest.New(t0)
+
+	first := newRig(t, clk, statetest.Open(t, path))
+	first.reserve(t, "EVSE-1", "04A1B2C3D4", 15*time.Minute)
+	first.reserve(t, "EVSE-2", "04A1B2C3D4", 15*time.Minute)
+	first.svc.Close()
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for range 200 {
+		// Each run expires both reservations and rewrites the file.
+		if err := os.WriteFile(path, saved, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		svc := core.New(testConfig(),
+			core.WithClock(clk.Now),
+			core.WithAfterFunc(func(_ time.Duration, fn func()) core.Stopper {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					fn()
+				}()
+				return noStop{}
+			}),
+			core.WithStore(statetest.Open(t, path)),
+			core.WithLogger(slog.New(slog.NewTextHandler(&syncBuffer{}, nil))),
+		)
+		wg.Wait()
+		svc.Close()
+	}
+}
+
+type noStop struct{}
+
+func (noStop) Stop() bool { return false }

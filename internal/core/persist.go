@@ -92,8 +92,28 @@ func (s *Service) persistableLocked() ([]state.Reservation, []state.Transaction)
 // EVSE that is no longer in config. If anything was dropped, the cleaned-up
 // state is written back straight away, so the file never claims a
 // reservation core does not hold.
+//
+// The in-memory part runs under s.mu: a reservation armed here can expire
+// within milliseconds, and its timer goroutine must not read the maps while
+// they are still being filled. The write-back happens after the lock is
+// released, because persist takes it again.
 func (s *Service) load() {
 	st := s.store.Get()
+
+	s.mu.Lock()
+	dropped := s.loadLocked(st)
+	s.mu.Unlock()
+
+	if dropped {
+		if err := s.persist(); err != nil {
+			s.log.Error("could not write back the state after dropping reservations", "error", err)
+		}
+	}
+}
+
+// loadLocked fills the in-memory state from st and reports whether it dropped
+// any reservation.
+func (s *Service) loadLocked(st state.State) (dropped bool) {
 
 	// A fresh file has zero counters; ids start at 1.
 	s.nextReservationID = max(st.NextReservationID, 1)
@@ -117,7 +137,6 @@ func (s *Service) load() {
 	}
 
 	now := s.now()
-	dropped := false
 	for _, r := range st.Reservations {
 		connectorID, known := s.connectorID(r.EVSEUID)
 		switch {
@@ -144,10 +163,5 @@ func (s *Service) load() {
 		// lead to an id being handed out twice.
 		s.nextReservationID = max(s.nextReservationID, r.ID+1)
 	}
-
-	if dropped {
-		if err := s.persist(); err != nil {
-			s.log.Error("could not write back the state after dropping reservations", "error", err)
-		}
-	}
+	return dropped
 }
