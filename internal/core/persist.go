@@ -122,7 +122,7 @@ func (s *Service) loadLocked(st state.State) (dropped bool) {
 
 	for _, t := range st.Transactions {
 		cp := s.ensure(t.ChargePointID)
-		cp.addEVSE(t.EVSEUID, t.ConnectorID)
+		cp.addEVSE(t.EVSEUID, t.ConnectorID, s.now())
 		s.txSeq++
 		cp.transactions[t.ID] = &Transaction{
 			ID: t.ID, EVSEUID: t.EVSEUID, ConnectorID: t.ConnectorID,

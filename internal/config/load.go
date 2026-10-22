@@ -22,7 +22,18 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	return parse(f)
+	// Stat the file being read, not the path, so the time belongs to these
+	// contents even if the file is replaced in between.
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := parse(f)
+	if err != nil {
+		return nil, err
+	}
+	cfg.ModTime = info.ModTime()
+	return cfg, nil
 }
 
 // Parse reads a config from any reader. Load is the usual entry point; this
@@ -74,6 +85,7 @@ func (c *Config) normalize() {
 	c.OCPI.TokenC = strings.TrimSpace(c.OCPI.TokenC)
 	c.Location.ID = strings.TrimSpace(c.Location.ID)
 	c.Location.Country = strings.TrimSpace(c.Location.Country)
+	c.Location.TimeZone = strings.TrimSpace(c.Location.TimeZone)
 	c.Location.Coordinates.Latitude = strings.TrimSpace(c.Location.Coordinates.Latitude)
 	c.Location.Coordinates.Longitude = strings.TrimSpace(c.Location.Coordinates.Longitude)
 

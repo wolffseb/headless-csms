@@ -17,6 +17,7 @@ import (
 	"github.com/wolffseb/cli-cpms/internal/control/socket"
 	"github.com/wolffseb/cli-cpms/internal/core"
 	"github.com/wolffseb/cli-cpms/internal/ocpi"
+	"github.com/wolffseb/cli-cpms/internal/ocpi/locations"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
 	"github.com/wolffseb/cli-cpms/internal/ocpp/csms"
 	"github.com/wolffseb/cli-cpms/internal/ocpp/ocppj"
@@ -131,7 +132,7 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	// OCPI starts last: it is another way in to control, like the socket.
 	// Until registration exists, only TOKEN_A gets anywhere, and only as far
 	// as versions and the credentials stub.
-	ocpiServer, err := startOCPI(ocpiDeps{Config: cfg, Log: logger})
+	ocpiServer, err := startOCPI(ocpiDeps{Config: cfg, Core: svc, Log: logger})
 	if err != nil {
 		commands.Close()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
@@ -195,7 +196,9 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 // list, so work on them does not collide.
 type ocpiDeps struct {
 	Config *config.Config
-	Log    *slog.Logger
+	// Core is read by Locations for the live EVSE status.
+	Core *core.Service
+	Log  *slog.Logger
 }
 
 // startOCPI serves OCPI on server.ocpi_bind under the path of
@@ -212,6 +215,16 @@ func startOCPI(d ocpiDeps) (*ocpi.Server, error) {
 		return nil, err
 	}
 	if err := s.Register(ocpi.CredentialsStub()); err != nil {
+		return nil, err
+	}
+	// Locations needs module access, which only registration grants.
+	sender, err := locations.NewSender(locations.Options{
+		Config: cfg, Core: d.Core, URL: s.VersionURL() + "/locations",
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.Register(sender.Module()); err != nil {
 		return nil, err
 	}
 	if err := s.Start(); err != nil {
