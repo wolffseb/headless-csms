@@ -175,8 +175,12 @@ valid uids.
 | 6 | The station is faulted or unavailable |
 | 7 | The station did not answer within `charger.call_timeout` |
 | 8 | Unlock failed, or the station does not support the command |
-| 9 | Refused by cpms before sending: already reserved (including while the cancel of a timed-out reservation is in flight), no reservation to cancel, nothing to stop, shutting down |
+| 9 | Refused by cpms before sending: already reserved (including while the cancel of a timed-out reservation is in flight), no reservation to cancel, nothing to stop, shutting down. `cpms ocpi unregister`: nothing is registered, or a registration is still in progress (nothing was changed; try again) |
 | 10 | `cpms probe`: the station reported that it lacks a capability cpms requires (one it merely did not report is not an error) |
+
+`cpms ocpi unregister` exits 0 once the registration is forgotten, even if the partner could
+not be told: a failed `DELETE` to the partner is reported as a `warning:` line on stderr, not
+as a failure, because the unregistration itself happened.
 
 **How it works.** `cpms run` listens on a Unix socket, `cpms.sock` next to the state file by
 default (`--socket` overrides it; use the same value for `run` and the commands). The socket
@@ -338,6 +342,8 @@ What the partner can get back:
 | HTTP 200, `3002` | The partner offers no OCPI 2.3.0. Nothing is stored. |
 | HTTP 400, `2001` | The credentials are invalid: a missing token or one that is not 1-64 printable ASCII characters without whitespace, a URL that is not absolute, or no roles. |
 | HTTP 405 | `POST` while registered, or `PUT`/`DELETE` while not (as the spec says). |
+| HTTP 200, `2000` | Another registration change is in progress: `POST` and `PUT` call the partner back, which can take several seconds, and only one runs at a time. Nothing is changed; retry shortly. |
+| HTTP 401 | The token is not the right one for the registration as it is when the request is handled: `TOKEN_A` after a registration, `TOKEN_C` after an unregistration. |
 
 A partner that lists no `locations` endpoint with role `RECEIVER` still registers, with a
 warning in the log: it pulls Locations instead of having status changes pushed. `PUT`
@@ -352,7 +358,8 @@ OCPI  registered with NL*ABC since 14:02:11, push: https://emsp.example/ocpi/2.3
 `token_c`), run `cpms ocpi unregister` while `cpms run` is running. It clears the registration
 from `state.json`, tells the partner with a `DELETE` on its credentials endpoint (best
 effort: the partner may be down, which is reported as a warning), and `TOKEN_A` works again.
-Then have the partner register again.
+Then have the partner register again. If the partner is registering at that moment, the
+command waits for it, up to `charger.call_timeout`, then exits 9 without changing anything.
 
 **Deviation from the spec: `TOKEN_C` does not change on `PUT`.** OCPI says the server must
 generate a new token when the partner `PUT`s its credentials. cpms answers with the same
