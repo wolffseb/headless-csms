@@ -131,7 +131,7 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	// OCPI starts last: it is another way in to control, like the socket.
 	// Until registration exists, only TOKEN_A gets anywhere, and only as far
 	// as versions and the credentials stub.
-	ocpiServer, err := startOCPI(cfg, logger)
+	ocpiServer, err := startOCPI(ocpiDeps{Config: cfg, Log: logger})
 	if err != nil {
 		commands.Close()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
@@ -163,13 +163,15 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 
 	<-ctx.Done()
 	cmd.Println("shutting down")
-	// One grace period covers both listeners.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
-	defer cancel()
+	// Each listener gets its own grace, started when its turn comes:
+	// commands.Close below can take up to call_timeout, which would spend a
+	// shared one before the OCPP server got to use it.
+	ocpiCtx, cancelOCPI := context.WithTimeout(context.Background(), shutdownGrace)
+	defer cancelOCPI()
 
 	// Stop taking commands before the station connection goes away, so no
 	// command is half-sent into a closing socket.
-	if err := ocpiServer.Shutdown(shutdownCtx); err != nil {
+	if err := ocpiServer.Shutdown(ocpiCtx); err != nil {
 		logger.Warn("OCPI shutdown did not complete cleanly", "error", err)
 	}
 	ctl.Close()
@@ -177,6 +179,8 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	// is still connected.
 	commands.Close()
 
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Warn("shutdown did not complete cleanly", "error", err)
 	}
@@ -186,14 +190,23 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	return nil
 }
 
+// ocpiDeps is everything startOCPI wires into the OCPI server. Later modules
+// (registration, commands) add fields here instead of growing the parameter
+// list, so work on them does not collide.
+type ocpiDeps struct {
+	Config *config.Config
+	Log    *slog.Logger
+}
+
 // startOCPI serves OCPI on server.ocpi_bind under the path of
 // ocpi.public_base_url, with the modules that exist so far.
-func startOCPI(cfg *config.Config, logger *slog.Logger) (*ocpi.Server, error) {
+func startOCPI(d ocpiDeps) (*ocpi.Server, error) {
+	cfg := d.Config
 	s, err := ocpi.New(ocpi.Options{
 		Bind:          cfg.Server.OCPIBind,
 		PublicBaseURL: cfg.OCPI.PublicBaseURL,
 		Auth:          ocpi.NewStaticAuthenticator(cfg.OCPI.TokenA),
-		Log:           logger,
+		Log:           d.Log,
 	})
 	if err != nil {
 		return nil, err

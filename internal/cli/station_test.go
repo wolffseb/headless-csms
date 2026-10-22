@@ -343,6 +343,26 @@ func TestShutdownWaitsForTheOrphanCancel(t *testing.T) {
 	}
 }
 
+// The grace for the OCPP server starts after the orphan cancel is done. With a
+// call timeout longer than the grace, a grace started earlier would be spent
+// by then, and the station connection would be closed without being waited for.
+func TestOCPPShutdownGetsItsFullGraceAfterTheOrphanCancel(t *testing.T) {
+	t.Parallel()
+	s := newStation(t, 19318, "heartbeat_timeout: 90s", "heartbeat_timeout: 90s\n  call_timeout: 7s")
+	s.connect(func(o *simulator.Options) {
+		o.Scenario = simulator.ScenarioSlow
+		o.SlowDelay = 30 * time.Second
+	})
+
+	_, stderr, code := s.cpms("reserve")
+	expectExit(t, "reserve", code, cli.ExitTimeout, stderr, "did not answer")
+	s.stopRun()
+
+	if logs := s.runOut.String(); strings.Contains(logs, "shutdown did not complete cleanly") {
+		t.Errorf("the OCPP server shutdown ran out of grace; log:\n%s", logs)
+	}
+}
+
 func TestNoRunningCPMSExits2(t *testing.T) {
 	t.Parallel()
 
