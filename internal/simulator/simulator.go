@@ -290,7 +290,7 @@ type connector struct {
 	// reservationID is the CSMS's reservation id, or 0 when not reserved.
 	reservationID int
 	// reservedTag is the idTag the reservation was made for. parentIdTag is
-	// not modelled, so only an exact match counts as the reserved tag.
+	// not modelled; idTags compare case-insensitively (IdToken is a CiString).
 	reservedTag string
 	meter       meter
 	// stopMeter is closed to end the MeterValues stream of the running

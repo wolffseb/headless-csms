@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
@@ -346,9 +347,10 @@ func (s *Simulator) startTransaction(ctx context.Context, connectorID int, idTag
 	// station says which one only if the session is for the reserved tag
 	// (OCPP 1.6 section 5.13: "if a transaction for the reserved idTag is
 	// started"); a start for another tag does not redeem it, and the CSMS is
-	// not told it did.
+	// not told it did. IdToken is a CiString (section 7.15), so tags compare
+	// case-insensitively.
 	reservationID := c.reservationID
-	if reservationID != 0 && idTag == c.reservedTag {
+	if reservationID != 0 && strings.EqualFold(idTag, c.reservedTag) {
 		req.ReservationID = &reservationID
 	}
 	c.transactionID = localID
