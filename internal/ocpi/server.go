@@ -31,7 +31,20 @@ type Options struct {
 	Log *slog.Logger
 	// Now stamps response envelopes; nil means time.Now. Tests pin it.
 	Now func() time.Time
+	// ReadTimeout, WriteTimeout and IdleTimeout bound reading a whole
+	// request, writing the response, and an idle keep-alive connection. Zero
+	// means the defaults below; tests shorten them.
+	ReadTimeout, WriteTimeout, IdleTimeout time.Duration
 }
+
+// Defaults for the HTTP timeouts. Write is generous because a module handler
+// may call the peer back before it answers.
+const (
+	DefaultReadHeaderTimeout = 10 * time.Second
+	DefaultReadTimeout       = 30 * time.Second
+	DefaultWriteTimeout      = 60 * time.Second
+	DefaultIdleTimeout       = 120 * time.Second
+)
 
 // Server serves OCPI over HTTP.
 type Server struct {
@@ -42,6 +55,11 @@ type Server struct {
 	// path ("" for a root URL). Both come from Options.PublicBaseURL once.
 	base   string
 	prefix string
+
+	// ctx is the server's lifetime: every request context ends with it, and
+	// it is cancelled when Shutdown begins.
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	mux  *http.ServeMux
 	http *http.Server
@@ -71,7 +89,20 @@ func New(opts Options) (*Server, error) {
 		return nil, err
 	}
 
+	if opts.ReadTimeout <= 0 {
+		opts.ReadTimeout = DefaultReadTimeout
+	}
+	if opts.WriteTimeout <= 0 {
+		opts.WriteTimeout = DefaultWriteTimeout
+	}
+	if opts.IdleTimeout <= 0 {
+		opts.IdleTimeout = DefaultIdleTimeout
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{
+		ctx:    ctx,
+		cancel: cancel,
 		opts:   opts,
 		log:    opts.Log,
 		base:   base,
@@ -80,7 +111,11 @@ func New(opts Options) (*Server, error) {
 	}
 	s.http = &http.Server{
 		Handler:           s,
-		ReadHeaderTimeout: 10 * time.Second,
+		ReadHeaderTimeout: DefaultReadHeaderTimeout,
+		ReadTimeout:       opts.ReadTimeout,
+		WriteTimeout:      opts.WriteTimeout,
+		IdleTimeout:       opts.IdleTimeout,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
 
 	// The versions module needs no Module entry: it is not listed in version
@@ -226,8 +261,16 @@ func (s *Server) Addr() string {
 	return s.ln.Addr().String()
 }
 
-// Shutdown stops accepting requests and waits for those in flight.
+// Context is the server's lifetime: it is cancelled when Shutdown begins.
+// Module goroutines that outlive a request (command result deliveries) hang
+// off it so they stop with the server.
+func (s *Server) Context() context.Context { return s.ctx }
+
+// Shutdown cancels the lifetime context, so in-flight handlers and module
+// goroutines are told to stop, then stops accepting requests and waits for
+// those in flight.
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.cancel()
 	err := s.http.Shutdown(ctx)
 
 	done := make(chan struct{})
@@ -252,6 +295,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Request-ID", requestID)
 	w.Header().Set("X-Correlation-ID", correlationID)
 
+	// Handlers read the ids, and the server's lifetime, from the context. The
+	// lifetime is joined here as well as through BaseContext, so it holds
+	// however the Server is mounted.
+	ctx, cancel := context.WithCancel(WithCorrelationID(WithRequestID(r.Context(), requestID), correlationID))
+	defer cancel()
+	defer context.AfterFunc(s.ctx, cancel)()
+	r = r.WithContext(ctx)
+
 	rw := &responseWriter{ResponseWriter: w, now: s.opts.Now}
 	r.Body = http.MaxBytesReader(rw, r.Body, MaxBodyBytes)
 
@@ -268,6 +319,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"status", rw.status(),
 		"duration", time.Since(start),
 		"request_id", requestID,
+		"correlation_id", correlationID,
 	)
 }
 
@@ -356,6 +408,7 @@ type responseWriter struct {
 	code int
 }
 
+// WriteHeader records the first status and passes it on.
 func (w *responseWriter) WriteHeader(code int) {
 	if w.code == 0 {
 		w.code = code
@@ -363,6 +416,7 @@ func (w *responseWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
+// Write counts as an implicit 200 when no status was set, and passes the bytes on.
 func (w *responseWriter) Write(b []byte) (int, error) {
 	if w.code == 0 {
 		w.code = http.StatusOK
@@ -388,14 +442,17 @@ type capture struct {
 	code   int
 }
 
+// Header returns the headers the captured handler set.
 func (c *capture) Header() http.Header { return c.header }
 
+// WriteHeader records the first status without sending it.
 func (c *capture) WriteHeader(code int) {
 	if c.code == 0 {
 		c.code = code
 	}
 }
 
+// Write discards the body and records a 200 when no status was set.
 func (c *capture) Write(b []byte) (int, error) {
 	if c.code == 0 {
 		c.code = http.StatusOK
