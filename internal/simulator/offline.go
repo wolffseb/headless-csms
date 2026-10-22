@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
 	"github.com/wolffseb/cli-cpms/internal/ocpp/ocppj"
@@ -33,6 +34,11 @@ type txMessage struct {
 	// attempts counts the answers that said the CSMS failed to process it,
 	// and the timeouts.
 	attempts int
+	// detached is set, under s.mu, on a StartTransaction whose caller has
+	// returned with the session running and the message still queued. What
+	// becomes of the message is then the queue's to act on (see
+	// giveUpStartLocked and assignLocked); until then the caller sees it.
+	detached bool
 
 	// Once the message has left the queue: answered holds the CSMS's answer,
 	// or err why it was given up.
@@ -162,6 +168,17 @@ func (s *Simulator) drainLocked(conn *ocppj.Conn) error {
 			return nil
 		}
 		m := s.queue[0]
+		// A placeholder id is the station's own and goes on no wire. Every
+		// session's StartTransaction is ahead of its other messages and
+		// replaces the placeholder when answered, or takes them with it when
+		// given up, so this is a guard against a bug rather than a case.
+		if id := m.transactionID(); id != nil && *id < 0 {
+			s.popLocked()
+			m.err = fmt.Errorf("simulator: %s carries the placeholder transaction id %d", m.action, *id)
+			s.log.Error("dropping a message with a placeholder transaction id", "action", m.action, "id", *id)
+			s.mu.Unlock()
+			continue
+		}
 		s.mu.Unlock()
 
 		answer, err := conn.Call(ctx, m.action, m.payload())
@@ -202,7 +219,7 @@ func (s *Simulator) drainLocked(conn *ocppj.Conn) error {
 		s.popLocked()
 		m.err = err
 		if m.start != nil {
-			s.dropSessionLocked(m.localID)
+			s.giveUpStartLocked(m)
 		}
 		s.mu.Unlock()
 	}
@@ -237,13 +254,18 @@ func (s *Simulator) assignLocked(m *txMessage) {
 	}
 }
 
-// dropSessionLocked forgets the queued messages of a session whose
-// StartTransaction was given up: the CSMS never opened it, so it has nothing
-// to put them against. The caller holds s.mu.
-func (s *Simulator) dropSessionLocked(localID int) {
+// giveUpStartLocked deals with a StartTransaction that was given up: the CSMS
+// never opened the session, so it has nothing to put the session's queued
+// messages against, and they are forgotten. If the session is still running
+// and nobody waits on the start any more (it was started offline), it ends
+// locally too: a station cannot go on charging under an id the CSMS does not
+// have, and sending the placeholder would make up a transaction. The CSMS may
+// in fact have opened it and only its answers been lost; the specification
+// gives the station no way to tell. The caller holds s.mu.
+func (s *Simulator) giveUpStartLocked(m *txMessage) {
 	kept := s.queue[:0]
 	for _, q := range s.queue {
-		if id := q.transactionID(); id != nil && *id == localID {
+		if id := q.transactionID(); id != nil && *id == m.localID {
 			s.log.Warn("dropping a message of a session the csms never opened", "action", q.action)
 			continue
 		}
@@ -251,6 +273,28 @@ func (s *Simulator) dropSessionLocked(localID int) {
 	}
 	clear(s.queue[len(kept):])
 	s.queue = kept
+
+	if !m.detached {
+		return
+	}
+	for id, c := range s.connectors {
+		if c.transactionID == m.localID {
+			s.log.Warn("ending a session started offline: its StartTransaction was given up",
+				"connector", id, "placeholder_id", m.localID, "error", m.err)
+			s.endSessionLocked(c)
+		}
+	}
+}
+
+// endSessionLocked ends the session running on c without a message to the
+// CSMS: the meter stream stops and the connector is Available again. It does
+// not report the status: this runs while a connection is being brought up,
+// and the status round that follows says where each connector ended up. The
+// caller holds s.mu.
+func (s *Simulator) endSessionLocked(c *connector) {
+	stopMeterLocked(c)
+	c.transactionID = 0
+	c.status = v16.StatusAvailable
 }
 
 // queuedLocked counts the queued messages of one action. The caller holds

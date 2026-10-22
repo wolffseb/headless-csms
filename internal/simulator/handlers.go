@@ -355,18 +355,32 @@ func (s *Simulator) startTransaction(ctx context.Context, connectorID int, idTag
 
 	m := &txMessage{action: v16.ActionStartTransaction, start: req, localID: localID}
 	s.deliverTxLocked(ctx, m)
+
+	// Read the outcome while still holding the CALL slot: once it is free, a
+	// redial may replay the queue and settle the message behind our back. A
+	// message still queued is the replay's from here on, and the session
+	// goes on without waiting for it. Its status is set in the same breath,
+	// so that a replay that gives the session up cannot be overwritten by
+	// this return reporting it Charging.
+	s.mu.Lock()
+	answered, answer, err := m.answered, m.answer, m.err
+	queued := !answered && err == nil
+	if queued {
+		m.detached = true
+		c.status = v16.StatusCharging
+	}
+	s.mu.Unlock()
 	s.callMu.Unlock()
 
-	if !m.answered && m.err == nil {
+	if queued {
 		s.log.Info("transaction started offline",
 			"connector", connectorID, "placeholder_id", localID, "id_tag", idTag)
-		return s.SetConnectorStatus(ctx, connectorID, v16.StatusCharging)
+		return nil
 	}
 
 	var conf v16.StartTransactionConf
-	err := m.err
 	if err == nil {
-		if err = decodeInto(m.answer, &conf); err != nil {
+		if err = decodeInto(answer, &conf); err != nil {
 			err = fmt.Errorf("response: %w", err)
 		}
 	}
