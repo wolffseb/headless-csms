@@ -295,23 +295,28 @@ func TestTxMessageRetriedOnInternalError(t *testing.T) {
 	}
 }
 
-// TestTxMessageGivenUp covers the two ways a message leaves the queue
-// unanswered: a CSMS that keeps failing to process it, after three attempts,
-// and a CALLERROR that the same message would only get again, at once.
-// Either way the station moves on. Not parallel, for goleak.
+// TestTxMessageGivenUp covers a CSMS that keeps failing to process a
+// transaction message: whatever CALLERROR it answers with, the message is
+// sent three times before the station moves on (OCPP 1.6 section 3.7.1 lets
+// a station skip a message only if the CSMS repeatedly reports a failure to
+// process it). Not parallel, for goleak.
 func TestTxMessageGivenUp(t *testing.T) {
+	const attempts = 3
 	for _, tc := range []struct {
 		code     ocpp.ErrorCode
 		attempts int
 	}{
-		{ocpp.ErrInternalError, 3},
-		{ocpp.ErrGenericError, 3},
-		{ocpp.ErrFormationViolation, 1},
-		{ocpp.ErrPropertyConstraintViolation, 1},
-		{ocpp.ErrTypeConstraintViolation, 1},
-		{ocpp.ErrOccurrenceConstraintViolation, 1},
-		{ocpp.ErrProtocolError, 1},
-		{ocpp.ErrNotImplemented, 1},
+		{ocpp.ErrInternalError, attempts},
+		{ocpp.ErrGenericError, attempts},
+		{ocpp.ErrFormationViolation, attempts},
+		{ocpp.ErrPropertyConstraintViolation, attempts},
+		{ocpp.ErrTypeConstraintViolation, attempts},
+		{ocpp.ErrOccurrenceConstraintViolation, attempts},
+		{ocpp.ErrProtocolError, attempts},
+		{ocpp.ErrNotImplemented, attempts},
+		{ocpp.ErrNotSupported, attempts},
+		{ocpp.ErrSecurityError, attempts},
+		{ocpp.ErrRpcFrameworkError, attempts},
 	} {
 		t.Run(string(tc.code), func(t *testing.T) {
 			ignore := goleak.IgnoreCurrent()

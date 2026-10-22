@@ -130,14 +130,15 @@ wire and which `TransactionID` does not report: that is 0 until the CSMS has ans
 `StartTransaction`. Once it has, the queued `MeterValues` and `StopTransaction` carry the
 CSMS's id instead. Status changes are not queued: the status round after the boot reports where each
 connector ended up. After an Accepted boot the queue goes out first, in order, one call at
-a time, before the status round and before anything new. A message leaves the queue only
-once the CSMS has answered it:
+a time, and a transaction message made while it does joins its end (OCPP 1.6 §3.7). The
+status round follows; a meter sample made in the meantime can go out between its
+`StatusNotification`s, which §3.7 allows. A message leaves the queue only once the CSMS has
+answered it:
 
 | Answer | What happens |
 |---|---|
 | `CALLRESULT` | Delivered |
-| `CALLERROR` `InternalError`, `GenericError` or a non-standard code, or no answer within the call timeout | The CSMS failed to process it: sent again after the backoff, at most 3 times in all, then given up (OCPP 1.6 §4.10) |
-| Any other `CALLERROR` (`FormationViolation`, `PropertyConstraintViolation`, `OccurenceConstraintViolation`, `TypeConstraintViolation`, `ProtocolError`, `NotImplemented`, `NotSupported`, `SecurityError`, `RpcFrameworkError`) | The same message would get the same answer: given up at once. A given-up `StartTransaction` takes the queued messages of its session with it |
+| Any `CALLERROR`, or no answer within the call timeout | The CSMS failed to process it, which is what OCPP 1.6 §3.7.1 lets a station skip a message for only if it happens repeatedly: sent again after the backoff, at most 3 times in all (the stand-in for `TransactionMessageAttempts`), then given up. `FormationViolation` and the other codes that blame the message are retried like `InternalError`; the specification makes no exception for them |
 | The connection drops | Stays queued, with everything behind it, for the next connection |
 
 The queue lives in memory: a simulator that is restarted starts with an empty one. Offline

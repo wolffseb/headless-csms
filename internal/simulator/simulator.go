@@ -179,7 +179,8 @@ type Options struct {
 	// Offline, the station keeps charging: StartTransaction and
 	// StopTransaction work locally, and every transaction-related message is
 	// queued, in memory, and delivered in order after the next Accepted boot,
-	// ahead of everything else (see deliverTxLocked and classify).
+	// ahead of every transaction message made later (see deliverTxLocked and
+	// classify).
 	Reconnect bool
 	// ReconnectBackoff, when set, is the wait before redial attempt n,
 	// counting from 1 after every drop, in place of the default 1 s, 2 s,
@@ -526,8 +527,11 @@ func (s *Simulator) bringUp(ctx context.Context, conn *ocppj.Conn) error {
 		return err
 	}
 
-	// Whatever was queued while offline goes first, ahead of even the status
-	// round; delivering the queue is what marks the connection online.
+	// Whatever was queued while offline goes first, ahead of the status round
+	// and of every transaction message made since; delivering the queue is
+	// what marks the connection online, so a sample made during the status
+	// round may still go out between its notifications, as OCPP 1.6 section
+	// 3.7 allows.
 	s.callMu.Lock()
 	s.mu.Lock()
 	queued := len(s.queue)

@@ -12,7 +12,7 @@ import (
 
 // txAttempts is how often a transaction-related message is sent to a CSMS
 // that fails to process it (see retryable) before it is given up, which is
-// what OCPP 1.6 section 4.10 lets a station do. It stands in for the
+// what OCPP 1.6 section 3.7.1 lets a station do. It stands in for the
 // TransactionMessageAttempts key, which the simulator does not offer.
 const txAttempts = 3
 
@@ -71,11 +71,11 @@ type outcome int
 const (
 	// delivered: the CSMS answered with a CALLRESULT.
 	delivered outcome = iota
-	// refused: the CSMS answered with a CALLERROR that the same message would
-	// get again. It is given up.
+	// refused: the message cannot be sent at all, as with a payload that
+	// does not encode. It is given up.
 	refused
-	// retryable: the CSMS failed to process it, or did not answer in time. It
-	// is sent again, up to txAttempts.
+	// retryable: the CSMS failed to process it (any CALLERROR), or did not
+	// answer in time. It is sent again, up to txAttempts.
 	retryable
 	// lost: the connection went, or the simulator closed. It stays queued,
 	// and the attempt does not count.
@@ -84,38 +84,27 @@ const (
 
 // classify sorts a CALL's error.
 //
-// The line between refused and retryable follows what the CALLERROR says
-// about the message. FormationViolation, ProtocolError, the three
-// ConstraintViolations, NotImplemented, NotSupported, SecurityError and
-// RpcFrameworkError all say the CSMS cannot or will not take this message as
-// it is; sending the same bytes again gets the same answer, and would hold
-// up the queue behind it for nothing. InternalError and GenericError say the
-// CSMS failed, not the message, which is the "failure to process" that OCPP
-// 1.6 section 4.10 has a station retry. A code outside the specification is
-// treated the same way: it is the CSMS's own failure, and the attempts are
-// bounded.
+// Every CALLERROR counts as the CSMS failing to process the message. OCPP 1.6
+// section 3.7.1 lets a station skip a transaction-related message only if
+// the CSMS repeatedly reports such a failure, and the OCPP-J specification
+// makes no exception for the codes that blame the message (FormationViolation
+// and the like): a station cannot tell a CSMS bug from a bad message, and
+// skipping early would lose a session's record. So all of them are sent
+// again, up to txAttempts, which also bounds how long a message that will
+// never be accepted holds up the queue behind it.
 func classify(err error) outcome {
 	var rpcErr *ocpp.RPCError
 	switch {
 	case err == nil:
 		return delivered
-	case errors.As(err, &rpcErr):
-		switch rpcErr.Code {
-		case ocpp.ErrFormationViolation, ocpp.ErrProtocolError,
-			ocpp.ErrPropertyConstraintViolation, ocpp.ErrOccurrenceConstraintViolation,
-			ocpp.ErrTypeConstraintViolation, ocpp.ErrNotImplemented, ocpp.ErrNotSupported,
-			ocpp.ErrSecurityError, ocpp.ErrRpcFrameworkError:
-			return refused
-		}
-		return retryable
-	case errors.Is(err, ocpp.ErrTimeout):
+	case errors.As(err, &rpcErr), errors.Is(err, ocpp.ErrTimeout):
 		return retryable
 	case errors.Is(err, ocpp.ErrNotConnected), errors.Is(err, context.Canceled),
 		errors.Is(err, context.DeadlineExceeded):
 		return lost
 	}
-	// Anything else (a payload that cannot be encoded, say) will not get
-	// better by trying again.
+	// Anything else is a failure on the station's side (a payload that cannot
+	// be encoded, say) and will not get better by trying again.
 	return refused
 }
 
@@ -157,7 +146,7 @@ func (s *Simulator) deliverTxLocked(ctx context.Context, m *txMessage) {
 // reconnect.
 //
 // A message leaves the queue only once the CSMS has answered it, or has
-// failed to process it txAttempts times, or has refused it outright (see
+// failed to process it txAttempts times, or cannot be sent at all (see
 // classify). It runs on the simulator's own context rather than a caller's,
 // so a caller giving up does not leave a message half delivered; Close stops
 // it.
@@ -207,7 +196,7 @@ func (s *Simulator) drainLocked(conn *ocppj.Conn) error {
 			return err
 		}
 
-		// Refused, or out of attempts.
+		// Out of attempts, or cannot be sent.
 		s.log.Warn("giving up a transaction message", "action", m.action, "attempts", m.attempts+1, "error", err)
 		s.mu.Lock()
 		s.popLocked()
