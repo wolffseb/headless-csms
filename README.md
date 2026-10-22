@@ -359,7 +359,9 @@ OCPI  registered with NL*ABC since 14:02:11, push: https://emsp.example/ocpi/2.3
 from `state.json`, tells the partner with a `DELETE` on its credentials endpoint (best
 effort: the partner may be down, which is reported as a warning), and `TOKEN_A` works again.
 Then have the partner register again. If the partner is registering at that moment, the
-command waits for it, up to `charger.call_timeout`, then exits 9 without changing anything.
+command waits for it, up to `charger.call_timeout`, then exits 9 without changing anything. If it waits on a `POST` that then succeeds, the
+brand-new registration is the one cleared, and the partner that just registered gets the
+`DELETE`.
 
 **Deviation from the spec: `TOKEN_C` does not change on `PUT`.** OCPI says the server must
 generate a new token when the partner `PUT`s its credentials. cpms answers with the same
