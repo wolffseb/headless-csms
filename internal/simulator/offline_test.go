@@ -466,3 +466,52 @@ func TestOfflineStartWithAnUnknownTag(t *testing.T) {
 		t.Errorf("offline session recorded as %+v, want its own id, closed", tx)
 	}
 }
+
+// TestTransactionIDIsNeverAPlaceholder polls TransactionID while a slow CSMS
+// answers StartTransaction: callers (ocpp-tap, the e2e tests) treat anything
+// but 0 as the CSMS's id, so it must be 0 until the answer, never negative.
+// Not parallel, for goleak.
+func TestTransactionIDIsNeverAPlaceholder(t *testing.T) {
+	for _, reconnect := range []bool{false, true} {
+		t.Run("reconnect="+strconv.FormatBool(reconnect), func(t *testing.T) {
+			ignore := goleak.IgnoreCurrent()
+			t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
+
+			f := newFakeCSMS(t, 300*time.Millisecond, 7)
+			var mutate []func(*simulator.Options)
+			if reconnect {
+				mutate = append(mutate, reconnecting(clocktest.New(time.Now()), &backoffLog{wait: time.Second}))
+			}
+			sim := startSim(t, f.url(), mutate...)
+
+			started := make(chan error, 1)
+			go func() { started <- sim.StartTransaction(context.Background(), 1) }()
+
+			sawZero := false
+			deadline := time.Now().Add(3 * time.Second)
+			for {
+				id := sim.TransactionID(1)
+				if id < 0 {
+					t.Fatalf("TransactionID = %d while the CSMS is answering", id)
+				}
+				if id > 0 {
+					if id != 7 {
+						t.Fatalf("TransactionID = %d, want the CSMS's 7", id)
+					}
+					break
+				}
+				sawZero = true
+				if time.Now().After(deadline) {
+					t.Fatal("the start was never answered")
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			if !sawZero {
+				t.Error("never saw TransactionID 0 before the answer; the test proves nothing")
+			}
+			if err := <-started; err != nil {
+				t.Errorf("start: %v", err)
+			}
+		})
+	}
+}

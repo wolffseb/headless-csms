@@ -125,9 +125,10 @@ at start-up is more likely a wrong `--csms` than an outage.
 While it is offline it keeps charging, as a real station does. Sessions start and stop
 locally, the meter keeps streaming, and every transaction message (`StartTransaction`,
 `MeterValues`, `StopTransaction`) is queued with the timestamp it was made with. A session
-started offline runs under a negative placeholder id; once the CSMS answers its queued
-`StartTransaction`, its queued `MeterValues` and `StopTransaction` carry the CSMS's id
-instead. Status changes are not queued: the status round after the boot reports where each
+started offline runs under a placeholder id of the simulator's own, which never goes on the
+wire and which `TransactionID` does not report: that is 0 until the CSMS has answered the
+`StartTransaction`. Once it has, the queued `MeterValues` and `StopTransaction` carry the
+CSMS's id instead. Status changes are not queued: the status round after the boot reports where each
 connector ended up. After an Accepted boot the queue goes out first, in order, one call at
 a time, before the status round and before anything new. A message leaves the queue only
 once the CSMS has answered it:
