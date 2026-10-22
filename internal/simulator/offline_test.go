@@ -613,3 +613,47 @@ func TestGivenUpOfflineStartEndsTheSession(t *testing.T) {
 		t.Error("a stop of the ended session was accepted")
 	}
 }
+
+// TestReplayedStartNotAcceptedDeauthorizes: the CSMS answers the replayed
+// StartTransaction of a session that is still running with an idTagInfo that
+// is not Accepted, and, as cpms does for an unknown tag, transactionId 0.
+// The station stops it as StopTransactionOnInvalidId=true would (OCPP 1.6
+// section 3.5.4): a StopTransaction for the id the CSMS assigned, reason
+// DeAuthorized, and the connector is free again. Not parallel, for goleak.
+func TestReplayedStartNotAcceptedDeauthorizes(t *testing.T) {
+	ignore := goleak.IgnoreCurrent()
+	t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
+
+	f := newFakeCSMS(t, 0, 7)
+	f.mu.Lock()
+	f.startConf = func(n int) v16.StartTransactionConf {
+		if n == 2 {
+			return v16.StartTransactionConf{TransactionID: 0, IDTagInfo: v16.IDTagInfo{Status: v16.AuthInvalid}}
+		}
+		return v16.StartTransactionConf{TransactionID: 7, IDTagInfo: v16.IDTagInfo{Status: v16.AuthAccepted}}
+	}
+	f.mu.Unlock()
+	sim, _ := offlineSession(t, f)
+
+	waitFor(t, "the status round after the reconnect", func() bool {
+		calls, _ := f.snapshot()
+		return len(afterBoot(calls, 2)) == 3+3
+	})
+
+	calls, _ := f.snapshot()
+	after := afterBoot(calls, 2)
+	if got := strings.Join(actions(after[:3]), ","); got != "StopTransaction,StartTransaction,StopTransaction" {
+		t.Fatalf("replay: %s, want the first stop, the start, and a stop of the refused session", got)
+	}
+	stop := decode[v16.StopTransactionReq](t, after[2])
+	if stop.TransactionID != 0 || stop.Reason != "DeAuthorized" {
+		t.Errorf("stop of the refused session = id %d reason %q, want the CSMS's 0 and DeAuthorized", stop.TransactionID, stop.Reason)
+	}
+	transactionIDsOnTheWire(t, f)
+	if got := sim.ConnectorStatus(1); got != v16.StatusAvailable {
+		t.Errorf("connector 1 is %s, want Available", got)
+	}
+	if err := sim.StartTransaction(context.Background(), 1); err != nil {
+		t.Errorf("the connector cannot start a new session: %v", err)
+	}
+}
