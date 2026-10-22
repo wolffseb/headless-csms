@@ -175,6 +175,23 @@ func TestInvalidConfigsNameTheOffendingField(t *testing.T) {
 		mutate:    rep(`token_a: "token-a-secret"`, `token_a: "abc"`, 1),
 		wantPaths: []string{"ocpi.token_a"},
 	}, {
+		name: "token longer than 64 characters",
+		// OCPI's Credentials.token is a string(64).
+		mutate:    rep(`token_c: "token-c-secret"`, `token_c: "`+strings.Repeat("c", 65)+`"`, 1),
+		wantPaths: []string{"ocpi.token_c"},
+	}, {
+		name:      "token containing whitespace",
+		mutate:    rep(`token_a: "token-a-secret"`, `token_a: "token a secret"`, 1),
+		wantPaths: []string{"ocpi.token_a"},
+	}, {
+		name:      "token with a character outside printable ASCII",
+		mutate:    rep(`token_c: "token-c-secret"`, `token_c: "token-c-sécret"`, 1),
+		wantPaths: []string{"ocpi.token_c"},
+	}, {
+		name:      "business name longer than OCPI allows",
+		mutate:    rep("  token_c:", "  business_name: "+strings.Repeat("x", 101)+"\n  token_c:", 1),
+		wantPaths: []string{"ocpi.business_name"},
+	}, {
 		name:      "negative push retries",
 		mutate:    rep("max_retries: 5", "max_retries: -1", 1),
 		wantPaths: []string{"ocpi.push.max_retries"},
@@ -329,6 +346,34 @@ func TestLoadAppliesDefaults(t *testing.T) {
 		if c.got != c.want {
 			t.Errorf("%s = %v, want %v", c.name, c.got, c.want)
 		}
+	}
+}
+
+func TestOCPIBusinessNameFallsBack(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name, mutate, want string
+	}{
+		{"business_name wins", "  business_name: Fryte GmbH\n", "Fryte GmbH"},
+		{"else location.name", "", "Fryte HQ"},
+	} {
+		cfg, err := config.Parse(strings.NewReader(rep("  token_a:", tt.mutate+"  token_a:", 1)(baseYAML)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := cfg.OCPIBusinessName(); got != tt.want {
+			t.Errorf("%s: OCPIBusinessName() = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+
+	// OCPI requires a name, so with neither set it is our party.
+	cfg, err := config.Parse(strings.NewReader(rep("  name: Fryte HQ\n", "", 1)(baseYAML)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := cfg.OCPIBusinessName(), cfg.OCPI.CountryCode+"*"+cfg.OCPI.PartyID; got != want {
+		t.Errorf("OCPIBusinessName() without names = %q, want %q", got, want)
 	}
 }
 

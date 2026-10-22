@@ -17,6 +17,7 @@ import (
 	"github.com/wolffseb/cli-cpms/internal/control/socket"
 	"github.com/wolffseb/cli-cpms/internal/core"
 	"github.com/wolffseb/cli-cpms/internal/ocpi"
+	"github.com/wolffseb/cli-cpms/internal/ocpi/credentials"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
 	"github.com/wolffseb/cli-cpms/internal/ocpp/csms"
 	"github.com/wolffseb/cli-cpms/internal/ocpp/ocppj"
@@ -129,9 +130,19 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	ctl.Attach(commands, svc)
 
 	// OCPI starts last: it is another way in to control, like the socket.
-	// Until registration exists, only TOKEN_A gets anywhere, and only as far
-	// as versions and the credentials stub.
-	ocpiServer, err := startOCPI(ocpiDeps{Config: cfg, Log: logger})
+	// Whether TOKEN_A or TOKEN_C gets in depends on the registration in
+	// state.json, which the credentials module keeps.
+	registrar := credentials.New(credentials.Options{
+		Store:        store,
+		TokenA:       cfg.OCPI.TokenA,
+		TokenC:       cfg.OCPI.TokenC,
+		CountryCode:  cfg.OCPI.CountryCode,
+		PartyID:      cfg.OCPI.PartyID,
+		BusinessName: cfg.OCPIBusinessName(),
+		Log:          logger,
+	})
+	ctl.AttachOCPI(registrar)
+	ocpiServer, err := startOCPI(ocpiDeps{Config: cfg, Log: logger, Credentials: registrar})
 	if err != nil {
 		commands.Close()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
@@ -196,6 +207,9 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 type ocpiDeps struct {
 	Config *config.Config
 	Log    *slog.Logger
+	// Credentials is the registration: it decides what each token grants and
+	// serves the credentials module.
+	Credentials *credentials.Registrar
 }
 
 // startOCPI serves OCPI on server.ocpi_bind under the path of
@@ -205,13 +219,13 @@ func startOCPI(d ocpiDeps) (*ocpi.Server, error) {
 	s, err := ocpi.New(ocpi.Options{
 		Bind:          cfg.Server.OCPIBind,
 		PublicBaseURL: cfg.OCPI.PublicBaseURL,
-		Auth:          ocpi.NewStaticAuthenticator(cfg.OCPI.TokenA),
+		Auth:          d.Credentials.Authenticator(),
 		Log:           d.Log,
 	})
 	if err != nil {
 		return nil, err
 	}
-	if err := s.Register(ocpi.CredentialsStub()); err != nil {
+	if err := d.Credentials.Mount(s); err != nil {
 		return nil, err
 	}
 	if err := s.Start(); err != nil {
