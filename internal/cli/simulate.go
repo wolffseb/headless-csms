@@ -26,17 +26,18 @@ func newSimulateCommand(opts *options) *cobra.Command {
 
 func newSimulateChargerCommand(opts *options) *cobra.Command {
 	var (
-		csmsURL    string
-		id         string
-		version    string
-		connectors int
-		scenario   string
-		meterEvery time.Duration
-		reconnect  bool
-		idTag      string
-		vendor     string
-		model      string
-		logLevel   string
+		csmsURL         string
+		id              string
+		version         string
+		connectors      int
+		scenario        string
+		meterEvery      time.Duration
+		reconnect       bool
+		allowForeignTag bool
+		idTag           string
+		vendor          string
+		model           string
+		logLevel        string
 	)
 
 	cmd := &cobra.Command{
@@ -51,7 +52,9 @@ func newSimulateChargerCommand(opts *options) *cobra.Command {
 			"--meter-interval makes a running session send MeterValues (energy, power,\n" +
 			"current, SoC) that often, whatever the scenario.\n\n" +
 			"--reconnect redials with backoff (1s, 2s, 4s ... up to 30s) when the\n" +
-			"connection drops, then boots and reports every status again.",
+			"connection drops, then boots and reports every status again.\n\n" +
+			"A reserved connector refuses a start (local or remote) for any tag but the\n" +
+			"reserved one, as OCPP 1.6 requires; --allow-foreign-tag lets it through.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			logger, err := newLogger(cmd.ErrOrStderr(), logLevel)
@@ -95,6 +98,8 @@ func newSimulateChargerCommand(opts *options) *cobra.Command {
 
 				MeterInterval: meterEvery,
 				Reconnect:     reconnect,
+
+				AllowForeignTagOnReservation: allowForeignTag,
 			})
 			if err != nil {
 				return err
@@ -119,6 +124,7 @@ func newSimulateChargerCommand(opts *options) *cobra.Command {
 	f.StringVar(&scenario, "scenario", string(simulator.ScenarioNormal), "misbehaviour to simulate: "+scenarioList())
 	f.DurationVar(&meterEvery, "meter-interval", 0, "send MeterValues this often during a transaction, e.g. 10s (default: off)")
 	f.BoolVar(&reconnect, "reconnect", false, "redial with backoff when the connection drops, instead of exiting")
+	f.BoolVar(&allowForeignTag, "allow-foreign-tag", false, "start a session for another tag on a reserved connector, instead of refusing it (to test a CSMS)")
 	f.StringVar(&idTag, "tag", "", "RFID tag to quote when starting locally (default: the config's default_id_tag)")
 	f.StringVar(&vendor, "vendor", "", "chargePointVendor to report")
 	f.StringVar(&model, "model", "", "chargePointModel to report")

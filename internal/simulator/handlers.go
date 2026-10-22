@@ -173,7 +173,7 @@ func (s *Simulator) remoteStart(ctx context.Context, payload json.RawMessage) (a
 
 	s.mu.Lock()
 	c, ok := s.connectors[connectorID]
-	if !ok || c.transactionID != 0 {
+	if !ok || c.transactionID != 0 || s.refusesTagLocked(c, req.IDTag) {
 		s.mu.Unlock()
 		return v16.RemoteStartTransactionConf{Status: v16.CmdRejected}, nil
 	}
@@ -304,6 +304,16 @@ func (s *Simulator) firstFreeConnector() (int, bool) {
 	return 0, false
 }
 
+// refusesTagLocked reports whether a reserved connector refuses a start for
+// idTag. OCPP 1.6 section 5.13: the station "SHALL refuse charging for all
+// incoming idTags on the reserved connector" other than the reserved one, and
+// the reservation stays. AllowForeignTagOnReservation turns that off.
+// s.mu must be held.
+func (s *Simulator) refusesTagLocked(c *connector, idTag string) bool {
+	return c.reservationID != 0 && !s.opts.AllowForeignTagOnReservation &&
+		!strings.EqualFold(idTag, c.reservedTag)
+}
+
 // startTransaction opens a session and reports it, as a station does once a
 // car is actually drawing power.
 //
@@ -324,6 +334,10 @@ func (s *Simulator) startTransaction(ctx context.Context, connectorID int, idTag
 	if !ok {
 		s.mu.Unlock()
 		return fmt.Errorf("no connector %d", connectorID)
+	}
+	if s.refusesTagLocked(c, idTag) {
+		s.mu.Unlock()
+		return fmt.Errorf("connector %d is reserved for another idTag", connectorID)
 	}
 	s.mu.Unlock()
 

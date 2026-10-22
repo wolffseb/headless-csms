@@ -668,20 +668,21 @@ func TestReservationIDOnlyForTheReservedTag(t *testing.T) {
 		reserved string
 		remote   string // the tag of a RemoteStartTransaction; empty starts locally
 		want     bool
+		allow    bool // set AllowForeignTagOnReservation, so a foreign tag can start at all
 	}{
-		{"local start, reserved tag", testTag, "", true},
-		{"local start, another tag", "SOMEONEELSE", "", false},
-		{"remote start, reserved tag", "RESERVED", "RESERVED", true},
-		{"remote start, another tag", "RESERVED", "SOMEONEELSE", false},
-		{"local start, reserved tag in other case", strings.ToLower(testTag), "", true},
-		{"remote start, reserved tag in other case", "RESERVED", "reserved", true},
+		{"local start, reserved tag", testTag, "", true, false},
+		{"local start, another tag", "SOMEONEELSE", "", false, true},
+		{"remote start, reserved tag", "RESERVED", "RESERVED", true, false},
+		{"remote start, another tag", "RESERVED", "SOMEONEELSE", false, true},
+		{"local start, reserved tag in other case", strings.ToLower(testTag), "", true, false},
+		{"remote start, reserved tag in other case", "RESERVED", "reserved", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ignore := goleak.IgnoreCurrent()
 			t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
 
 			f := newFakeCSMS(t, 0, 7)
-			sim := startSim(t, f.url())
+			sim := startSim(t, f.url(), func(o *simulator.Options) { o.AllowForeignTagOnReservation = tc.allow })
 			ctx := context.Background()
 
 			reserve, _ := json.Marshal(v16.ReserveNowReq{
@@ -717,6 +718,115 @@ func TestReservationIDOnlyForTheReservedTag(t *testing.T) {
 				case !tc.want && req.ReservationID != nil:
 					t.Errorf("StartTransaction for a tag the connector was not reserved for has reservationId %d", *req.ReservationID)
 				}
+			}
+		})
+	}
+}
+
+// reserveFor reserves connector 1 as reservation 42 for the tag.
+func reserveFor(t *testing.T, sim *simulator.Simulator, tag string) {
+	t.Helper()
+	reserve, _ := json.Marshal(v16.ReserveNowReq{
+		ConnectorID: 1, IDTag: tag, ReservationID: 42,
+		ExpiryDate: time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+	})
+	if conf, rpcErr := sim.HandleCall(context.Background(), "", v16.ActionReserveNow, reserve); rpcErr != nil || conf.(v16.ReserveNowConf).Status != v16.ReservationAccepted {
+		t.Fatalf("ReserveNow = %v, %v", conf, rpcErr)
+	}
+}
+
+// remoteStartWith sends RemoteStartTransaction for connector 1 and returns
+// the status the station answered.
+func remoteStartWith(t *testing.T, sim *simulator.Simulator, tag string) string {
+	t.Helper()
+	connector := 1
+	remote, _ := json.Marshal(v16.RemoteStartTransactionReq{ConnectorID: &connector, IDTag: tag})
+	conf, rpcErr := sim.HandleCall(context.Background(), "", v16.ActionRemoteStartTransaction, remote)
+	if rpcErr != nil {
+		t.Fatalf("RemoteStartTransaction: %v", rpcErr)
+	}
+	return conf.(v16.RemoteStartTransactionConf).Status
+}
+
+// OCPP 1.6 section 5.13: a reserved connector refuses every idTag but the
+// reserved one, and the reservation stays.
+func TestReservedConnectorRefusesAForeignTag(t *testing.T) {
+	for _, remote := range []bool{false, true} {
+		name := "local start"
+		if remote {
+			name = "remote start"
+		}
+		t.Run(name, func(t *testing.T) {
+			ignore := goleak.IgnoreCurrent()
+			t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
+
+			f := newFakeCSMS(t, 0, 7)
+			// A local start quotes the station's own tag.
+			sim := startSim(t, f.url(), func(o *simulator.Options) { o.IDTag = "SOMEONEELSE" })
+			reserveFor(t, sim, "RESERVED")
+
+			if remote {
+				if got := remoteStartWith(t, sim, "SOMEONEELSE"); got != v16.CmdRejected {
+					t.Errorf("RemoteStartTransaction for a foreign tag = %s, want Rejected", got)
+				}
+			} else if err := sim.StartTransaction(context.Background(), 1); err == nil {
+				t.Error("local start for a foreign tag succeeded")
+			}
+
+			// Give a wrongly accepted start the time to reach the wire.
+			time.Sleep(100 * time.Millisecond)
+			if n := f.count(v16.ActionStartTransaction); n != 0 {
+				t.Errorf("%d StartTransaction sent, want none", n)
+			}
+			if got := sim.ReservationID(1); got != 42 {
+				t.Errorf("reservation = %d, want 42 kept", got)
+			}
+			if got := sim.TransactionID(1); got != 0 {
+				t.Errorf("TransactionID = %d, want no session", got)
+			}
+		})
+	}
+}
+
+// AllowForeignTagOnReservation restores the lenient station: the session
+// starts, without reservationId, and the reservation is gone.
+func TestAllowForeignTagOnReservation(t *testing.T) {
+	for _, remote := range []bool{false, true} {
+		name := "local start"
+		if remote {
+			name = "remote start"
+		}
+		t.Run(name, func(t *testing.T) {
+			ignore := goleak.IgnoreCurrent()
+			t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
+
+			f := newFakeCSMS(t, 0, 7)
+			sim := startSim(t, f.url(), func(o *simulator.Options) {
+				o.IDTag = "SOMEONEELSE"
+				o.AllowForeignTagOnReservation = true
+			})
+			reserveFor(t, sim, "RESERVED")
+
+			if remote {
+				if got := remoteStartWith(t, sim, "SOMEONEELSE"); got != v16.CmdAccepted {
+					t.Fatalf("RemoteStartTransaction = %s, want Accepted", got)
+				}
+			} else if err := sim.StartTransaction(context.Background(), 1); err != nil {
+				t.Fatalf("start: %v", err)
+			}
+			waitFor(t, "the StartTransaction", func() bool { return f.count(v16.ActionStartTransaction) == 1 })
+
+			calls, _ := f.snapshot()
+			for _, c := range calls {
+				if c.action != v16.ActionStartTransaction {
+					continue
+				}
+				if req := decode[v16.StartTransactionReq](t, c); req.ReservationID != nil || req.IDTag != "SOMEONEELSE" {
+					t.Errorf("StartTransaction = %+v, want tag SOMEONEELSE and no reservationId", req)
+				}
+			}
+			if got := sim.ReservationID(1); got != 0 {
+				t.Errorf("reservation = %d, want it dropped", got)
 			}
 		})
 	}

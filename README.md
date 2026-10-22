@@ -157,6 +157,13 @@ The queue lives in memory: a simulator that is restarted starts with an empty on
 starts are always allowed; `LocalAuthorizeOffline` and `AllowOfflineTxForUnknownId` are not
 consulted yet.
 
+A reserved connector refuses a start for any idTag but the reserved one (compared
+case-insensitively; `parentIdTag` is not modelled), as OCPP 1.6 §5.13 requires: a local start
+returns an error, `RemoteStartTransaction` is answered `Rejected`, and the reservation stays.
+The reserved tag's start carries `reservationId`. `--allow-foreign-tag` (`Options.AllowForeignTagOnReservation`)
+turns the refusal off, for testing how a CSMS handles it when a station lets another tag
+start: the session then begins without `reservationId` and the reservation is dropped.
+
 `--connectors`, `--id`, `--csms`, `--tag`, `--vendor` and `--model` override the config
 when you want to point it somewhere else or fake a different station.
 

@@ -182,6 +182,13 @@ type Options struct {
 	// ahead of every transaction message made later (see deliverTxLocked and
 	// classify).
 	Reconnect bool
+	// AllowForeignTagOnReservation lets a start with an idTag other than the
+	// reserved one go ahead on a reserved connector. By default the station
+	// refuses it, as OCPP 1.6 section 5.13 requires, and the reservation
+	// stays. With this set the session starts without a reservationId and the
+	// reservation is dropped, which a CSMS that ends the reservation as
+	// failed in that case can then be tested against.
+	AllowForeignTagOnReservation bool
 	// ReconnectBackoff, when set, is the wait before redial attempt n,
 	// counting from 1 after every drop, in place of the default 1 s, 2 s,
 	// 4 s … capped at 30 s, with jitter. It also spaces out the retries of a
