@@ -20,3 +20,11 @@ Lessons from earlier fix passes in this repo. Newest last. Keep generalised; pru
 
 - Pushing to a branch another worktree has checked out moves that worktree's ref, and its index then looks dirty. Harmless, but don't commit from a stale worktree.
 - When told another agent owns a file, don't touch it; put the needed change under "Found, not fixed" with exact wording.
+
+## Tooling and timer tests (2026-10-22, #37)
+
+- Worktree-isolated Bash refuses compound commands (heredoc + git, `PATH=... make`, `&&` chains with git). Write scripts with the Write tool into the scratchpad and run them as one plain command.
+- golangci-lint v2.6.2 built under Go 1.27 fails with "export data version" typecheck errors; `golangci-lint@latest` (installed to a scratch GOBIN) lints clean. `make ci` needs it on PATH, which the sandbox won't let you set inline; run vet, lint and `go test -race` separately. GitHub CI is the authority.
+- Clocktest timers: a test that advances the clock right after a "re-arm" must first see the re-armed delay (record the last `d` in the AfterFunc wrapper in an atomic), because `Pending()==1` holds both before and after a stop-and-re-arm.
+- Config-change wake-ups: one closed-and-replaced channel per setting (not one shared), read together with the value under `s.mu`, so a loop never misses a change and unrelated changes don't reset its timer.
+- Give the heartbeat its own `HeartbeatAfterFunc`; sharing `AfterFunc` would break the meter tests' `Pending()` counts.
