@@ -3,8 +3,10 @@ package simulator_test
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -830,4 +832,56 @@ func TestAllowForeignTagOnReservation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// lockedBuffer is a log sink that the simulator's goroutines and the test
+// can use together.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// A session stopped while its start is still queued has no CSMS id yet. The
+// log must not show the placeholder as if it were one.
+func TestStoppedOfflineSessionIsLoggedAsPending(t *testing.T) {
+	f := newFakeCSMS(t, 0, 7)
+	p := ocpptest.NewProxy(t, strings.TrimPrefix(f.url(), "ws://"))
+	rclk := clocktest.New(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	logs := &lockedBuffer{}
+	sim := startSim(t, p.URL(), reconnecting(rclk, &backoffLog{wait: time.Second}), func(o *simulator.Options) {
+		o.Log = slog.New(slog.NewTextHandler(logs, nil))
+	})
+	ctx := context.Background()
+
+	p.Cut()
+	waitFor(t, "the redial to be scheduled", func() bool { return rclk.Pending() == 1 })
+	if err := sim.StartTransaction(ctx, 1); err != nil {
+		t.Fatalf("offline start: %v", err)
+	}
+	if err := sim.StopTransaction(ctx, 1); err != nil {
+		t.Fatalf("offline stop: %v", err)
+	}
+
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if !strings.Contains(line, "transaction stopped") {
+			continue
+		}
+		if !strings.Contains(line, "transaction_id=pending") {
+			t.Errorf("log line %q does not show transaction_id=pending", line)
+		}
+		return
+	}
+	t.Errorf("no \"transaction stopped\" line in the log:\n%s", logs.String())
 }
