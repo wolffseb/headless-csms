@@ -47,7 +47,12 @@ type Options struct {
 	// OCPI is the OCPI registration, supplied with AttachOCPI. Without it,
 	// status reports "not registered" and unregistering is refused.
 	OCPI OCPIRegistration
-	Log  *slog.Logger
+	// UnregisterTimeout bounds OpOCPIUnregister, and must be shorter than the
+	// client's own timeout: a client that gives up first reports a failure
+	// while the server carries on and clears the registration anyway. Zero
+	// means unbounded.
+	UnregisterTimeout time.Duration
+	Log               *slog.Logger
 }
 
 // OCPIRegistration is what the socket needs of the OCPI credentials module.
@@ -229,10 +234,19 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 		if s.opts.OCPI == nil {
 			return fail(&Error{Code: CodeRefused, Message: "OCPI is not running"})
 		}
+		if s.opts.UnregisterTimeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, s.opts.UnregisterTimeout)
+			defer cancel()
+		}
 		res, err := s.opts.OCPI.Unregister(ctx)
 		switch {
 		case credentials.ErrNotRegistered(err):
 			return fail(&Error{Code: CodeRefused, Message: "not registered with an OCPI partner"})
+		case errors.Is(err, context.DeadlineExceeded):
+			// Nothing was changed: it ran out of time waiting for a
+			// registration the partner started.
+			return fail(&Error{Code: CodeRefused, Message: "a registration is in progress with the OCPI partner; nothing was changed, try again shortly"})
 		case err != nil:
 			return fail(&Error{Code: CodeInternal, Message: err.Error()})
 		}

@@ -46,6 +46,8 @@ type fakeEMSP struct {
 	version string
 	// noLocations leaves the locations receiver out of version details.
 	noLocations bool
+	// deleteAnswer, when set, runs in place of the answer to DELETE credentials.
+	deleteAnswer func(w http.ResponseWriter)
 }
 
 type emspRequest struct {
@@ -66,6 +68,7 @@ func (f *fakeEMSP) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.requests = append(f.requests, emspRequest{method: r.Method, path: r.URL.Path, auth: r.Header.Get("Authorization")})
 	answer, version, noLocations := f.versionsAnswer, f.version, f.noLocations
+	deleteAnswer := f.deleteAnswer
 	f.mu.Unlock()
 
 	switch {
@@ -85,6 +88,10 @@ func (f *fakeEMSP) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		writeEnvelope(w, map[string]any{"version": ocpi.Version, "endpoints": endpoints})
 	case r.Method == http.MethodDelete && r.URL.Path == "/emsp/2.3.0/credentials":
+		if deleteAnswer != nil {
+			deleteAnswer(w)
+			return
+		}
 		writeEnvelope(w, nil)
 	default:
 		http.NotFound(w, r)
