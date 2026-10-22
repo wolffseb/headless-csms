@@ -520,3 +520,96 @@ func TestTransactionIDIsNeverAPlaceholder(t *testing.T) {
 		})
 	}
 }
+
+// transactionIDsOnTheWire fails the test if any frame the CSMS saw carried
+// a negative transactionId: the placeholder id of an offline session is the
+// station's own bookkeeping and must never be sent.
+func transactionIDsOnTheWire(t *testing.T, f *fakeCSMS) {
+	t.Helper()
+	calls, _ := f.snapshot()
+	for _, c := range calls {
+		if strings.Contains(string(c.payload), `"transactionId":-`) {
+			t.Errorf("%s went out with a placeholder id: %s", c.action, c.payload)
+		}
+	}
+}
+
+// offlineSession cuts the connection, runs a first session to its end and
+// starts a second one, still running, all while offline; then it brings the
+// connection back and lets the station redial. The first session's id is 7
+// and the offline one is the fake's second StartTransaction.
+func offlineSession(t *testing.T, f *fakeCSMS) (*simulator.Simulator, *clocktest.Clock) {
+	t.Helper()
+	p := ocpptest.NewProxy(t, strings.TrimPrefix(f.url(), "ws://"))
+	rclk := clocktest.New(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	sim := startSim(t, p.URL(), reconnecting(rclk, &backoffLog{wait: time.Second}))
+	ctx := context.Background()
+
+	if err := sim.StartTransaction(ctx, 1); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	p.Cut()
+	waitFor(t, "the redial to be scheduled", func() bool { return rclk.Pending() == 1 })
+	if err := sim.StopTransaction(ctx, 1); err != nil {
+		t.Fatalf("offline stop: %v", err)
+	}
+	if err := sim.StartTransaction(ctx, 1); err != nil {
+		t.Fatalf("offline start: %v", err)
+	}
+	if got := sim.ConnectorStatus(1); got != v16.StatusCharging {
+		t.Fatalf("connector 1 is %s after an offline start, want Charging", got)
+	}
+	if got := sim.TransactionID(1); got != 0 {
+		t.Fatalf("TransactionID = %d while the start is queued, want 0 until the CSMS answers", got)
+	}
+	p.Restore()
+	rclk.Advance(time.Second)
+	return sim, rclk
+}
+
+// TestGivenUpOfflineStartEndsTheSession: a StartTransaction queued offline
+// that the CSMS then fails to process three times is given up, and the
+// session it opened ends locally. No message of it goes out, least of all
+// under the placeholder id. Not parallel, for goleak.
+func TestGivenUpOfflineStartEndsTheSession(t *testing.T) {
+	ignore := goleak.IgnoreCurrent()
+	t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
+
+	f := newFakeCSMS(t, 0, 7)
+	f.mu.Lock()
+	f.respond = func(action string, n int) (string, bool) {
+		if action == v16.ActionStartTransaction && n >= 2 {
+			return string(ocpp.ErrFormationViolation), false
+		}
+		return "", false
+	}
+	f.mu.Unlock()
+	sim, rclk := offlineSession(t, f)
+
+	for n := 1; n < 3; n++ {
+		waitFor(t, "a retry to be scheduled", func() bool { return rclk.Pending() == 1 })
+		rclk.Advance(time.Second)
+	}
+	// The first stop, three attempts at the start, the status round.
+	waitFor(t, "the status round after the reconnect", func() bool {
+		calls, _ := f.snapshot()
+		return len(afterBoot(calls, 2)) == 1+3+3
+	})
+
+	calls, _ := f.snapshot()
+	for _, c := range afterBoot(calls, 2) {
+		if c.action == v16.ActionMeterValues || (c.action == v16.ActionStopTransaction && decode[v16.StopTransactionReq](t, c).TransactionID != 7) {
+			t.Errorf("a message of the session the CSMS never opened went out: %s %s", c.action, c.payload)
+		}
+	}
+	transactionIDsOnTheWire(t, f)
+	if got := sim.TransactionID(1); got != 0 {
+		t.Errorf("TransactionID = %d, want 0", got)
+	}
+	if got := sim.ConnectorStatus(1); got != v16.StatusAvailable {
+		t.Errorf("connector 1 is %s, want Available", got)
+	}
+	if err := sim.StopTransaction(context.Background(), 1); err == nil {
+		t.Error("a stop of the ended session was accepted")
+	}
+}

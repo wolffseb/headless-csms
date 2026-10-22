@@ -141,6 +141,12 @@ answered it:
 | Any `CALLERROR`, or no answer within the call timeout | The CSMS failed to process it, which is what OCPP 1.6 §3.7.1 lets a station skip a message for only if it happens repeatedly: sent again after the backoff, at most 3 times in all (the stand-in for `TransactionMessageAttempts`), then given up. `FormationViolation` and the other codes that blame the message are retried like `InternalError`; the specification makes no exception for them |
 | The connection drops | Stays queued, with everything behind it, for the next connection |
 
+A `StartTransaction` that is given up takes the queued messages of its session with it, and
+a session started offline that is still running ends locally: the meter stops and the
+connector is Available again, which the status round reports. The simulator never sends a
+message under the placeholder id, even though the CSMS may have opened the transaction and
+only its answers been lost.
+
 The queue lives in memory: a simulator that is restarted starts with an empty one. Offline
 starts are always allowed; `LocalAuthorizeOffline` and `AllowOfflineTxForUnknownId` are not
 consulted yet.
