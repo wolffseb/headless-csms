@@ -9,6 +9,7 @@ package simulator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -115,9 +116,41 @@ type Options struct {
 	// simulator reports instead of the one its scenario implies.
 	FeatureProfiles string
 
+	// MeterInterval is how often a connector with a running transaction
+	// sends MeterValues. Zero sends none, which is what a station does with
+	// MeterValueSampleInterval at 0. The CSMS can change it at run time with
+	// ChangeConfiguration MeterValueSampleInterval.
+	//
+	// It is a duration rather than whole seconds so that tests can stream in
+	// milliseconds; GetConfiguration reports it rounded up to a second. The
+	// register counts whole Wh, so below about 75 ms of wall time a sample
+	// can repeat the previous reading.
+	//
+	// The car is a 75 kWh battery that starts at 20% and charges at a
+	// constant 50 kW, so the energy register rises strictly until the battery
+	// is full, after about 72 minutes. From then on power and current are 0,
+	// the SoC stays at 100 and the register stays put; the connector reports
+	// SuspendedEV once, and the session runs until it is stopped, with
+	// meterStop equal to the last streamed register.
+	MeterInterval time.Duration
+
 	Log *slog.Logger
 	Now func() time.Time
+	// AfterFunc schedules the meter samples. Together with Now it lets a test
+	// move time forward instead of waiting for it; see internal/clocktest.
+	AfterFunc func(time.Duration, func()) Stopper
+	// HeartbeatAfterFunc schedules the heartbeats. It is separate from
+	// AfterFunc so that a test counting meter timers does not see the
+	// heartbeat's; it defaults to real time.
+	HeartbeatAfterFunc func(time.Duration, func()) Stopper
 }
+
+// Stopper is a timer that can be cancelled, as time.AfterFunc returns.
+type Stopper interface {
+	Stop() bool
+}
+
+func realAfterFunc(d time.Duration, fn func()) Stopper { return time.AfterFunc(d, fn) }
 
 func (o *Options) applyDefaults() {
 	if o.Version == "" {
@@ -147,6 +180,12 @@ func (o *Options) applyDefaults() {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
+	if o.AfterFunc == nil {
+		o.AfterFunc = realAfterFunc
+	}
+	if o.HeartbeatAfterFunc == nil {
+		o.HeartbeatAfterFunc = realAfterFunc
+	}
 }
 
 func (o Options) validate() error {
@@ -162,6 +201,9 @@ func (o Options) validate() error {
 	if !o.Scenario.Valid() {
 		return fmt.Errorf("simulator: unknown scenario %q", o.Scenario)
 	}
+	if o.MeterInterval < 0 {
+		return fmt.Errorf("simulator: meter interval %s is negative", o.MeterInterval)
+	}
 	return nil
 }
 
@@ -172,7 +214,10 @@ type connector struct {
 	transactionID int
 	// reservationID is the CSMS's reservation id, or 0 when not reserved.
 	reservationID int
-	meter         int
+	meter         meter
+	// stopMeter is closed to end the MeterValues stream of the running
+	// transaction. It is nil while no stream runs.
+	stopMeter chan struct{}
 }
 
 // Simulator is a charge point.
@@ -187,6 +232,23 @@ type Simulator struct {
 	station    string
 	connectors map[int]*connector
 	heartbeat  time.Duration
+	// meterInterval starts as Options.MeterInterval; ChangeConfiguration
+	// moves it.
+	meterInterval time.Duration
+	// settings holds the writable configuration keys that change nothing
+	// in the simulator's behaviour, so that a CSMS reads back what it set.
+	settings map[string]string
+	// heartbeatChanged and meterChanged are closed, and replaced, whenever
+	// ChangeConfiguration moves the matching interval, so that a loop parked
+	// on a timer armed with the old value re-arms with the new one at once.
+	heartbeatChanged chan struct{}
+	meterChanged     chan struct{}
+
+	// callMu keeps at most one CALL of ours outstanding, as OCPP-J requires
+	// of each direction. Heartbeats, status reports, transactions and meter
+	// samples come from different goroutines; holding this across the round
+	// trip queues them instead of letting them overlap on the wire.
+	callMu sync.Mutex
 
 	// wg tracks the goroutines that report command side effects, so Close
 	// does not race them.
@@ -210,6 +272,12 @@ func New(opts Options) (*Simulator, error) {
 		connectors: make(map[int]*connector, opts.Connectors),
 		heartbeat:  fallbackHeartbeat,
 		done:       make(chan struct{}),
+
+		meterInterval: opts.MeterInterval,
+		settings:      defaultSettings(),
+
+		heartbeatChanged: make(chan struct{}),
+		meterChanged:     make(chan struct{}),
 	}
 	for i := 1; i <= opts.Connectors; i++ {
 		s.connectors[i] = &connector{status: v16.StatusAvailable}
@@ -328,8 +396,16 @@ func (s *Simulator) Wait() { s.wg.Wait() }
 // Done is closed when the simulator has disconnected.
 func (s *Simulator) Done() <-chan struct{} { return s.done }
 
+// call sends one CALL and waits for its answer, queued behind any other CALL
+// still outstanding.
+func (s *Simulator) call(ctx context.Context, action string, payload any) (json.RawMessage, error) {
+	s.callMu.Lock()
+	defer s.callMu.Unlock()
+	return s.conn.Call(ctx, action, payload)
+}
+
 func (s *Simulator) boot(ctx context.Context) error {
-	raw, err := s.conn.Call(ctx, v16.ActionBootNotification, v16.BootNotificationReq{
+	raw, err := s.call(ctx, v16.ActionBootNotification, v16.BootNotificationReq{
 		ChargePointVendor:       s.opts.Vendor,
 		ChargePointModel:        s.opts.Model,
 		ChargePointSerialNumber: s.opts.SerialNumber,
@@ -362,6 +438,21 @@ func (s *Simulator) heartbeatInterval() time.Duration {
 	return s.heartbeat
 }
 
+// heartbeatState returns the interval together with the channel that is
+// closed when it next changes, read under one lock so no change is missed.
+func (s *Simulator) heartbeatState() (time.Duration, <-chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.heartbeat, s.heartbeatChanged
+}
+
+// signalLocked wakes everyone waiting on *ch and arms a fresh channel. The
+// caller holds s.mu.
+func signalLocked(ch *chan struct{}) {
+	close(*ch)
+	*ch = make(chan struct{})
+}
+
 // reportInitialStatus tells the CSMS about connector 0 and every connector, as
 // a station does after booting.
 func (s *Simulator) reportInitialStatus(ctx context.Context) error {
@@ -386,19 +477,25 @@ func (s *Simulator) heartbeatLoop(ctx context.Context) {
 	}
 
 	for {
-		timer := time.NewTimer(s.heartbeatInterval())
+		interval, changed := s.heartbeatState()
+		tick := make(chan struct{}, 1)
+		timer := s.opts.HeartbeatAfterFunc(interval, func() { tick <- struct{}{} })
 
 		select {
+		case <-changed:
+			// A new interval counts from now.
+			timer.Stop()
+			continue
 		case <-ctx.Done():
 			timer.Stop()
 			return
 		case <-s.done:
 			timer.Stop()
 			return
-		case <-timer.C:
+		case <-tick:
 		}
 
-		if _, err := s.conn.Call(ctx, v16.ActionHeartbeat, struct{}{}); err != nil {
+		if _, err := s.call(ctx, v16.ActionHeartbeat, struct{}{}); err != nil {
 			s.log.Debug("heartbeat failed", "error", err)
 			return
 		}
@@ -407,7 +504,7 @@ func (s *Simulator) heartbeatLoop(ctx context.Context) {
 
 // sendStatus reports one connector's status. Connector 0 is the station.
 func (s *Simulator) sendStatus(ctx context.Context, connectorID int, status string) error {
-	_, err := s.conn.Call(ctx, v16.ActionStatusNotification, v16.StatusNotificationReq{
+	_, err := s.call(ctx, v16.ActionStatusNotification, v16.StatusNotificationReq{
 		ConnectorID: connectorID,
 		ErrorCode:   "NoError",
 		Status:      status,

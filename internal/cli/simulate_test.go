@@ -62,6 +62,20 @@ func TestSimulateChargerRejectsAnUnknownScenario(t *testing.T) {
 	}
 }
 
+func TestSimulateChargerRejectsANegativeMeterInterval(t *testing.T) {
+	t.Parallel()
+
+	path := runConfig(t, 19201)
+
+	_, _, err := run(t, "simulate", "charger", "-c", path, "--meter-interval", "-10s")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "meter interval") {
+		t.Errorf("error %q should name the meter interval", err)
+	}
+}
+
 func TestSimulateChargerNeedsATargetWithoutAConfig(t *testing.T) {
 	t.Parallel()
 

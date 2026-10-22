@@ -101,6 +101,19 @@ Scenarios make it misbehave on purpose, which is how the unhappy paths get teste
 | `unlock-fails` | Refuses to release the cable lock |
 | `silent` | Boots, then stops sending anything while still answering pings — a station whose OCPP layer has hung but whose connection is fine. This is what `heartbeat_timeout` exists to catch, and the only way to exercise it by hand |
 
+`--meter-interval 10s` makes a running session send `MeterValues` that often, combined with
+any scenario (except `silent`, which still sends nothing). Each sample carries the
+transaction id the CSMS assigned and four readings from a car drawing a constant 50 kW:
+`Energy.Active.Import.Register` (Wh, rising with power × time), `Power.Active.Import` (W),
+`Current.Import` (A) and `SoC` (%, from 20). The car is a 75 kWh battery starting at 20%,
+so the register rises strictly for about 72 minutes. Once the battery is full, power and
+current drop to 0, the SoC stays at 100 and the register stops rising; the connector then
+sends one `StatusNotification` `SuspendedEV`, as a real full car does, and the session runs on
+until it is stopped. `StopTransaction`'s `meterStop` is the last streamed register. The default, `0`, streams nothing, and a session
+then moves the meter by a flat 1000 Wh as before. The simulator also answers
+`ChangeConfiguration`, so a CSMS can move `MeterValueSampleInterval` (and
+`HeartbeatInterval`) at run time and read it back with `GetConfiguration`.
+
 `--connectors`, `--id`, `--csms`, `--tag`, `--vendor` and `--model` override the config
 when you want to point it somewhere else or fake a different station.
 
@@ -466,6 +479,9 @@ sequenceDiagram
     V16-->>St: {transactionId, idTagInfo: Accepted}
     St->>V16: StatusNotification Charging
     V16->>Core: EVSE RESERVED→CHARGING
+    loop every MeterValueSampleInterval, if not 0
+        St->>V16: MeterValues {connectorId, transactionId, energy, power, ...}
+    end
 
     CLI->>Ctl: Stop (via socket)
     Ctl->>Core: find the active transaction on the EVSE
