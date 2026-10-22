@@ -112,6 +112,7 @@ func (s *Simulator) reserveNow(ctx context.Context, payload json.RawMessage) (an
 		return v16.ReserveNowConf{Status: status}, nil
 	}
 	c.reservationID = req.ReservationID
+	c.reservedTag = req.IDTag
 	c.status = v16.StatusReserved
 	s.mu.Unlock()
 
@@ -341,10 +342,13 @@ func (s *Simulator) startTransaction(ctx context.Context, connectorID int, idTag
 		MeterStart:  c.meter.register(),
 		Timestamp:   now.UTC().Format(time.RFC3339),
 	}
-	// Starting a session consumes any reservation held on the connector, and
-	// the station says which one, so the CSMS need not guess.
+	// Starting a session consumes any reservation held on the connector. The
+	// station says which one only if the session is for the reserved tag
+	// (OCPP 1.6 section 5.13: "if a transaction for the reserved idTag is
+	// started"); a start for another tag does not redeem it, and the CSMS is
+	// not told it did.
 	reservationID := c.reservationID
-	if reservationID != 0 {
+	if reservationID != 0 && idTag == c.reservedTag {
 		req.ReservationID = &reservationID
 	}
 	c.transactionID = localID

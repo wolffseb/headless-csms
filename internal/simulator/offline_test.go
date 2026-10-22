@@ -657,3 +657,65 @@ func TestReplayedStartNotAcceptedDeauthorizes(t *testing.T) {
 		t.Errorf("the connector cannot start a new session: %v", err)
 	}
 }
+
+// TestReservationIDOnlyForTheReservedTag: StartTransaction names the
+// reservation it redeems only when the tag that starts the session is the
+// one the reservation was made for (OCPP 1.6 section 5.13). Not parallel,
+// for goleak.
+func TestReservationIDOnlyForTheReservedTag(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		reserved string
+		remote   string // the tag of a RemoteStartTransaction; empty starts locally
+		want     bool
+	}{
+		{"local start, reserved tag", testTag, "", true},
+		{"local start, another tag", "SOMEONEELSE", "", false},
+		{"remote start, reserved tag", "RESERVED", "RESERVED", true},
+		{"remote start, another tag", "RESERVED", "SOMEONEELSE", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ignore := goleak.IgnoreCurrent()
+			t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
+
+			f := newFakeCSMS(t, 0, 7)
+			sim := startSim(t, f.url())
+			ctx := context.Background()
+
+			reserve, _ := json.Marshal(v16.ReserveNowReq{
+				ConnectorID: 1, IDTag: tc.reserved, ReservationID: 42,
+				ExpiryDate: time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+			})
+			if conf, rpcErr := sim.HandleCall(ctx, "", v16.ActionReserveNow, reserve); rpcErr != nil || conf.(v16.ReserveNowConf).Status != v16.ReservationAccepted {
+				t.Fatalf("ReserveNow = %v, %v", conf, rpcErr)
+			}
+
+			if tc.remote == "" {
+				if err := sim.StartTransaction(ctx, 1); err != nil {
+					t.Fatalf("start: %v", err)
+				}
+			} else {
+				connector := 1
+				remote, _ := json.Marshal(v16.RemoteStartTransactionReq{ConnectorID: &connector, IDTag: tc.remote})
+				if _, rpcErr := sim.HandleCall(ctx, "", v16.ActionRemoteStartTransaction, remote); rpcErr != nil {
+					t.Fatalf("RemoteStartTransaction: %v", rpcErr)
+				}
+				waitFor(t, "the StartTransaction", func() bool { return f.count(v16.ActionStartTransaction) == 1 })
+			}
+
+			calls, _ := f.snapshot()
+			for _, c := range calls {
+				if c.action != v16.ActionStartTransaction {
+					continue
+				}
+				req := decode[v16.StartTransactionReq](t, c)
+				switch {
+				case tc.want && (req.ReservationID == nil || *req.ReservationID != 42):
+					t.Errorf("StartTransaction for the reserved tag has reservationId %v, want 42", req.ReservationID)
+				case !tc.want && req.ReservationID != nil:
+					t.Errorf("StartTransaction for a tag the connector was not reserved for has reservationId %d", *req.ReservationID)
+				}
+			}
+		})
+	}
+}
