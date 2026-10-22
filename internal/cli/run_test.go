@@ -72,6 +72,7 @@ location:
   coordinates:
     latitude: "52.520008"
     longitude: "13.404954"
+  time_zone: Europe/Berlin
   evses:
     - uid: EVSE-1
       evse_id: DE*FRY*E001*1

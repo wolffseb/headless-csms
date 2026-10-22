@@ -16,6 +16,11 @@ type Config struct {
 	Auth     Auth     `yaml:"auth"`
 	OCPI     OCPI     `yaml:"ocpi"`
 	Location Location `yaml:"location"`
+
+	// ModTime is the config file's modification time, read once by Load. It
+	// is when the static Location data last changed, so OCPI stamps the
+	// connectors' last_updated with it. Parse leaves it zero.
+	ModTime time.Time `yaml:"-"`
 }
 
 // Charger describes the physical charging station we manage.
@@ -94,7 +99,13 @@ type Location struct {
 	PostalCode  string      `yaml:"postal_code"`
 	Country     string      `yaml:"country"`
 	Coordinates Coordinates `yaml:"coordinates"`
-	EVSEs       []EVSE      `yaml:"evses"`
+	// TimeZone is the IANA name of the location's zone, e.g. "Europe/Berlin".
+	// OCPI requires it on every Location.
+	TimeZone string `yaml:"time_zone"`
+	// Publish lets apps and websites show the location. It defaults to false:
+	// an office charger is not a public one.
+	Publish bool   `yaml:"publish"`
+	EVSEs   []EVSE `yaml:"evses"`
 }
 
 // Coordinates are decimal degrees as strings, matching OCPI's wire format.
@@ -107,11 +118,18 @@ type Coordinates struct {
 // OCPP 1.6 addresses it by an integer connector id. The mapping is explicit
 // here so that nothing anywhere else has to guess it.
 type EVSE struct {
-	UID             string      `yaml:"uid"`
-	EVSEID          string      `yaml:"evse_id"`
-	OCPPConnectorID int         `yaml:"ocpp_connector_id"`
-	Connectors      []Connector `yaml:"connectors"`
+	UID             string `yaml:"uid"`
+	EVSEID          string `yaml:"evse_id"`
+	OCPPConnectorID int    `yaml:"ocpp_connector_id"`
+	// Reservable advertises the OCPI RESERVABLE capability. Unset means true;
+	// set it to false for a station without the Reservation feature profile,
+	// which `cpms probe` reports.
+	Reservable *bool       `yaml:"reservable"`
+	Connectors []Connector `yaml:"connectors"`
 }
+
+// IsReservable reports whether the EVSE is advertised as RESERVABLE.
+func (e EVSE) IsReservable() bool { return e.Reservable == nil || *e.Reservable }
 
 // Connector is an OCPI Connector object.
 type Connector struct {

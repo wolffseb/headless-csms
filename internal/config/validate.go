@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (
@@ -212,6 +213,14 @@ func (c *Config) validateLocation(v *validator) {
 	v.required("location.city", l.City)
 	if v.required("location.country", l.Country) && !alpha3Re.MatchString(l.Country) {
 		v.add("location.country", "%q must be an ISO 3166-1 alpha-3 code, e.g. \"DEU\"", l.Country)
+	}
+
+	if v.required("location.time_zone", l.TimeZone) {
+		// LoadLocation also takes "Local", which is whatever the host is set
+		// to, not a zone name a roaming partner can use.
+		if _, err := time.LoadLocation(l.TimeZone); err != nil || l.TimeZone == "Local" {
+			v.add("location.time_zone", "%q is not an IANA time zone name, e.g. \"Europe/Berlin\"", l.TimeZone)
+		}
 	}
 
 	validateCoordinate(v, "location.coordinates.latitude", l.Coordinates.Latitude, latitudeRe, -90, 90)

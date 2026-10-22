@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wolffseb/cli-cpms/internal/clocktest"
 	"github.com/wolffseb/cli-cpms/internal/config"
 	"github.com/wolffseb/cli-cpms/internal/core"
 )
@@ -358,5 +359,69 @@ func TestClockIsInjectable(t *testing.T) {
 	}
 	if !events[0].At.Equal(at) {
 		t.Errorf("event time = %s, want the injected %s", events[0].At, at)
+	}
+}
+
+// TestEVSELastUpdatedFollowsTheEffectiveStatus pins what OCPI's EVSE
+// last_updated is built on: the moment the effective status changed, which is
+// the moment of its EventEVSEStatusChanged, and nothing else.
+func TestEVSELastUpdatedFollowsTheEffectiveStatus(t *testing.T) {
+	t.Parallel()
+
+	clock := clocktest.New(time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC))
+	s := core.New(testConfig(), core.WithClock(clock.Now))
+	events, unsubscribe := s.Subscribe("test")
+	defer unsubscribe()
+
+	lastUpdated := func(uid string) time.Time {
+		t.Helper()
+		cp, _ := s.Snapshot().ChargePoint(testCP)
+		for _, e := range cp.EVSEs {
+			if e.UID == uid {
+				return e.LastUpdated
+			}
+		}
+		t.Fatalf("EVSE %s missing from the snapshot", uid)
+		return time.Time{}
+	}
+
+	started := clock.Now()
+	if got := lastUpdated("EVSE-1"); !got.Equal(started) {
+		t.Errorf("before any change: %v, want the construction time %v", got, started)
+	}
+
+	clock.Advance(time.Minute)
+	s.Connected(testCP)
+	clock.Advance(time.Minute)
+	s.SetConnectorStatus(testCP, 1, core.StatusAvailable, "NoError")
+	var changedAt time.Time
+	for _, e := range collect(t, events) {
+		if e.Kind == core.EventEVSEStatusChanged && e.EVSEUID == "EVSE-1" {
+			changedAt = e.At
+		}
+	}
+	if changedAt.IsZero() {
+		t.Fatal("no status change event for EVSE-1")
+	}
+	if got := lastUpdated("EVSE-1"); !got.Equal(changedAt) {
+		t.Errorf("after AVAILABLE: %v, want the event's %v", got, changedAt)
+	}
+	// EVSE-2 has not been reported, so it is still UNKNOWN and untouched.
+	if got := lastUpdated("EVSE-2"); !got.Equal(started) {
+		t.Errorf("EVSE-2: %v, want %v", got, started)
+	}
+
+	// A repeat changes nothing, so it moves nothing.
+	clock.Advance(time.Minute)
+	s.SetConnectorStatus(testCP, 1, core.StatusAvailable, "NoError")
+	if got := lastUpdated("EVSE-1"); !got.Equal(changedAt) {
+		t.Errorf("after a repeat: %v, want it unchanged at %v", got, changedAt)
+	}
+
+	// Going offline is a change of the effective status, for every EVSE.
+	clock.Advance(time.Minute)
+	s.Disconnected(testCP, "test")
+	if got, want := lastUpdated("EVSE-1"), clock.Now(); !got.Equal(want) {
+		t.Errorf("after disconnect: %v, want %v", got, want)
 	}
 }
