@@ -288,9 +288,42 @@ curl -s -H "Authorization: Token $(printf '%s' "$TOKEN_A" | base64 | tr -d '\n')
 {"data":[{"version":"2.3.0","url":"http://192.168.1.10:8080/ocpi/2.3.0"}],"status_code":1000,"status_message":"Success","timestamp":"2026-10-21T20:15:04Z"}
 ```
 
-`GET .../2.3.0` lists the modules. So far that is only `credentials`, which answers HTTP 501
-until registration is built (roadmap step 5.2); until then only `TOKEN_A` is accepted, and
-only for versions and credentials.
+`GET .../2.3.0` lists the modules: `credentials`, which answers HTTP 501 until registration
+is built (roadmap step 5.2), and `locations` as `SENDER`. Until registration exists, only
+`TOKEN_A` is accepted, and only for versions and credentials.
+
+### Locations
+
+`locations` serves the one configured Location (static data from `location:` in config)
+with each EVSE's live status from the station. It needs module access: `TOKEN_C`, once the
+counterparty has registered. Before that every token gets HTTP 401.
+
+```sh
+TOKEN_C=change-me-token-c   # ocpi.token_c from your config
+auth="Authorization: Token $(printf '%s' "$TOKEN_C" | base64 | tr -d '\n')"
+curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations                    # the list
+curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations/OFFICE-01          # one Location
+curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations/OFFICE-01/ALP-HYC-001-1    # one EVSE
+curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations/OFFICE-01/ALP-HYC-001-1/1  # one Connector
+```
+
+- **Status** is the station's own, as core holds it: `UNKNOWN` while the station is
+  offline, and a station-wide fault or unavailability on connector 0 overrides every EVSE.
+  cpms's reservation records never override it. A reservation whose `ReserveNow` got no
+  answer (being cancelled) shows whatever the station reports: if it does hold it, it says
+  `Reserved` itself.
+- **`last_updated`**: a Connector's is the config file's modification time, read once at
+  startup; an EVSE's is the later of that and its last status change; the Location's is the
+  latest of all. Status repeats from the station that change nothing do not move it.
+- **Capabilities** per EVSE: `REMOTE_START_STOP_CAPABLE`, `UNLOCK_CAPABLE`, and `RESERVABLE`
+  unless the EVSE has `reservable: false`.
+- **The list** is paginated: `offset`, `limit` (default and maximum 100), `date_from`
+  (inclusive) and `date_to` (exclusive) on the Location's `last_updated`. Answers carry
+  `X-Total-Count`, `X-Limit` (the limit applied, not the number returned) and, when more
+  pages exist, `Link: <…>; rel="next"` with the filters kept.
+- An unknown location, EVSE or connector is HTTP 404 with `status_code` 2003. A malformed
+  `date_from`/`date_to`, a negative `offset` or a `limit` below 1 is HTTP 400 with 2001.
+  Ids match without regard to case, as OCPI's CiString requires.
 
 - A missing header, bad Base64, and an unknown token all get the same HTTP 401, so the
   answer gives no hint which one it was.
@@ -340,6 +373,13 @@ older build refuses a newer file instead of silently dropping fields it does not
 That split is why `ocpi.token_c` is a fixed value in config rather than being generated
 during the OCPI handshake as implementations usually do.
 
+The location needs `time_zone`, an IANA name such as `Europe/Berlin`, which OCPI requires.
+The zone database is built into the binary, so this works on hosts without one. `publish`
+(default `true`) is OCPI's flag for whether the partner may show the location to its
+drivers, and in public apps if it forwards it. `false` limits it to the tokens in
+`publish_allowed_to`, which cpms does not send, so it would be hidden from every driver. Each EVSE's `reservable` (default `true`) controls the
+OCPI `RESERVABLE` capability: set it to `false` if `cpms probe` shows no Reservation profile.
+
 Two listener rules worth knowing, both enforced at validation time:
 `heartbeat_timeout` must exceed `heartbeat_interval` (otherwise a punctual station gets
 marked offline between two beats), and neither listener may use port 0 (a charger cannot
@@ -357,7 +397,7 @@ flowchart LR
 
     subgraph run ["cpms run (one process)"]
         sock["Control socket<br/>control/socket"]
-        ocpi["OCPI server<br/>ocpi (versions so far)"]
+        ocpi["OCPI server<br/>ocpi (versions, locations)"]
         ctrl["control<br/>the one way to act<br/>on the station"]
         csms["OCPP server<br/>ocpp/csms + ocpp/v16"]
         core["core<br/>state + event bus"]
@@ -413,6 +453,7 @@ internal/core            domain state and the event bus — the single source of
 internal/control         the one place that acts on the station: reserve, cancel, start, stop, unlock, probe
 internal/control/socket  the Unix socket the one-shot commands reach `cpms run` through
 internal/ocpi            the OCPI transport: HTTP server, envelope, token auth, module registry, versions
+internal/ocpi/locations  the OCPI Locations module (sender): config plus live status, paginated
 internal/ocpp            version-agnostic RPC errors, versions, the Handler and ChargePoint interfaces, ProbeReport
 internal/ocpp/ocppj      the OCPP-J RPC layer: framing, correlation, connection goroutines
 internal/ocpp/csms       the WebSocket server a charge point dials into
@@ -650,7 +691,7 @@ Built in tracked steps; each lands as its own PR.
 | 3 | Built-in charge point simulator | done |
 | 4 | Outbound OCPP commands, reservation lifecycle, one-shot CLI | in progress: commands and `cpms probe` done, on-site hardware check next |
 | 5 | OCPI foundation: versions + credentials handshake | in progress: HTTP transport and versions done, credentials handshake next |
-| 6 | OCPI Locations module (sender) | |
+| 6 | OCPI Locations module (sender) | done; reachable once registration (step 5.2) grants `TOKEN_C` |
 | 7 | PATCH location on status change | |
 | 8 | OCPI Commands module (receiver) | |
 | 9 | Terminal UI | |

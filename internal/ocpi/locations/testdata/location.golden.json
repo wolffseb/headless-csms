@@ -1,0 +1,65 @@
+{
+  "country_code": "DE",
+  "party_id": "FYT",
+  "id": "OFFICE-01",
+  "publish": true,
+  "name": "Fryte HQ",
+  "address": "Astallerstr. 9",
+  "city": "München",
+  "postal_code": "80339",
+  "country": "DEU",
+  "coordinates": {
+    "latitude": "48.134000",
+    "longitude": "11.539000"
+  },
+  "evses": [
+    {
+      "uid": "ALP-HYC-001-1",
+      "evse_id": "DE*FYT*E001*1",
+      "status": "CHARGING",
+      "capabilities": [
+        "REMOTE_START_STOP_CAPABLE",
+        "UNLOCK_CAPABLE",
+        "RESERVABLE"
+      ],
+      "connectors": [
+        {
+          "id": "1",
+          "standard": "IEC_62196_T2_COMBO",
+          "format": "CABLE",
+          "power_type": "DC",
+          "max_voltage": 920,
+          "max_amperage": 500,
+          "max_electric_power": 400000,
+          "last_updated": "2026-10-01T08:00:00Z"
+        }
+      ],
+      "last_updated": "2026-10-01T09:30:00Z"
+    },
+    {
+      "uid": "ALP-HYC-001-2",
+      "evse_id": "DE*FYT*E001*2",
+      "status": "AVAILABLE",
+      "capabilities": [
+        "REMOTE_START_STOP_CAPABLE",
+        "UNLOCK_CAPABLE",
+        "RESERVABLE"
+      ],
+      "connectors": [
+        {
+          "id": "1",
+          "standard": "IEC_62196_T2_COMBO",
+          "format": "CABLE",
+          "power_type": "DC",
+          "max_voltage": 920,
+          "max_amperage": 500,
+          "max_electric_power": 400000,
+          "last_updated": "2026-10-01T08:00:00Z"
+        }
+      ],
+      "last_updated": "2026-10-01T08:00:00Z"
+    }
+  ],
+  "time_zone": "Europe/Berlin",
+  "last_updated": "2026-10-01T09:30:00Z"
+}

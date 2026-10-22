@@ -1,0 +1,69 @@
+# Fixture for the Locations tests: the example config's shape, with a second
+# connector on the second EVSE so the sub-object endpoints have something to
+# tell apart. Loaded through config.Load, so it must stay valid.
+charger:
+  id: ALP-HYC-001
+  ip: 192.168.1.42
+  ocpp_version: "1.6"
+  heartbeat_interval: 60s
+  heartbeat_timeout: 90s
+  call_timeout: 30s
+
+server:
+  ocpp_bind: 127.0.0.1:9000
+  ocpi_bind: 127.0.0.1:8080
+
+auth:
+  default_id_tag: "04A1B2C3D4"
+
+ocpi:
+  country_code: DE
+  party_id: FYT
+  public_base_url: http://127.0.0.1:8080/ocpi
+  token_a: "test-token-a"
+  token_c: "test-token-c"
+  push:
+    debounce: 500ms
+    max_retries: 5
+
+location:
+  id: OFFICE-01
+  name: Fryte HQ
+  address: Astallerstr. 9
+  city: München
+  postal_code: "80339"
+  country: DEU
+  coordinates:
+    latitude: "48.134000"
+    longitude: "11.539000"
+  time_zone: Europe/Berlin
+  evses:
+    - uid: ALP-HYC-001-1
+      evse_id: DE*FYT*E001*1
+      ocpp_connector_id: 1
+      connectors:
+        - id: "1"
+          standard: IEC_62196_T2_COMBO
+          format: CABLE
+          power_type: DC
+          max_voltage: 920
+          max_amperage: 500
+          max_electric_power: 400000
+    - uid: ALP-HYC-001-2
+      evse_id: DE*FYT*E001*2
+      ocpp_connector_id: 2
+      connectors:
+        - id: "1"
+          standard: IEC_62196_T2_COMBO
+          format: CABLE
+          power_type: DC
+          max_voltage: 920
+          max_amperage: 500
+          max_electric_power: 400000
+        - id: "2"
+          standard: IEC_62196_T2
+          format: SOCKET
+          power_type: AC_3_PHASE
+          max_voltage: 400
+          max_amperage: 32
+          max_electric_power: 22000

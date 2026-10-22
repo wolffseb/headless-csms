@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	// location.time_zone is validated with time.LoadLocation. Embedding the
+	// zone database keeps that from depending on the host: Windows has none.
+	_ "time/tzdata"
 
 	"github.com/wolffseb/cli-cpms/internal/cli"
 )

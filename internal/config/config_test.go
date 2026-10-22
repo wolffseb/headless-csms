@@ -2,10 +2,13 @@ package config_test
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+	// As in main: the time_zone check must not depend on the host's zoneinfo.
+	_ "time/tzdata"
 
 	"github.com/wolffseb/cli-cpms/internal/config"
 )
@@ -45,6 +48,7 @@ location:
   coordinates:
     latitude: "52.520008"
     longitude: "13.404954"
+  time_zone: Europe/Berlin
   evses:
     - uid: ALP-HYC-001-1
       evse_id: DE*FRY*E001*1
@@ -195,6 +199,23 @@ func TestInvalidConfigsNameTheOffendingField(t *testing.T) {
 		mutate:    rep("\n  country: DEU", "\n  country: DE", 1),
 		wantPaths: []string{"location.country"},
 	}, {
+		name:      "time zone missing",
+		mutate:    rep("  time_zone: Europe/Berlin\n", "", 1),
+		wantPaths: []string{"location.time_zone"},
+	}, {
+		name:      "time zone is not an IANA name",
+		mutate:    rep("time_zone: Europe/Berlin", "time_zone: Europe/Munich", 1),
+		wantPaths: []string{"location.time_zone"},
+	}, {
+		name:      "time zone is an offset, not a zone",
+		mutate:    rep("time_zone: Europe/Berlin", `time_zone: "+01:00"`, 1),
+		wantPaths: []string{"location.time_zone"},
+	}, {
+		// time.LoadLocation accepts "Local", which names the host's zone.
+		name:      "time zone is the host's local zone",
+		mutate:    rep("time_zone: Europe/Berlin", "time_zone: Local", 1),
+		wantPaths: []string{"location.time_zone"},
+	}, {
 		name:      "duplicate ocpp connector id",
 		mutate:    rep("ocpp_connector_id: 2", "ocpp_connector_id: 1", 1),
 		wantPaths: []string{"location.evses[1].ocpp_connector_id"},
@@ -301,6 +322,43 @@ func TestLoadValidFile(t *testing.T) {
 	if got, want := len(cfg.Location.EVSEs), 2; got != want {
 		t.Errorf("evse count = %d, want %d", got, want)
 	}
+
+	// Load records when the file last changed; OCPI's last_updated for the
+	// static location data comes from it.
+	info, err := os.Stat(filepath.Join("testdata", "valid.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.ModTime.Equal(info.ModTime()) {
+		t.Errorf("ModTime = %v, want the file's %v", cfg.ModTime, info.ModTime())
+	}
+}
+
+func TestPublishCanBeTurnedOff(t *testing.T) {
+	t.Parallel()
+
+	in := rep("  time_zone: Europe/Berlin\n", "  time_zone: Europe/Berlin\n  publish: false\n", 1)(baseYAML)
+	cfg, err := config.Parse(strings.NewReader(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Location.IsPublished() {
+		t.Error("publish: false was read as true")
+	}
+}
+
+func TestReservableCanBeTurnedOff(t *testing.T) {
+	t.Parallel()
+
+	in := rep("      ocpp_connector_id: 2\n", "      ocpp_connector_id: 2\n      reservable: false\n", 1)(baseYAML)
+	cfg, err := config.Parse(strings.NewReader(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Location.EVSEs[0].IsReservable() || cfg.Location.EVSEs[1].IsReservable() {
+		t.Errorf("reservable = %v, %v; want true (default), false",
+			cfg.Location.EVSEs[0].IsReservable(), cfg.Location.EVSEs[1].IsReservable())
+	}
 }
 
 func TestLoadAppliesDefaults(t *testing.T) {
@@ -324,6 +382,10 @@ func TestLoadAppliesDefaults(t *testing.T) {
 		{"ocpi_bind", cfg.Server.OCPIBind, config.DefaultOCPIBind},
 		{"push.debounce", cfg.OCPI.Push.Debounce.Duration(), config.DefaultPushDebounce},
 		{"push.max_retries", cfg.OCPI.Push.MaxRetries, config.DefaultPushMaxRetries},
+		// publish=false would hide the location from every driver: cpms
+		// never sends publish_allowed_to.
+		{"location.publish", cfg.Location.IsPublished(), true},
+		{"location.evses[0].reservable", cfg.Location.EVSEs[0].IsReservable(), true},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
