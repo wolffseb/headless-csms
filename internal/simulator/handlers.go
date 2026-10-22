@@ -304,6 +304,14 @@ func (s *Simulator) firstFreeConnector() (int, bool) {
 
 // startTransaction opens a session and reports it, as a station does once a
 // car is actually drawing power.
+//
+// The session opens under a placeholder id before StartTransaction goes out,
+// so that its meter stream and its stop can refer to it whether or not the
+// CSMS can be reached. With Reconnect and no connection, it simply goes on
+// under the placeholder, and the queued StartTransaction's answer brings the
+// real id later (see assignLocked). If the CSMS answers at once, the session
+// has the CSMS's id by the time this returns, or is undone if the CSMS
+// refused it.
 func (s *Simulator) startTransaction(ctx context.Context, connectorID int, idTag string) error {
 	if idTag == "" {
 		idTag = s.opts.IDTag
@@ -315,7 +323,6 @@ func (s *Simulator) startTransaction(ctx context.Context, connectorID int, idTag
 		s.mu.Unlock()
 		return fmt.Errorf("no connector %d", connectorID)
 	}
-	meterStart := c.meter.register()
 	s.mu.Unlock()
 
 	// Preparing first: a car is connected but no energy flows yet.
@@ -323,36 +330,70 @@ func (s *Simulator) startTransaction(ctx context.Context, connectorID int, idTag
 		return err
 	}
 
-	raw, err := s.call(ctx, v16.ActionStartTransaction, v16.StartTransactionReq{
+	s.callMu.Lock()
+	s.mu.Lock()
+	localID := s.nextLocalID
+	s.nextLocalID--
+	now := s.opts.Now()
+	req := &v16.StartTransactionReq{
 		ConnectorID: connectorID,
 		IDTag:       idTag,
-		MeterStart:  meterStart,
-		Timestamp:   s.opts.Now().UTC().Format(time.RFC3339),
-	})
-	if err != nil {
-		return fmt.Errorf("StartTransaction: %w", err)
+		MeterStart:  c.meter.register(),
+		Timestamp:   now.UTC().Format(time.RFC3339),
+	}
+	// Starting a session consumes any reservation held on the connector, and
+	// the station says which one, so the CSMS need not guess.
+	reservationID := c.reservationID
+	if reservationID != 0 {
+		req.ReservationID = &reservationID
+	}
+	c.transactionID = localID
+	c.reservationID = 0
+	c.meter.begin(now)
+	s.startMeterLocked(connectorID, c)
+	s.mu.Unlock()
+
+	m := &txMessage{action: v16.ActionStartTransaction, start: req, localID: localID}
+	s.deliverTxLocked(ctx, m)
+	s.callMu.Unlock()
+
+	if !m.answered && m.err == nil {
+		s.log.Info("transaction started offline",
+			"connector", connectorID, "placeholder_id", localID, "id_tag", idTag)
+		return s.SetConnectorStatus(ctx, connectorID, v16.StatusCharging)
 	}
 
 	var conf v16.StartTransactionConf
-	if err := decodeInto(raw, &conf); err != nil {
-		return fmt.Errorf("StartTransaction response: %w", err)
+	err := m.err
+	if err == nil {
+		if err = decodeInto(m.answer, &conf); err != nil {
+			err = fmt.Errorf("response: %w", err)
+		}
 	}
-	if conf.IDTagInfo.Status != v16.AuthAccepted {
+	if err != nil || conf.IDTagInfo.Status != v16.AuthAccepted {
+		s.undoStart(connectorID, reservationID)
+		if err != nil {
+			return fmt.Errorf("StartTransaction: %w", err)
+		}
 		s.log.Warn("csms refused the token", "id_tag", idTag, "status", conf.IDTagInfo.Status)
 		return s.SetConnectorStatus(ctx, connectorID, v16.StatusAvailable)
 	}
 
-	s.mu.Lock()
-	c.transactionID = conf.TransactionID
-	// Starting a session consumes any reservation held on the connector.
-	c.reservationID = 0
-	c.meter.begin(s.opts.Now())
-	s.startMeterLocked(connectorID, c)
-	s.mu.Unlock()
-
 	s.log.Info("transaction started",
 		"connector", connectorID, "transaction_id", conf.TransactionID, "id_tag", idTag)
 	return s.SetConnectorStatus(ctx, connectorID, v16.StatusCharging)
+}
+
+// undoStart closes a session the CSMS did not open, leaving the connector as
+// it was before: idle, and still holding its reservation.
+func (s *Simulator) undoStart(connectorID, reservationID int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	c := s.connectors[connectorID]
+	stopMeterLocked(c)
+	c.transactionID = 0
+	c.reservationID = reservationID
 }
 
 // stopTransaction closes a session and reports it.
@@ -373,7 +414,7 @@ func (s *Simulator) stopTransaction(ctx context.Context, connectorID int, reason
 }
 
 // sendStopTransaction ends the session's meter stream and sends
-// StopTransaction.
+// StopTransaction, or queues it while offline.
 //
 // It holds the CALL slot from before the meter is read until the answer, the
 // same slot a meter sample holds, so that no sample of this session can go
@@ -403,14 +444,18 @@ func (s *Simulator) sendStopTransaction(ctx context.Context, connectorID int, re
 	c.transactionID = 0
 	s.mu.Unlock()
 
-	if _, err := s.callLocked(ctx, v16.ActionStopTransaction, v16.StopTransactionReq{
+	m := &txMessage{action: v16.ActionStopTransaction, stop: &v16.StopTransactionReq{
 		TransactionID: txID,
 		MeterStop:     meterStop,
 		Timestamp:     s.opts.Now().UTC().Format(time.RFC3339),
 		Reason:        reason,
-	}); err != nil {
-		return 0, fmt.Errorf("StopTransaction: %w", err)
+	}}
+	s.deliverTxLocked(ctx, m)
+	if m.err != nil {
+		return 0, fmt.Errorf("StopTransaction: %w", m.err)
 	}
+	// Queued or delivered, the id is the one the message carried when it
+	// was made; a queued stop of an offline session takes the CSMS's id later.
 	return txID, nil
 }
 
