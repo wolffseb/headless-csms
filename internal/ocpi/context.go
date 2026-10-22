@@ -35,3 +35,7 @@ func CorrelationID(ctx context.Context) string {
 	id, _ := ctx.Value(correlationIDKey).(string)
 	return id
 }
+
+// NewID returns a fresh X-Request-ID or X-Correlation-ID: a random UUID, the
+// form OCPI advises. The outbound client uses it for the ids it originates.
+func NewID() string { return newUUID() }

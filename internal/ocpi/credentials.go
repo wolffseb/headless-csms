@@ -2,9 +2,10 @@ package ocpi
 
 import "net/http"
 
-// CredentialsStub is the credentials module before the handshake exists: it
-// is listed in version details, as every OCPI implementation must list it,
-// and answers HTTP 501 to every method until the real module replaces it.
+// CredentialsStub is a placeholder credentials module: it is listed in
+// version details, as every OCPI implementation must list it, and answers
+// HTTP 501 to every method. cpms run mounts the real one from
+// internal/ocpi/credentials; this stays for tests of the transport alone.
 func CredentialsStub() Module {
 	notYet := func(w http.ResponseWriter, _ *http.Request) {
 		WriteError(w, http.StatusNotImplemented, StatusServerError, "credentials registration is not implemented yet")

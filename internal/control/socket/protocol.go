@@ -34,6 +34,9 @@ const (
 	OpUnlock  Op = "unlock"
 	OpStatus  Op = "status"
 	OpProbe   Op = "probe"
+	// OpOCPIUnregister forgets the OCPI registration, so the counterparty
+	// can register again with TOKEN_A.
+	OpOCPIUnregister Op = "ocpi-unregister"
 )
 
 // Request is one line sent to the socket. Each connection carries exactly
@@ -115,6 +118,28 @@ type ReserveResult struct {
 type Status struct {
 	ChargePoint ChargePointStatus `json:"charge_point"`
 	EVSEs       []EVSEStatus      `json:"evses"`
+	OCPI        OCPIStatus        `json:"ocpi"`
+}
+
+// OCPIStatus is the OCPI registration. It never carries a token.
+type OCPIStatus struct {
+	Registered bool `json:"registered"`
+	// Party is the counterparty, e.g. "DE*ABC". Empty when not registered.
+	Party string `json:"party,omitempty"`
+	// Since is when it first registered; nil when not registered.
+	Since *time.Time `json:"since,omitempty"`
+	// PushEndpoint is its Locations receiver, which status changes are pushed
+	// to. Empty when it lists none, or when not registered.
+	PushEndpoint string `json:"push_endpoint,omitempty"`
+}
+
+// UnregisterResult is the result of OpOCPIUnregister.
+type UnregisterResult struct {
+	// Party is the counterparty that was registered.
+	Party string `json:"party"`
+	// NotifyError is why the counterparty could not be told, or empty when it
+	// was.
+	NotifyError string `json:"notify_error,omitempty"`
 }
 
 // ChargePointStatus describes the station as a whole.

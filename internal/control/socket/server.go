@@ -15,7 +15,9 @@ import (
 
 	"github.com/wolffseb/cli-cpms/internal/control"
 	"github.com/wolffseb/cli-cpms/internal/core"
+	"github.com/wolffseb/cli-cpms/internal/ocpi/credentials"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
+	"github.com/wolffseb/cli-cpms/internal/state"
 )
 
 // MaxPathLen is the longest socket path accepted. The kernel limit is the
@@ -42,7 +44,16 @@ type Options struct {
 	Core    *core.Service
 	// ChargePointID is the configured station, whose state OpStatus reports.
 	ChargePointID string
-	Log           *slog.Logger
+	// OCPI is the OCPI registration, supplied with AttachOCPI. Without it,
+	// status reports "not registered" and unregistering is refused.
+	OCPI OCPIRegistration
+	Log  *slog.Logger
+}
+
+// OCPIRegistration is what the socket needs of the OCPI credentials module.
+type OCPIRegistration interface {
+	Registration() *state.OCPIRegistration
+	Unregister(ctx context.Context) (credentials.Unregistered, error)
 }
 
 // Server answers requests on the socket.
@@ -122,6 +133,9 @@ func (s *Server) Path() string { return s.opts.Path }
 func (s *Server) Attach(ctl *control.Service, c *core.Service) {
 	s.opts.Control, s.opts.Core = ctl, c
 }
+
+// AttachOCPI supplies the OCPI registration. Call it before Serve.
+func (s *Server) AttachOCPI(o OCPIRegistration) { s.opts.OCPI = o }
 
 // Serve answers requests until ctx is cancelled or Close is called. It
 // returns immediately; the accept loop runs in the background.
@@ -205,7 +219,24 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 
 	switch req.Op {
 	case OpStatus:
-		return ok(BuildStatus(s.opts.Core.Snapshot(), s.opts.ChargePointID))
+		st := BuildStatus(s.opts.Core.Snapshot(), s.opts.ChargePointID)
+		if s.opts.OCPI != nil {
+			st.OCPI = BuildOCPIStatus(s.opts.OCPI.Registration())
+		}
+		return ok(st)
+
+	case OpOCPIUnregister:
+		if s.opts.OCPI == nil {
+			return fail(&Error{Code: CodeRefused, Message: "OCPI is not running"})
+		}
+		res, err := s.opts.OCPI.Unregister(ctx)
+		switch {
+		case credentials.ErrNotRegistered(err):
+			return fail(&Error{Code: CodeRefused, Message: "not registered with an OCPI partner"})
+		case err != nil:
+			return fail(&Error{Code: CodeInternal, Message: err.Error()})
+		}
+		return ok(UnregisterResult{Party: res.Party, NotifyError: res.NotifyError})
 
 	case OpProbe:
 		report, err := s.opts.Control.Probe(ctx)
