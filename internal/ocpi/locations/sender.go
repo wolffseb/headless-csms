@@ -131,11 +131,14 @@ func parseDateTime(s string) (time.Time, error) {
 	return time.ParseInLocation("2006-01-02T15:04:05.999999999", s, time.UTC)
 }
 
-// matches applies date_from (inclusive) and date_to (exclusive). It compares
-// last_updated at the whole second it is rendered with, so a client that
-// echoes back a last_updated it was sent gets the boundary it expects.
+// matches applies date_from (inclusive) and date_to (exclusive) to the real
+// last_updated, not the whole second it is rendered with: a client polling
+// with date_from set to its previous request time (fraction included) must
+// still get a change made later in that same second. Echoing a rendered
+// last_updated back still works: as date_from it includes the object, as
+// date_to it excludes it.
 func (p page) matches(l Location) bool {
-	at := l.LastUpdated.Time().Truncate(time.Second)
+	at := l.LastUpdated.Time()
 	if !p.dateFrom.IsZero() && at.Before(p.dateFrom) {
 		return false
 	}
