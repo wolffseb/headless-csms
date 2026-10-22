@@ -48,25 +48,29 @@ func TestRegistrationThroughCPMSRun(t *testing.T) {
 
 	emsp := newCLIFakeEMSP(t)
 	credentialsURL := "http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(ocpiPort)) + "/ocpi/2.3.0/credentials"
-	body := `{"token":"emsp-token-b","url":"` + emsp.srv.URL + `/versions",` +
-		`"roles":[{"role":"EMSP","party_id":"ABC","country_code":"NL","business_details":{"name":"Fake"}}]}`
-	req, err := http.NewRequest(http.MethodPost, credentialsURL, strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
+	register := func() {
+		t.Helper()
+		body := `{"token":"emsp-token-b","url":"` + emsp.srv.URL + `/versions",` +
+			`"roles":[{"role":"EMSP","party_id":"ABC","country_code":"NL","business_details":{"name":"Fake"}}]}`
+		req, err := http.NewRequest(http.MethodPost, credentialsURL, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Token "+base64.StdEncoding.EncodeToString([]byte(cfg.OCPI.TokenA)))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var env struct {
+			StatusCode int `json:"status_code"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&env)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != http.StatusOK || env.StatusCode != 1000 {
+			t.Fatalf("POST credentials: HTTP %d, status_code %d, %v", resp.StatusCode, env.StatusCode, err)
+		}
 	}
-	req.Header.Set("Authorization", "Token "+base64.StdEncoding.EncodeToString([]byte(cfg.OCPI.TokenA)))
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var env struct {
-		StatusCode int `json:"status_code"`
-	}
-	err = json.NewDecoder(resp.Body).Decode(&env)
-	resp.Body.Close()
-	if err != nil || resp.StatusCode != http.StatusOK || env.StatusCode != 1000 {
-		t.Fatalf("POST credentials: HTTP %d, status_code %d, %v", resp.StatusCode, env.StatusCode, err)
-	}
+	register()
 
 	push := emsp.srv.URL + "/2.3.0/locations"
 	st := s.status()
@@ -91,6 +95,24 @@ func TestRegistrationThroughCPMSRun(t *testing.T) {
 	if st := s.status(); st.OCPI.Registered {
 		t.Errorf("still registered after unregister: %+v", st.OCPI)
 	}
+
+	// A partner that cannot be told does not undo the unregistration: the
+	// command still exits 0, and warns on stderr.
+	register()
+	emsp.setDeleteStatus(http.StatusInternalServerError)
+	stdout, stderr, code := s.cpms("ocpi", "unregister")
+	if code != 0 {
+		t.Fatalf("unregister with a failing partner exited %d, want 0; stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stderr, "warning:") || !strings.Contains(stderr, "NL*ABC") {
+		t.Errorf("stderr = %q, want a warning naming the partner", stderr)
+	}
+	if !strings.Contains(stdout, "unregistered from NL*ABC") {
+		t.Errorf("stdout = %q", stdout)
+	}
+	if st := s.status(); st.OCPI.Registered {
+		t.Errorf("still registered after a failed notification: %+v", st.OCPI)
+	}
 	s.stopRun()
 
 	// state.json agrees after shutdown.
@@ -109,6 +131,14 @@ type cliFakeEMSP struct {
 	srv     *httptest.Server
 	mu      sync.Mutex
 	deleted bool
+	// deleteStatus, when set, is the HTTP status answering DELETE.
+	deleteStatus int
+}
+
+func (f *cliFakeEMSP) setDeleteStatus(code int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleteStatus = code
 }
 
 func newCLIFakeEMSP(t *testing.T) *cliFakeEMSP {
@@ -127,7 +157,12 @@ func newCLIFakeEMSP(t *testing.T) *cliFakeEMSP {
 		case "DELETE /2.3.0/credentials":
 			f.mu.Lock()
 			f.deleted = true
+			status := f.deleteStatus
 			f.mu.Unlock()
+			if status != 0 {
+				http.Error(w, "boom", status)
+				return
+			}
 		default:
 			http.NotFound(w, r)
 			return

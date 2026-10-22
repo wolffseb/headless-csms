@@ -84,7 +84,14 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	// The control socket is claimed before anything else listens, so a second
 	// cpms on the same socket stops here with "already running", not later
 	// with "address in use".
-	ctl, err := socket.Listen(socket.Options{Path: socketPath, ChargePointID: cfg.Charger.ID, Log: logger})
+	// Unregistering gives up at call_timeout, five seconds before the CLI
+	// does (see socketGrace), so the CLI hears what happened.
+	ctl, err := socket.Listen(socket.Options{
+		Path:              socketPath,
+		ChargePointID:     cfg.Charger.ID,
+		UnregisterTimeout: cfg.Charger.CallTimeout.Duration(),
+		Log:               logger,
+	})
 	if err != nil {
 		return err
 	}

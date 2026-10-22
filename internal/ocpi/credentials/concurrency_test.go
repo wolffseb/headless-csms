@@ -318,6 +318,33 @@ func TestUnregisterHonoursItsContext(t *testing.T) {
 	}
 }
 
+// Running out of time during the DELETE is a failure to tell the partner, not
+// to unregister: the registration is already cleared, and Unregister says so
+// instead of failing, so the CLI's exit code matches.
+func TestUnregisterDeadlineDuringTheDeleteStillUnregisters(t *testing.T) {
+	t.Parallel()
+	h, emsp := newHarness(t), newFakeEMSP(t)
+	h.register(emsp)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	emsp.mu.Lock()
+	emsp.deleteAnswer = func(http.ResponseWriter) { <-release }
+	emsp.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	got, err := h.reg.Unregister(ctx)
+	if err != nil {
+		t.Fatalf("Unregister = %v, want the unregistration to be reported", err)
+	}
+	if got.NotifyError == "" {
+		t.Error("NotifyError is empty although the partner never answered")
+	}
+	if h.onDisk().OCPI != nil {
+		t.Error("state.json still holds the registration")
+	}
+}
+
 // A body that trickles in must not hold up the operator: it is read before
 // anything is locked.
 func TestSlowBodyDoesNotDelayUnregister(t *testing.T) {
