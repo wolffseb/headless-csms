@@ -312,6 +312,7 @@ func TestDateFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := func(d time.Duration) string { return ocpi.FormatDateTime(updated.Add(d)) }
+	frac := func(d time.Duration) string { return updated.Add(d).Format("2006-01-02T15:04:05.000Z") }
 
 	for _, tc := range []struct {
 		query string
@@ -322,11 +323,14 @@ func TestDateFilters(t *testing.T) {
 		{"?date_to=" + at(0), 0},             // exclusive
 		{"?date_to=" + at(time.Second), 1},
 		{"?date_from=" + at(-time.Hour) + "&date_to=" + at(time.Hour), 1},
-		// The core clock stands 400ms past the second the client sees. The
-		// filter uses what the client sees, so a date_to just past that
-		// second, with a fraction, includes the Location.
-		{"?date_to=" + updated.Add(200*time.Millisecond).Format("2006-01-02T15:04:05.000Z"), 1},
-		{"?date_from=" + updated.Add(200*time.Millisecond).Format("2006-01-02T15:04:05.000Z"), 0},
+		// The core clock stands 400ms past the second the client sees, so the
+		// filter works on the real time, not the rendered one. A client that
+		// polled with date_from at S+200ms, before this change at S+400ms,
+		// gets the Location: the incremental pull must not lose it.
+		{"?date_from=" + frac(200*time.Millisecond), 1},
+		{"?date_from=" + frac(500*time.Millisecond), 0},
+		{"?date_to=" + frac(200*time.Millisecond), 0},
+		{"?date_to=" + frac(500*time.Millisecond), 1},
 		// No zone designator means UTC.
 		{"?date_to=" + updated.UTC().Format("2006-01-02T15:04:05"), 0},
 	} {
