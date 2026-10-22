@@ -76,7 +76,7 @@ func (s *Simulator) configuration() []configEntry {
 		{key: v16.KeySupportedFeatureProfiles, readonly: true, value: profiles},
 		{key: v16.KeyNumberOfConnectors, readonly: true, value: strconv.Itoa(s.opts.Connectors)},
 		{key: v16.KeyHeartbeatInterval, value: seconds(heartbeat), set: s.setHeartbeatInterval},
-		stored(v16.KeyConnectionTimeOut, parseSeconds),
+		stored(v16.KeyConnectionTimeOut, func(v string) error { _, err := parseSeconds(v); return err }),
 		{key: v16.KeyMeterValueSampleInterval, value: seconds(meterInterval), set: s.setMeterInterval},
 		stored(v16.KeyAuthorizeRemoteTxRequests, parseBool),
 		stored(v16.KeyLocalAuthListEnabled, parseBool),
@@ -98,12 +98,18 @@ func seconds(d time.Duration) string {
 	return strconv.FormatInt(int64((d+time.Second-1)/time.Second), 10)
 }
 
-func parseSeconds(value string) error {
+// maxSeconds is the largest interval the station takes: a day. Anything
+// longer is out of range, which OCPP 1.6 section 5.3 answers with Rejected,
+// and a huge count would overflow time.Duration into a negative interval.
+const maxSeconds = 24 * 60 * 60
+
+// parseSeconds reads a number of seconds between 0 and maxSeconds.
+func parseSeconds(value string) (int, error) {
 	n, err := strconv.Atoi(value)
-	if err != nil || n < 0 {
-		return fmt.Errorf("%q is not a number of seconds", value)
+	if err != nil || n < 0 || n > maxSeconds {
+		return 0, fmt.Errorf("%q is not a number of seconds between 0 and %d", value, maxSeconds)
 	}
-	return nil
+	return n, nil
 }
 
 func parseBool(value string) error {
@@ -115,9 +121,9 @@ func parseBool(value string) error {
 
 // setHeartbeatInterval takes effect from the next heartbeat on.
 func (s *Simulator) setHeartbeatInterval(value string) error {
-	n, err := strconv.Atoi(value)
-	if err != nil || n <= 0 {
-		return fmt.Errorf("%q is not a positive number of seconds", value)
+	n, err := parseSeconds(value)
+	if err != nil || n == 0 {
+		return fmt.Errorf("%q is not a number of seconds between 1 and %d", value, maxSeconds)
 	}
 	s.mu.Lock()
 	s.heartbeat = time.Duration(n) * time.Second
@@ -128,10 +134,10 @@ func (s *Simulator) setHeartbeatInterval(value string) error {
 // setMeterInterval takes effect from the next sample on. Turning streaming on
 // starts it for sessions already running, as a station would.
 func (s *Simulator) setMeterInterval(value string) error {
-	if err := parseSeconds(value); err != nil {
+	n, err := parseSeconds(value)
+	if err != nil {
 		return err
 	}
-	n, _ := strconv.Atoi(value)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
