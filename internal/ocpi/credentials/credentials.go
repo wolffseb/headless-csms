@@ -59,9 +59,15 @@ type Registrar struct {
 	// client calls the counterparty with the stored TOKEN_B.
 	client *client.Client
 
-	// mu serialises everything that changes the registration, so two POSTs
-	// racing each other cannot both call back and both store.
+	// mu guards inflight and makes every check-then-change of the registration
+	// atomic. It is only ever held for a state read or write, never across a
+	// body read or a call to the counterparty: a slow partner must not be able
+	// to pin it.
 	mu sync.Mutex
+	// inflight is non-nil while a POST or PUT calls the counterparty back, and
+	// is closed when it is done. It is the single-flight "registration in
+	// progress" state: other changes are refused, Unregister waits on it.
+	inflight chan struct{}
 	// versionsURL is ours. Mount sets it before the server starts, and it is
 	// only read after.
 	versionsURL string
@@ -96,17 +102,33 @@ func New(opts Options) *Registrar {
 // takes effect on the very next request.
 func (r *Registrar) Authenticator() ocpi.Authenticator {
 	return ocpi.AuthenticatorFunc(func(token string) ocpi.Access {
-		if r.opts.Store.Get().OCPI != nil {
-			if r.tokenC.Matches(token) {
-				return ocpi.AccessModules
-			}
-			return ocpi.AccessNone
-		}
-		if r.tokenA.Matches(token) {
-			return ocpi.AccessRegistration
+		return r.accessFor(r.opts.Store.Get().OCPI, token)
+	})
+}
+
+// accessFor is what token grants while reg is the registration.
+func (r *Registrar) accessFor(reg *state.OCPIRegistration, token string) ocpi.Access {
+	if reg != nil {
+		if r.tokenC.Matches(token) {
+			return ocpi.AccessModules
 		}
 		return ocpi.AccessNone
-	})
+	}
+	if r.tokenA.Matches(token) {
+		return ocpi.AccessRegistration
+	}
+	return ocpi.AccessNone
+}
+
+// holds reports whether the token req carries is still the right one for
+// reg: TOKEN_A while unregistered, TOKEN_C once registered. The Authenticator
+// decided on the state at the time the request arrived; by the time a handler
+// runs, a registration, update or unregistration may have changed it, and a
+// token that was good then must not be honoured against the new state. It
+// fails closed when the request carries no token.
+func (r *Registrar) holds(req *http.Request, reg *state.OCPIRegistration) bool {
+	token, ok := ocpi.TokenFromContext(req.Context())
+	return ok && r.accessFor(reg, token) != ocpi.AccessNone
 }
 
 // Mount registers the credentials module on s.
@@ -164,24 +186,18 @@ type Unregistered struct {
 // re-initiate the handshake: we are the Receiver, so we cannot start one
 // ourselves.
 //
+// A registration or update in progress is waited for, so the two cannot
+// undo each other. ctx bounds that wait: when it ends first, nothing has
+// changed and the error wraps ctx's. The caller picks a deadline shorter than
+// its own, so that what it reports is what happened.
+//
 // The registration is cleared first, then the counterparty is told with a
 // DELETE on its credentials endpoint, as the spec's unregistration. Telling
 // it is best effort: the operator asked to forget, and a counterparty that
-// was not told finds out on its next call with TOKEN_C.
+// was not told finds out on its next call with TOKEN_C. Running out of time
+// during the DELETE is such a failure: the registration is already gone.
 func (r *Registrar) Unregister(ctx context.Context) (Unregistered, error) {
-	r.mu.Lock()
-	reg := r.opts.Store.Get().OCPI
-	if reg == nil {
-		r.mu.Unlock()
-		return Unregistered{}, errNotRegistered
-	}
-	err := r.opts.Store.Update(func(st *state.State) error {
-		st.OCPI = nil
-		return nil
-	})
-	// The lock is not held while calling out: a counterparty that answers our
-	// DELETE by registering again at once must not wait on it.
-	r.mu.Unlock()
+	reg, err := r.forget(ctx)
 	if err != nil {
 		return Unregistered{}, err
 	}
@@ -195,6 +211,34 @@ func (r *Registrar) Unregister(ctx context.Context) (Unregistered, error) {
 		}
 	}
 	return out, nil
+}
+
+// forget clears the registration once no registration is in progress, and
+// returns what it cleared.
+func (r *Registrar) forget(ctx context.Context) (*state.OCPIRegistration, error) {
+	for {
+		r.mu.Lock()
+		if r.inflight == nil {
+			defer r.mu.Unlock()
+			reg := r.opts.Store.Get().OCPI
+			if reg == nil {
+				return nil, errNotRegistered
+			}
+			err := r.opts.Store.Update(func(st *state.State) error {
+				st.OCPI = nil
+				return nil
+			})
+			return reg, err
+		}
+		done := r.inflight
+		r.mu.Unlock()
+
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("waiting for a registration in progress: %w", ctx.Err())
+		}
+	}
 }
 
 // Party names the counterparty by its roles' country code and party id, e.g.
@@ -230,30 +274,91 @@ func findEndpoint(eps []state.Endpoint, identifier, role string) (state.Endpoint
 }
 
 // serveGet answers with our credentials. The token in them is the one the
-// caller authenticated with: the Authenticator lets only TOKEN_A through
-// before registration and only TOKEN_C after, so the state says which.
-func (r *Registrar) serveGet(w http.ResponseWriter, _ *http.Request) {
+// caller authenticated with, which the registration state decides: TOKEN_A
+// before registration and TOKEN_C after. It is read from one snapshot of the
+// state, so a caller whose token went stale while the request was on its way
+// is refused instead of being handed the other one.
+func (r *Registrar) serveGet(w http.ResponseWriter, req *http.Request) {
+	reg := r.opts.Store.Get().OCPI
+	if !r.holds(req, reg) {
+		ocpi.WriteUnauthorized(w)
+		return
+	}
 	token := r.opts.TokenA
-	if r.opts.Store.Get().OCPI != nil {
+	if reg != nil {
 		token = r.opts.TokenC
 	}
 	ocpi.WriteOK(w, r.ours(token))
 }
 
-// servePost is registration: call the counterparty back with its TOKEN_B,
-// store what it offers, and hand it TOKEN_C.
-func (r *Registrar) servePost(w http.ResponseWriter, req *http.Request) {
+// begin starts a change that calls the counterparty: POST registers, PUT
+// updates. It re-checks, under the lock and against the state as it is now,
+// that the caller's token is still the right one and the method is allowed,
+// and claims the single-flight slot. On success it returns the registration
+// before the change and a finish func to call when done. Otherwise it has
+// answered.
+//
+// A change refused because another is in progress is answered with HTTP 200
+// and OCPI status 2000 "retry shortly", the way every other registration
+// failure here is answered. The spec has no status for it, and 405 would be
+// wrong: the method is allowed, just not right now. The partner's retry is
+// the remedy, and the change in progress is not disturbed.
+func (r *Registrar) begin(w http.ResponseWriter, req *http.Request) (old *state.OCPIRegistration, finish func(), ok bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.opts.Store.Get().OCPI != nil {
-		r.notAllowed(w, true, "already registered; use PUT to update, or DELETE to unregister first")
-		return
+	old = r.opts.Store.Get().OCPI
+	if !r.holds(req, old) {
+		ocpi.WriteUnauthorized(w)
+		return nil, nil, false
 	}
+	if r.busy(w) {
+		return nil, nil, false
+	}
+	switch {
+	case req.Method == http.MethodPost && old != nil:
+		r.notAllowed(w, true, "already registered; use PUT to update, or DELETE to unregister first")
+		return nil, nil, false
+	case req.Method == http.MethodPut && old == nil:
+		r.notAllowed(w, false, "not registered; use POST to register")
+		return nil, nil, false
+	}
+
+	done := make(chan struct{})
+	r.inflight = done
+	return old, func() {
+		r.mu.Lock()
+		r.inflight = nil
+		r.mu.Unlock()
+		close(done)
+	}, true
+}
+
+// busy answers a change refused because another is in progress. The caller
+// holds mu.
+func (r *Registrar) busy(w http.ResponseWriter) bool {
+	if r.inflight == nil {
+		return false
+	}
+	ocpi.WriteError(w, http.StatusOK, ocpi.StatusClientError,
+		"another registration change is in progress; retry shortly")
+	return true
+}
+
+// servePost is registration: call the counterparty back with its TOKEN_B,
+// store what it offers, and hand it TOKEN_C.
+func (r *Registrar) servePost(w http.ResponseWriter, req *http.Request) {
+	// The body is read before anything is locked: how long it takes is the
+	// sender's business.
 	creds, ok := decodeCredentials(w, req)
 	if !ok {
 		return
 	}
+	_, finish, ok := r.begin(w, req)
+	if !ok {
+		return
+	}
+	defer finish()
 
 	// Nothing is stored until both calls back have succeeded: a token B
 	// without endpoints is worse than no registration.
@@ -288,18 +393,15 @@ func (r *Registrar) servePost(w http.ResponseWriter, req *http.Request) {
 // it is an operator action: change ocpi.token_c, restart, and have the
 // counterparty register again.
 func (r *Registrar) servePut(w http.ResponseWriter, req *http.Request) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	old := r.opts.Store.Get().OCPI
-	if old == nil {
-		r.notAllowed(w, false, "not registered; use POST to register")
-		return
-	}
 	creds, ok := decodeCredentials(w, req)
 	if !ok {
 		return
 	}
+	old, finish, ok := r.begin(w, req)
+	if !ok {
+		return
+	}
+	defer finish()
 
 	reg, code, msg := r.fetch(req.Context(), creds)
 	if code != 0 {
@@ -324,12 +426,20 @@ func (r *Registrar) servePut(w http.ResponseWriter, req *http.Request) {
 }
 
 // serveDelete is the counterparty unregistering: TOKEN_C stops working and
-// TOKEN_A works again.
-func (r *Registrar) serveDelete(w http.ResponseWriter, _ *http.Request) {
+// TOKEN_A works again. It only touches state, so it holds the lock for the
+// write.
+func (r *Registrar) serveDelete(w http.ResponseWriter, req *http.Request) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	reg := r.opts.Store.Get().OCPI
+	if !r.holds(req, reg) {
+		ocpi.WriteUnauthorized(w)
+		return
+	}
+	if r.busy(w) {
+		return
+	}
 	if reg == nil {
 		r.notAllowed(w, false, "not registered")
 		return
