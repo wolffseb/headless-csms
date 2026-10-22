@@ -274,11 +274,13 @@ counterparty dials, which is why it is set separately from `ocpi_bind`.
 
 Every request needs `Authorization: Token <base64 of the token>`: standard, padded Base64
 (RFC 4648 §4), as OCPI requires since 2.2-d2. A raw, unencoded token is refused like any
-unknown one. Encode with `printf '%s'`, not `echo`, or the newline becomes part of the token:
+unknown one. Encode with `printf '%s'`, not `echo`, or the newline becomes part of the token, and strip the
+line breaks GNU `base64` adds every 76 columns (tokens of 58 bytes or more), or the header
+breaks on Linux:
 
 ```sh
 TOKEN_A=change-me-token-a   # ocpi.token_a from your config
-curl -s -H "Authorization: Token $(printf '%s' "$TOKEN_A" | base64)" \
+curl -s -H "Authorization: Token $(printf '%s' "$TOKEN_A" | base64 | tr -d '\n')" \
   http://127.0.0.1:8080/ocpi/versions
 ```
 
@@ -294,10 +296,16 @@ only for versions and credentials.
   answer gives no hint which one it was.
 - Every answer is an OCPI envelope with a UTC `timestamp` ending in `Z`, and carries
   `X-Request-ID` and `X-Correlation-ID`: the ones the request sent, or fresh UUIDs.
+- Handlers get both ids in the request context (`ocpi.RequestID`, `ocpi.CorrelationID`), and
+  the debug log line carries both.
+- The HTTP server times out reading headers after 10 s, reading a whole request after 30 s,
+  writing a response after 60 s and an idle keep-alive connection after 120 s. On shutdown the
+  server cancels its lifetime context, which every request context and background delivery
+  hangs off, so handlers stop with it.
 - Request bodies are capped at 1 MiB. JSON that does not parse gets HTTP 400 with
   `status_code` 2001; unknown fields are accepted, as OCPI requires.
 - `--log-level debug` logs one line per request (method, path, status, duration, request
-  id). Tokens are never logged.
+  id, correlation id). Tokens are never logged.
 
 There is no TLS: this is a LAN tool, by decision.
 
