@@ -1,3 +1,0 @@
-- [Worktree tooling traps](worktree-tooling.md) — command guard, lint via GOTOOLCHAIN=go1.26.0 ~/go/bin/golangci-lint, mutation-check workflow
-- [Simulator test seams](simulator-test-seams.md) — ocpptest.Proxy (Cut/Hold), fake CSMS respond/bootStatus hooks, one clock per concern
-- [CSMS offline gaps](csms-offline-gaps.md) — known core/v16 issues with replayed transactions (unknown tag → id 0, meter timestamps)
