@@ -69,10 +69,12 @@ location:
     longitude: "11.539000"
   # Required by OCPI: the IANA time zone the location is in.
   time_zone: Europe/Berlin
-  # Whether apps and websites may show this location to anyone. false keeps
-  # it to the backend we register with; an office charger is not public.
-  # Optional, default false.
-  publish: false
+  # OCPI's publish flag. true: the partner may show this location to its
+  # drivers, and possibly in public apps if it forwards it. false: only
+  # tokens listed in publish_allowed_to may see it; cpms does not send that
+  # list, so false hides the location from every driver.
+  # Optional, default true.
+  publish: true
   evses:
     - uid: ALP-HYC-001-1
       evse_id: DE*FYT*E001*1

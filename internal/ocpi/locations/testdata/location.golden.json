@@ -2,7 +2,7 @@
   "country_code": "DE",
   "party_id": "FYT",
   "id": "OFFICE-01",
-  "publish": false,
+  "publish": true,
   "name": "Fryte HQ",
   "address": "Astallerstr. 9",
   "city": "München",

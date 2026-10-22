@@ -102,11 +102,15 @@ type Location struct {
 	// TimeZone is the IANA name of the location's zone, e.g. "Europe/Berlin".
 	// OCPI requires it on every Location.
 	TimeZone string `yaml:"time_zone"`
-	// Publish lets apps and websites show the location. It defaults to false:
-	// an office charger is not a public one.
-	Publish bool   `yaml:"publish"`
+	// Publish is OCPI's publish flag. Unset means true: the partner may show
+	// the location to its drivers. false would limit it to the tokens in
+	// publish_allowed_to, which cpms does not send, so no driver would see it.
+	Publish *bool  `yaml:"publish"`
 	EVSEs   []EVSE `yaml:"evses"`
 }
+
+// IsPublished reports the OCPI publish flag; unset means true.
+func (l Location) IsPublished() bool { return l.Publish == nil || *l.Publish }
 
 // Coordinates are decimal degrees as strings, matching OCPI's wire format.
 type Coordinates struct {

@@ -121,7 +121,7 @@ func Build(cfg *config.Config, staticAt time.Time, snap core.Snapshot) Location 
 		CountryCode: cfg.OCPI.CountryCode,
 		PartyID:     cfg.OCPI.PartyID,
 		ID:          l.ID,
-		Publish:     l.Publish,
+		Publish:     l.IsPublished(),
 		Name:        l.Name,
 		Address:     l.Address,
 		City:        l.City,
