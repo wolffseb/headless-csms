@@ -207,10 +207,17 @@ func TestChangesDuringARegistrationAreRefused(t *testing.T) {
 		registered bool
 		inflight   string // the change in progress
 		token      string // the token every caller uses
-		other      []string
+		// What the others get. A method the state refuses whatever the change
+		// in progress does is a 405, not "retry shortly": the retry could never
+		// succeed.
+		busy    []string // answered "in progress, retry shortly"
+		refused []string // answered 405
+		allow   string   // the Allow header of those 405s
 	}{
-		{"during a POST", false, http.MethodPost, "TOKEN_A", []string{http.MethodPost, http.MethodPut, http.MethodDelete}},
-		{"during a PUT", true, http.MethodPut, "TOKEN_C", []string{http.MethodPut, http.MethodDelete}},
+		{"during a POST", false, http.MethodPost, "TOKEN_A",
+			[]string{http.MethodPost}, []string{http.MethodPut, http.MethodDelete}, "GET, POST"},
+		{"during a PUT", true, http.MethodPut, "TOKEN_C",
+			[]string{http.MethodPut, http.MethodDelete}, []string{http.MethodPost}, "GET, PUT, DELETE"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -228,15 +235,25 @@ func TestChangesDuringARegistrationAreRefused(t *testing.T) {
 			})
 			waitFor(t, asked, "the partner to be asked for its versions")
 
-			for _, method := range tc.other {
+			send := func(method string) reply {
 				var body any
 				if method != http.MethodDelete {
 					body = theirCredentials(tokenB+"-other", emsp.versionsURL())
 				}
-				r := await(t, async(func() reply { return h.do(method, "credentials", token, body) }))
+				return await(t, async(func() reply { return h.do(method, "credentials", token, body) }))
+			}
+			for _, method := range tc.busy {
+				r := send(method)
 				if r.env.StatusCode != 2000 || !strings.Contains(r.env.StatusMessage, "in progress") {
 					t.Errorf("%s during the change: HTTP %d, status_code %d (%q); want a 2000 \"in progress\"",
 						method, r.status, r.env.StatusCode, r.env.StatusMessage)
+				}
+			}
+			for _, method := range tc.refused {
+				r := send(method)
+				if r.status != http.StatusMethodNotAllowed || r.header.Get("Allow") != tc.allow {
+					t.Errorf("%s during the change: HTTP %d, Allow %q (%q); want 405 with Allow %q",
+						method, r.status, r.header.Get("Allow"), r.env.StatusMessage, tc.allow)
 				}
 			}
 			// Reading our credentials changes nothing, so it is not refused.

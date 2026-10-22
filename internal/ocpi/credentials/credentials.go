@@ -298,7 +298,8 @@ func (r *Registrar) serveGet(w http.ResponseWriter, req *http.Request) {
 // before the change and a finish func to call when done. Otherwise it has
 // answered.
 //
-// A change refused because another is in progress is answered with HTTP 200
+// A change refused because another is in progress, and only then (the state's
+// own refusals come first), is answered with HTTP 200
 // and OCPI status 2000 "retry shortly", the way every other registration
 // failure here is answered. The spec has no status for it, and 405 would be
 // wrong: the method is allowed, just not right now. The partner's retry is
@@ -312,15 +313,19 @@ func (r *Registrar) begin(w http.ResponseWriter, req *http.Request) (old *state.
 		ocpi.WriteUnauthorized(w)
 		return nil, nil, false
 	}
-	if r.busy(w) {
-		return nil, nil, false
-	}
+	// The 405s come before busy: a change in progress leaves a registration
+	// that exists still existing, and one that does not still unregistered
+	// until it lands, so a refused method is refused whatever it does and
+	// "retry shortly" would send the partner after something that cannot work.
 	switch {
 	case req.Method == http.MethodPost && old != nil:
 		r.notAllowed(w, true, "already registered; use PUT to update, or DELETE to unregister first")
 		return nil, nil, false
 	case req.Method == http.MethodPut && old == nil:
 		r.notAllowed(w, false, "not registered; use POST to register")
+		return nil, nil, false
+	}
+	if r.busy(w) {
 		return nil, nil, false
 	}
 
@@ -437,11 +442,11 @@ func (r *Registrar) serveDelete(w http.ResponseWriter, req *http.Request) {
 		ocpi.WriteUnauthorized(w)
 		return
 	}
-	if r.busy(w) {
-		return
-	}
 	if reg == nil {
 		r.notAllowed(w, false, "not registered")
+		return
+	}
+	if r.busy(w) {
 		return
 	}
 	if err := r.opts.Store.Update(func(st *state.State) error {
