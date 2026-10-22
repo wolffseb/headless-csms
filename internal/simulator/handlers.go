@@ -437,8 +437,13 @@ func (s *Simulator) stopTransaction(ctx context.Context, connectorID int, reason
 		return err
 	}
 
+	// A session stopped before the CSMS numbered it has only the placeholder.
+	var shown any = txID
+	if txID < 0 {
+		shown = "pending"
+	}
 	s.log.Info("transaction stopped",
-		"connector", connectorID, "transaction_id", txID, "reason", reason)
+		"connector", connectorID, "transaction_id", shown, "reason", reason)
 
 	// Finishing, then free: the cable is still in before the driver takes it.
 	if err := s.SetConnectorStatus(ctx, connectorID, v16.StatusFinishing); err != nil {
