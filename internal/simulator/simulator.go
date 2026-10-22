@@ -289,7 +289,10 @@ type connector struct {
 	transactionID int
 	// reservationID is the CSMS's reservation id, or 0 when not reserved.
 	reservationID int
-	meter         meter
+	// reservedTag is the idTag the reservation was made for. parentIdTag is
+	// not modelled, so only an exact match counts as the reserved tag.
+	reservedTag string
+	meter       meter
 	// stopMeter is closed to end the MeterValues stream of the running
 	// transaction. It is nil while no stream runs.
 	stopMeter chan struct{}
