@@ -114,6 +114,14 @@ then moves the meter by a flat 1000 Wh as before. The simulator also answers
 `ChangeConfiguration`, so a CSMS can move `MeterValueSampleInterval` (and
 `HeartbeatInterval`) at run time and read it back with `GetConfiguration`.
 
+By default the simulator exits when its connection drops. `--reconnect` makes it behave
+like a station instead: it redials with backoff (1 s, 2 s, 4 s … capped at 30 s, each wait
+shortened by up to a fifth at random), then sends `BootNotification` again and reports the
+station and every connector again. Status changes while it is offline are not queued; that
+status round reports where each connector ended up. A `BootNotification` the CSMS rejects
+after a reconnect still makes it exit non-zero. The first dial is not retried: a CSMS that
+cannot be reached at start-up is more likely a wrong `--csms` than an outage.
+
 `--connectors`, `--id`, `--csms`, `--tag`, `--vendor` and `--model` override the config
 when you want to point it somewhere else or fake a different station.
 

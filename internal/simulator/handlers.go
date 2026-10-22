@@ -248,7 +248,11 @@ func (s *Simulator) triggerMessage(ctx context.Context, payload json.RawMessage)
 
 	switch req.RequestedMessage {
 	case v16.ActionBootNotification:
-		s.after(ctx, func(ctx context.Context) { _ = s.boot(ctx) })
+		s.after(ctx, func(ctx context.Context) {
+			if conn := s.onlineConn(); conn != nil {
+				_ = s.boot(ctx, conn)
+			}
+		})
 	case v16.ActionHeartbeat:
 		s.after(ctx, func(ctx context.Context) {
 			_, _ = s.call(ctx, v16.ActionHeartbeat, struct{}{})
@@ -399,7 +403,7 @@ func (s *Simulator) sendStopTransaction(ctx context.Context, connectorID int, re
 	c.transactionID = 0
 	s.mu.Unlock()
 
-	if _, err := s.conn.Call(ctx, v16.ActionStopTransaction, v16.StopTransactionReq{
+	if _, err := s.callLocked(ctx, v16.ActionStopTransaction, v16.StopTransactionReq{
 		TransactionID: txID,
 		MeterStop:     meterStop,
 		Timestamp:     s.opts.Now().UTC().Format(time.RFC3339),

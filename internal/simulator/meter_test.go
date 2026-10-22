@@ -450,8 +450,12 @@ type fakeCSMS struct {
 	server *httptest.Server
 	delay  time.Duration
 	txID   int
+	// bootStatus, when set, answers the nth BootNotification (from 1)
+	// instead of Accepted.
+	bootStatus func(n int) string
 
 	mu          sync.Mutex
+	boots       int
 	outstanding int
 	overlaps    int
 	calls       []fakeCall
@@ -518,7 +522,14 @@ func (f *fakeCSMS) serve(ws *websocket.Conn) {
 		var result any = struct{}{}
 		switch action {
 		case v16.ActionBootNotification:
-			result = v16.BootNotificationConf{Status: "Accepted", Interval: 60, CurrentTime: time.Now().UTC().Format(time.RFC3339)}
+			f.mu.Lock()
+			f.boots++
+			status := "Accepted"
+			if f.bootStatus != nil {
+				status = f.bootStatus(f.boots)
+			}
+			f.mu.Unlock()
+			result = v16.BootNotificationConf{Status: status, Interval: 60, CurrentTime: time.Now().UTC().Format(time.RFC3339)}
 		case v16.ActionStartTransaction:
 			result = v16.StartTransactionConf{TransactionID: f.txID, IDTagInfo: v16.IDTagInfo{Status: v16.AuthAccepted}}
 		}

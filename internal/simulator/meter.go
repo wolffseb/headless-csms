@@ -239,7 +239,7 @@ func (s *Simulator) sendMeterValues(connectorID, txID int, stop <-chan struct{})
 	}
 	s.mu.Unlock()
 
-	_, err := s.conn.Call(context.Background(), v16.ActionMeterValues, v16.MeterValuesReq{
+	_, err := s.callLocked(context.Background(), v16.ActionMeterValues, v16.MeterValuesReq{
 		ConnectorID:   connectorID,
 		TransactionID: &txID,
 		MeterValue: []v16.MeterValue{{
@@ -253,7 +253,7 @@ func (s *Simulator) sendMeterValues(connectorID, txID int, stop <-chan struct{})
 
 	// Still under the CALL slot, so it cannot be overtaken by the
 	// StopTransaction either.
-	_, err = s.conn.Call(context.Background(), v16.ActionStatusNotification, v16.StatusNotificationReq{
+	_, err = s.callLocked(context.Background(), v16.ActionStatusNotification, v16.StatusNotificationReq{
 		ConnectorID: connectorID,
 		ErrorCode:   "NoError",
 		Status:      v16.StatusSuspendedEV,
