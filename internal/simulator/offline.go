@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
 	"github.com/wolffseb/cli-cpms/internal/ocpp/ocppj"
@@ -248,10 +249,40 @@ func (s *Simulator) assignLocked(m *txMessage) {
 		}
 	}
 	for _, c := range s.connectors {
-		if c.transactionID == m.localID {
-			c.transactionID = conf.TransactionID
+		if c.transactionID != m.localID {
+			continue
 		}
+		if m.detached && conf.IDTagInfo.Status != v16.AuthAccepted {
+			s.deauthorizeLocked(c, conf)
+			continue
+		}
+		c.transactionID = conf.TransactionID
 	}
+}
+
+// deauthorizeLocked ends a session that was started offline and is still
+// running, whose StartTransaction the CSMS answered with an idTagInfo that is
+// not Accepted: the station behaves as if StopTransactionOnInvalidId were
+// true (OCPP 1.6 section 3.5.4). It queues a StopTransaction for the id the
+// CSMS assigned, even 0 (cpms answers an unknown tag so), with reason
+// DeAuthorized, and frees the connector. The simulator has no knob for the
+// other setting, which would only stop the energy and keep the session open;
+// and it never leaves a running connector holding id 0, which no
+// StopTransaction could address. The caller holds s.mu.
+func (s *Simulator) deauthorizeLocked(c *connector, conf v16.StartTransactionConf) {
+	s.log.Warn("csms did not accept the token of a session started offline; ending it",
+		"transaction_id", conf.TransactionID, "status", conf.IDTagInfo.Status)
+
+	m := &txMessage{action: v16.ActionStopTransaction, stop: &v16.StopTransactionReq{
+		TransactionID: conf.TransactionID,
+		MeterStop:     c.meter.register(),
+		Timestamp:     s.opts.Now().UTC().Format(time.RFC3339),
+		Reason:        "DeAuthorized",
+	}}
+	s.queue = append(s.queue, m)
+	signalLocked(&s.queueChanged)
+
+	s.endSessionLocked(c)
 }
 
 // giveUpStartLocked deals with a StartTransaction that was given up: the CSMS

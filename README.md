@@ -147,6 +147,12 @@ connector is Available again, which the status round reports. The simulator neve
 message under the placeholder id, even though the CSMS may have opened the transaction and
 only its answers been lost.
 
+A replayed `StartTransaction` that the CSMS answers with an `idTagInfo.status` other than
+`Accepted` (cpms does so, with `transactionId` 0, for a tag it does not know) ends a session
+that is still running as `StopTransactionOnInvalidId=true` would (§3.5.4): the simulator
+sends `StopTransaction` for the id the CSMS gave, even 0, with reason `DeAuthorized`, and
+the connector is Available again. A session already stopped offline is delivered as made.
+
 The queue lives in memory: a simulator that is restarted starts with an empty one. Offline
 starts are always allowed; `LocalAuthorizeOffline` and `AllowOfflineTxForUnknownId` are not
 consulted yet.

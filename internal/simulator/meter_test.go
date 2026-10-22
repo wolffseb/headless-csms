@@ -457,6 +457,9 @@ type fakeCSMS struct {
 	// with a CALLERROR of the given code, or drop the connection instead of
 	// answering it.
 	respond func(action string, n int) (code string, drop bool)
+	// startConf, when set, answers the nth StartTransaction (from 1) with
+	// the returned conf instead of the next id and Accepted.
+	startConf func(n int) v16.StartTransactionConf
 
 	mu          sync.Mutex
 	boots       int
@@ -555,7 +558,13 @@ func (f *fakeCSMS) serve(ws *websocket.Conn) {
 			result = v16.BootNotificationConf{Status: status, Interval: 60, CurrentTime: time.Now().UTC().Format(time.RFC3339)}
 		case v16.ActionStartTransaction:
 			// Each session gets its own id, counting up from txID.
-			result = v16.StartTransactionConf{TransactionID: f.txID + n - 1, IDTagInfo: v16.IDTagInfo{Status: v16.AuthAccepted}}
+			conf := v16.StartTransactionConf{TransactionID: f.txID + n - 1, IDTagInfo: v16.IDTagInfo{Status: v16.AuthAccepted}}
+			f.mu.Lock()
+			if f.startConf != nil {
+				conf = f.startConf(n)
+			}
+			f.mu.Unlock()
+			result = conf
 		}
 
 		replies.Add(1)
