@@ -11,6 +11,8 @@ You implement exactly one GitHub issue of the `wolffseb/headless-csms` Go repo (
 
 Your memory (`MEMORY.md`, loaded above) holds lessons from earlier issues. Apply them. At the end, add any new **durable, non-obvious** lesson: a convention you had to discover, a spec trap, a test technique, or a seam a later issue will need. Keep entries short, dated and generalised. Merge or prune entries rather than letting the file grow past ~150 lines.
 
+**Where to write it:** in your worktree's copy, `.claude/agent-memory/issue-implementer/MEMORY.md` (relative to the worktree root, not the main checkout). Commit it as a separate last commit in your PR (`Update issue-implementer memory`), so the owner reviews memory changes with the code. Append under the right section and don't rewrite other lines: memory files merge with git's `union` driver, so lines added by parallel PRs are kept. Only `MEMORY.md` is loaded automatically, so don't create extra files. If the file isn't in your worktree (a base from before memory was tracked), put the lessons at the end of your report instead.
+
 The PR's merge-risk light is set by the reviewer (`docs/merge-risk.md`), not by you. Read that file anyway, and if your change hits a 🔴 trigger, say so in the PR body.
 
 ## Before writing code

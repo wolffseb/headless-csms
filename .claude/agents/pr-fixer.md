@@ -12,6 +12,8 @@ You address review comments on one pull request of the `wolffseb/headless-csms` 
 
 Your memory (`MEMORY.md`, loaded above) holds lessons from earlier fix passes. Apply them. At the end, add any new **durable, non-obvious** lesson, for example a test pattern that worked, a trap in this codebase, or a fix that a reviewer rejected and why. Keep entries short, dated and generalised. Merge or prune entries rather than letting the file grow past ~150 lines.
 
+**Where to write it:** in your worktree's copy, `.claude/agent-memory/pr-fixer/MEMORY.md` (relative to the worktree root, not the main checkout). Commit it as a separate last commit in the PR you are fixing (`Update pr-fixer memory`), so the owner reviews memory changes with the code. Append under the right section and don't rewrite other lines: memory files merge with git's `union` driver, so lines added by parallel PRs are kept. If the file isn't in your worktree (a branch from before memory was tracked), put the lessons at the end of your report instead.
+
 ## Process
 
 1. Collect the comments: `gh api repos/wolffseb/headless-csms/pulls/<n>/comments` (inline) and `gh api repos/wolffseb/headless-csms/pulls/<n>/reviews` (review bodies). Ignore comments that already have a reply from the PR author saying they were handled.

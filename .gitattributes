@@ -1,0 +1,3 @@
+# Agent memory is append-mostly and edited by parallel PRs. The union driver
+# keeps lines from both sides instead of reporting a conflict.
+.claude/agent-memory/**/MEMORY.md merge=union
