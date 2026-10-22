@@ -7,7 +7,10 @@
 // without the tool ever clobbering it.
 package config
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Config is the fully parsed, validated configuration.
 type Config struct {
@@ -72,7 +75,22 @@ type OCPI struct {
 	// OCPI normally has the server generate this at handshake time; we take it
 	// from config instead so that config.yaml stays read-only.
 	TokenC string `yaml:"token_c"`
-	Push   Push   `yaml:"push"`
+	// BusinessName is the business_details.name in our credentials. It is
+	// optional because location.name usually serves, but a location name
+	// ("Fryte HQ") is not always the company's name.
+	BusinessName string `yaml:"business_name"`
+	Push         Push   `yaml:"push"`
+}
+
+// OCPIBusinessName is the name we register under: ocpi.business_name, else
+// location.name, else our party ("DE*FYT"), because OCPI requires a name.
+func (c *Config) OCPIBusinessName() string {
+	for _, name := range []string{c.OCPI.BusinessName, c.Location.Name} {
+		if n := strings.TrimSpace(name); n != "" {
+			return n
+		}
+	}
+	return c.OCPI.CountryCode + "*" + c.OCPI.PartyID
 }
 
 // Push tunes the outbound PATCH client that mirrors status changes to the

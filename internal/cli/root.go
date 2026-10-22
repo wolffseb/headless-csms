@@ -71,5 +71,6 @@ func NewRootCommand() *cobra.Command {
 	)
 	root.AddCommand(newStationCommands(opts)...)
 	root.AddCommand(newProbeCommand(opts))
+	root.AddCommand(newOCPICommand(opts))
 	return root
 }

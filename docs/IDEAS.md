@@ -192,6 +192,12 @@ where it was decided.
   behaviour. It shares the frame tap with idea 1.
 - **`TOKEN_C` rotation** as the OCPI spec intends on `PUT /credentials`. See the decision
   in #13.
+- **cpms as the Sender of the registration.** Today the partner always starts the
+  handshake, and `cpms ocpi unregister` (#13) is how the operator gets it to start over.
+  The other direction would be a `cpms ocpi register --versions-url URL --token TOKEN_A`
+  that POSTs our credentials to the partner, for partners that expect the CPO to start.
+  It needs our generated `TOKEN_B` stored in state, which runs into the same question as
+  `TOKEN_C` rotation above. Parked from the owner's comment on #13.
 - **TLS and OCPP security profiles** (WSS, basic auth, client certificates). Only relevant
   if the tool leaves the LAN.
 - **Publishing releases** on tags. See the decision in #21.

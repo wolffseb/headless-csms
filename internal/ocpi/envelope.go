@@ -86,6 +86,15 @@ func WriteError(w http.ResponseWriter, httpStatus int, code StatusCode, message 
 	writeEnvelope(w, httpStatus, Response{StatusCode: code, StatusMessage: message})
 }
 
+// WriteUnauthorized is the one answer for every way of not being allowed in:
+// a missing header, bad Base64, an unknown token, a token without enough
+// access, or one that went stale. Which it was is a hint for whoever is
+// guessing.
+func WriteUnauthorized(w http.ResponseWriter) {
+	w.Header().Set("WWW-Authenticate", "Token")
+	WriteError(w, http.StatusUnauthorized, StatusClientError, "Unauthorized")
+}
+
 func writeEnvelope(w http.ResponseWriter, httpStatus int, resp Response) {
 	resp.Timestamp = FormatDateTime(nowFor(w))
 	body, err := json.Marshal(resp)

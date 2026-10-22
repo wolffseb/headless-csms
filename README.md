@@ -134,6 +134,8 @@ EVSE           STATUS     RESERVATION                   TRANSACTION
 ALP-HYC-001-1  RESERVED   #1 04A1B2C3D4 until 14:43:30  -
 ALP-HYC-001-2  AVAILABLE  -                             -
 
+OCPI  not registered
+
 $ cpms start --evse ALP-HYC-001-1
 ALP-HYC-001-1 remote start accepted
 
@@ -152,7 +154,8 @@ ALP-HYC-001-1 remote stop accepted
 | `cpms start [--evse UID] [--tag TAG]` | Asks the station to start a session. It returns once the station accepts; the session shows up in `status` when the station reports it. |
 | `cpms stop [--evse UID]` | Stops the session running on an EVSE |
 | `cpms unlock [--evse UID]` | Releases the cable lock |
-| `cpms status [--json]` | The station, and per EVSE its status, reservation and session. `--json` is a stable format for scripts. |
+| `cpms status [--json]` | The station, per EVSE its status, reservation and session, and the OCPI registration. `--json` is a stable format for scripts. |
+| `cpms ocpi unregister` | Forgets the OCPI registration so the partner can register again; see [Registering with an OCPI partner](#registering-with-an-ocpi-partner). |
 | `cpms probe [--json] [--raw]` | What the station supports and how it is set up; see [Probing the station](#probing-the-station). |
 
 `--evse` takes the EVSE `uid` from config, and may be left out when only one EVSE is
@@ -172,8 +175,12 @@ valid uids.
 | 6 | The station is faulted or unavailable |
 | 7 | The station did not answer within `charger.call_timeout` |
 | 8 | Unlock failed, or the station does not support the command |
-| 9 | Refused by cpms before sending: already reserved (including while the cancel of a timed-out reservation is in flight), no reservation to cancel, nothing to stop, shutting down |
+| 9 | Refused by cpms before sending: already reserved (including while the cancel of a timed-out reservation is in flight), no reservation to cancel, nothing to stop, shutting down. `cpms ocpi unregister`: nothing is registered, or a registration is still in progress (nothing was changed; try again) |
 | 10 | `cpms probe`: the station reported that it lacks a capability cpms requires (one it merely did not report is not an error) |
+
+`cpms ocpi unregister` exits 0 once the registration is forgotten, even if the partner could
+not be told: a failed `DELETE` to the partner is reported as a `warning:` line on stderr, not
+as a failure, because the unregistration itself happened.
 
 **How it works.** `cpms run` listens on a Unix socket, `cpms.sock` next to the state file by
 default (`--socket` overrides it; use the same value for `run` and the commands). The socket
@@ -288,9 +295,9 @@ curl -s -H "Authorization: Token $(printf '%s' "$TOKEN_A" | base64 | tr -d '\n')
 {"data":[{"version":"2.3.0","url":"http://192.168.1.10:8080/ocpi/2.3.0"}],"status_code":1000,"status_message":"Success","timestamp":"2026-10-21T20:15:04Z"}
 ```
 
-`GET .../2.3.0` lists the modules. So far that is only `credentials`, which answers HTTP 501
-until registration is built (roadmap step 5.2); until then only `TOKEN_A` is accepted, and
-only for versions and credentials.
+`GET .../2.3.0` lists the modules. So far that is only `credentials`; see
+[Registering with an OCPI partner](#registering-with-an-ocpi-partner). Before registration
+only `TOKEN_A` is accepted, and only for versions and credentials. After it, only `TOKEN_C`.
 
 - A missing header, bad Base64, and an unknown token all get the same HTTP 401, so the
   answer gives no hint which one it was.
@@ -308,6 +315,60 @@ only for versions and credentials.
   id, correlation id). Tokens are never logged.
 
 There is no TLS: this is a LAN tool, by decision.
+
+### Registering with an OCPI partner
+
+OCPI needs a credentials handshake before the partner can use Locations or Commands. cpms is
+the **Receiver** of it: the partner starts it, cpms answers.
+
+1. **Send the partner, out of band**, the versions URL that `cpms run` prints
+   (`ocpi.public_base_url` + `/versions`) and `ocpi.token_a`.
+2. The partner reads our versions with `TOKEN_A`, makes up its own token (`TOKEN_B`) and
+   `POST`s its credentials (that token plus its versions URL) to `{public_base_url}/2.3.0/credentials`.
+3. During that POST, cpms calls the partner's versions and 2.3.0 version details **with
+   `TOKEN_B`**, and stores the token, the endpoints and the partner's roles in `state.json`.
+   Nothing is stored unless both calls succeed. Each call gives up after 10 s.
+4. cpms answers with its own credentials: `ocpi.token_c`, our versions URL, and one `CPO` role
+   with `ocpi.country_code`, `ocpi.party_id` and `ocpi.business_name` (or `location.name`).
+5. From then on the partner uses `TOKEN_C`, and `TOKEN_A` gets HTTP 401. The registration
+   survives a restart.
+
+What the partner can get back:
+
+| Answer | Means |
+|---|---|
+| HTTP 200, `1000` | Registered. |
+| HTTP 200, `3001` | cpms could not use the partner's API: unreachable, timed out, a non-2xx answer, or a status code other than 1000. Nothing is stored. |
+| HTTP 200, `3002` | The partner offers no OCPI 2.3.0. Nothing is stored. |
+| HTTP 400, `2001` | The credentials are invalid: a missing token or one that is not 1-64 printable ASCII characters without whitespace, a URL that is not absolute, or no roles. |
+| HTTP 405 | `POST` while registered, or `PUT`/`DELETE` while not (as the spec says). |
+| HTTP 200, `2000` | Another registration change is in progress: `POST` and `PUT` call the partner back, which can take several seconds, and only one runs at a time. Nothing is changed; retry shortly. |
+| HTTP 401 | The token is not the right one for the registration as it is when the request is handled: `TOKEN_A` after a registration, `TOKEN_C` after an unregistration. |
+
+A partner that lists no `locations` endpoint with role `RECEIVER` still registers, with a
+warning in the log: it pulls Locations instead of having status changes pushed. `PUT`
+replaces `TOKEN_B` and the endpoints; `DELETE` unregisters, after which `TOKEN_A` works
+again. `cpms status` shows the registration:
+
+```
+OCPI  registered with NL*ABC since 14:02:11, push: https://emsp.example/ocpi/2.3.0/locations
+```
+
+**Starting over.** To re-run the handshake (the partner lost its token, or you changed
+`token_c`), run `cpms ocpi unregister` while `cpms run` is running. It clears the registration
+from `state.json`, tells the partner with a `DELETE` on its credentials endpoint (best
+effort: the partner may be down, which is reported as a warning), and `TOKEN_A` works again.
+Then have the partner register again. If the partner is registering at that moment, the
+command waits for it, up to `charger.call_timeout`, then exits 9 without changing anything. If it waits on a `POST` that then succeeds, the
+brand-new registration is the one cleared, and the partner that just registered gets the
+`DELETE`.
+
+**Deviation from the spec: `TOKEN_C` does not change on `PUT`.** OCPI says the server must
+generate a new token when the partner `PUT`s its credentials. cpms answers with the same
+`ocpi.token_c`, because our tokens live in `config.yaml`, which cpms never writes, and a
+generated one in `state.json` would be a second source of truth for our own token. To
+rotate it, change `ocpi.token_c`, restart, `cpms ocpi unregister`, and have the partner
+register again.
 
 ## Configuration
 
@@ -338,7 +399,8 @@ Any change to its schema bumps the `version` field. A cpms only reads its own ve
 older build refuses a newer file instead of silently dropping fields it does not know.
 
 That split is why `ocpi.token_c` is a fixed value in config rather than being generated
-during the OCPI handshake as implementations usually do.
+during the OCPI handshake as implementations usually do. Both OCPI tokens must be 8 to 64
+printable ASCII characters without whitespace (OCPI's own limit is 64), and they must differ.
 
 Two listener rules worth knowing, both enforced at validation time:
 `heartbeat_timeout` must exceed `heartbeat_interval` (otherwise a punctual station gets
@@ -352,12 +414,12 @@ be pointed at a randomly chosen port).
 ```mermaid
 flowchart LR
     cli["One-shot commands<br/>cpms reserve / start / stop<br/>unlock / status"]
-    fryte["Fryte backend<br/>(OCPI client, planned)"]
+    fryte["Fryte backend<br/>(OCPI client)"]
     station["Charging station<br/>(Alpitronic, or<br/>cpms simulate charger)"]
 
     subgraph run ["cpms run (one process)"]
         sock["Control socket<br/>control/socket"]
-        ocpi["OCPI server<br/>ocpi (versions so far)"]
+        ocpi["OCPI server<br/>ocpi (versions, credentials)"]
         ctrl["control<br/>the one way to act<br/>on the station"]
         csms["OCPP server<br/>ocpp/csms + ocpp/v16"]
         core["core<br/>state + event bus"]
@@ -413,6 +475,8 @@ internal/core            domain state and the event bus — the single source of
 internal/control         the one place that acts on the station: reserve, cancel, start, stop, unlock, probe
 internal/control/socket  the Unix socket the one-shot commands reach `cpms run` through
 internal/ocpi            the OCPI transport: HTTP server, envelope, token auth, module registry, versions
+internal/ocpi/client     calls to the partner's OCPI API: token, request ids, envelope decoding, typed errors
+internal/ocpi/credentials the credentials module and registration handshake; decides what each token grants
 internal/ocpp            version-agnostic RPC errors, versions, the Handler and ChargePoint interfaces, ProbeReport
 internal/ocpp/ocppj      the OCPP-J RPC layer: framing, correlation, connection goroutines
 internal/ocpp/csms       the WebSocket server a charge point dials into
@@ -649,7 +713,7 @@ Built in tracked steps; each lands as its own PR.
 | 2 | OCPP 1.6-J CSMS: WebSocket server and message routing | done |
 | 3 | Built-in charge point simulator | done |
 | 4 | Outbound OCPP commands, reservation lifecycle, one-shot CLI | in progress: commands and `cpms probe` done, on-site hardware check next |
-| 5 | OCPI foundation: versions + credentials handshake | in progress: HTTP transport and versions done, credentials handshake next |
+| 5 | OCPI foundation: versions + credentials handshake | done |
 | 6 | OCPI Locations module (sender) | |
 | 7 | PATCH location on status change | |
 | 8 | OCPI Commands module (receiver) | |

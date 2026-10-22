@@ -22,5 +22,8 @@
       },
       "transaction": null
     }
-  ]
+  ],
+  "ocpi": {
+    "registered": false
+  }
 }
