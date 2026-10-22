@@ -57,3 +57,6 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - golangci-lint v2.6.2 in `~/go/bin` (not on PATH) fails under Go 1.27. Run `GOTOOLCHAIN=go1.26.0 ~/go/bin/golangci-lint run ./...`. GitHub CI is the authority.
 - The worktree sandbox refuses compound commands (heredocs mixed with other commands, `$(...)`/`$VAR`-built commands, `for` loops, `&&`/`;` chains with git/gh, pipes into `base64`). Use one plain command per call and the Write/Edit tools for files. Run scratchpad scripts as `bash <path>`, and give them unique names.
 - BSD sed has no `\|`, and `sed -i '' -n '/a\|b/p'` silently empties the file. Prefer the Edit tool.
+- [Worktree tooling traps](worktree-tooling.md) — command guard, lint via GOTOOLCHAIN=go1.26.0 ~/go/bin/golangci-lint, mutation-check workflow
+- [Simulator test seams](simulator-test-seams.md) — ocpptest.Proxy (Cut/Hold), fake CSMS respond/bootStatus hooks, one clock per concern
+- [CSMS offline gaps](csms-offline-gaps.md) — known core/v16 issues with replayed transactions (unknown tag → id 0, meter timestamps)
