@@ -284,7 +284,7 @@ type connector struct {
 	status string
 	// transactionID is the id the CSMS assigned, or 0 when idle. While the
 	// session's StartTransaction waits for an answer it is a negative
-	// placeholder (see nextLocalID).
+	// placeholder (see nextLocalID), which TransactionID does not report.
 	transactionID int
 	// reservationID is the CSMS's reservation id, or 0 when not reserved.
 	reservationID int
@@ -892,14 +892,16 @@ func (s *Simulator) stationStatus() string {
 	return s.station
 }
 
-// TransactionID reports the running transaction on a connector, or 0. A
-// session started while offline has a negative placeholder id until the CSMS
-// has answered its StartTransaction.
+// TransactionID reports the running transaction on a connector, as the CSMS
+// numbered it, or 0 if there is none or the CSMS has not answered its
+// StartTransaction yet (it is queued, or in flight). The placeholder id a
+// session runs under until then is the simulator's own and is never
+// reported.
 func (s *Simulator) TransactionID(connectorID int) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if c, ok := s.connectors[connectorID]; ok {
+	if c, ok := s.connectors[connectorID]; ok && c.transactionID > 0 {
 		return c.transactionID
 	}
 	return 0
