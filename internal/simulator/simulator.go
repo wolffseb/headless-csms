@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"net/url"
 	"sync"
 	"time"
@@ -81,6 +82,13 @@ const (
 	commandSettle = 50 * time.Millisecond
 	// fallbackHeartbeat is used when the CSMS boot response gives no interval.
 	fallbackHeartbeat = 60 * time.Second
+
+	// The redial backoff with Reconnect: 1 s, 2 s, 4 s … up to 30 s, each
+	// shortened by up to reconnectJitter at random, so that simulators that
+	// lost the same CSMS do not redial it in lockstep.
+	reconnectInitial = time.Second
+	reconnectMax     = 30 * time.Second
+	reconnectJitter  = 0.2
 )
 
 // Options configure a Simulator.
@@ -143,6 +151,25 @@ type Options struct {
 	// AfterFunc so that a test counting meter timers does not see the
 	// heartbeat's; it defaults to real time.
 	HeartbeatAfterFunc func(time.Duration, func()) Stopper
+
+	// Reconnect makes the simulator redial when its connection drops, instead
+	// of stopping: it waits ReconnectBackoff, dials again, boots again and
+	// reports the status of the station and every connector again, as a real
+	// station does. A BootNotification the CSMS rejects after a reconnect
+	// still stops it, and Run returns the rejection.
+	//
+	// The first Connect is not retried: a CSMS that cannot be reached at all
+	// at start-up is more likely a wrong URL than an outage.
+	Reconnect bool
+	// ReconnectBackoff, when set, is the wait before redial attempt n,
+	// counting from 1 after every drop, in place of the default 1 s, 2 s,
+	// 4 s … capped at 30 s, with jitter. Tests set it for short, predictable
+	// waits.
+	ReconnectBackoff func(attempt int) time.Duration
+	// ReconnectAfterFunc schedules the waits between redials. Like
+	// HeartbeatAfterFunc it is a clock of its own, so that a test can step
+	// it alone; it defaults to real time.
+	ReconnectAfterFunc func(time.Duration, func()) Stopper
 }
 
 // Stopper is a timer that can be cancelled, as time.AfterFunc returns.
@@ -186,6 +213,24 @@ func (o *Options) applyDefaults() {
 	if o.HeartbeatAfterFunc == nil {
 		o.HeartbeatAfterFunc = realAfterFunc
 	}
+	if o.ReconnectBackoff == nil {
+		o.ReconnectBackoff = func(attempt int) time.Duration { return backoff(attempt, rand.Float64) }
+	}
+	if o.ReconnectAfterFunc == nil {
+		o.ReconnectAfterFunc = realAfterFunc
+	}
+}
+
+// backoff is the default wait before redial attempt n: reconnectInitial,
+// doubling per attempt up to reconnectMax, then shortened by a random share
+// of up to reconnectJitter. Shortening rather than spreading both ways keeps
+// the cap a cap. jitter returns a number in [0, 1).
+func backoff(attempt int, jitter func() float64) time.Duration {
+	d := reconnectMax
+	if attempt < 6 { // 1 s << 5 is already past the cap
+		d = min(reconnectInitial<<max(attempt-1, 0), reconnectMax)
+	}
+	return time.Duration(float64(d) * (1 - reconnectJitter*jitter()))
 }
 
 func (o Options) validate() error {
@@ -225,9 +270,19 @@ type Simulator struct {
 	opts Options
 	log  *slog.Logger
 
-	conn *ocppj.Conn
-
 	mu sync.Mutex
+	// link is the current connection, booted or not, and nil while there is
+	// none. online is the same connection once it has booted; the station's
+	// own messages go out on it (see call), so that nothing reaches the CSMS
+	// ahead of a new connection's BootNotification.
+	link   *ocppj.Conn
+	online *ocppj.Conn
+	// closed is set by Close, under mu, so that a redial finishing at that
+	// moment cannot install a connection Close has missed.
+	closed bool
+	// fatal is why the simulator stopped by itself, which Run returns.
+	fatal error
+
 	// station is connector 0: the station as a whole.
 	station    string
 	connectors map[int]*connector
@@ -254,8 +309,11 @@ type Simulator struct {
 	// does not race them.
 	wg sync.WaitGroup
 
-	closeOnce sync.Once
+	// done is closed by Close; closing cancels closeCtx, which aborts a dial
+	// in progress.
 	done      chan struct{}
+	closeCtx  context.Context
+	cancelAll context.CancelFunc
 }
 
 // New builds a Simulator. It does not connect until Connect is called.
@@ -282,6 +340,7 @@ func New(opts Options) (*Simulator, error) {
 	for i := 1; i <= opts.Connectors; i++ {
 		s.connectors[i] = &connector{status: v16.StatusAvailable}
 	}
+	s.closeCtx, s.cancelAll = context.WithCancel(context.Background())
 	return s, nil
 }
 
@@ -301,32 +360,68 @@ func (s *Simulator) endpoint() (string, error) {
 	return u.String(), nil
 }
 
+// errRejected marks a BootNotification the CSMS answered with anything but
+// Accepted. It stops the simulator even with Reconnect: a CSMS that does not
+// want the station will not change its mind on a redial.
+var errRejected = errors.New("boot rejected")
+
+// errClosed is returned by a redial that lost the race with Close.
+var errClosed = errors.New("simulator: closed")
+
 // Connect dials the CSMS, sends BootNotification, and reports the initial
 // status of the station and every connector.
 //
 // It returns once the station is booted and observable. Run blocks instead.
+// With Reconnect, it also starts redialing whenever the connection drops.
 func (s *Simulator) Connect(ctx context.Context) error {
-	endpoint, err := s.endpoint()
+	conn, err := s.establish(ctx)
 	if err != nil {
+		s.Close()
 		return err
 	}
+
+	if s.opts.Reconnect {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.supervise(ctx, conn)
+		}()
+	}
+	return nil
+}
+
+// establish opens one connection and brings the station up on it: dial,
+// BootNotification, the status of the station and every connector, then the
+// heartbeat. The connection is closed again if anything before the heartbeat
+// fails.
+func (s *Simulator) establish(ctx context.Context) (*ocppj.Conn, error) {
+	endpoint, err := s.endpoint()
+	if err != nil {
+		return nil, err
+	}
+
+	// A dial in progress when Close is called must not hold Close's caller
+	// up for the handshake timeout.
+	dialCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(s.closeCtx, cancel)()
 
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 10 * time.Second,
 		Subprotocols:     []string{s.opts.Version.Subprotocol()},
 	}
-	ws, resp, err := dialer.DialContext(ctx, endpoint, nil)
+	ws, resp, err := dialer.DialContext(dialCtx, endpoint, nil)
 	if resp != nil && resp.Body != nil {
 		_ = resp.Body.Close()
 	}
 	if err != nil {
 		if resp != nil {
-			return fmt.Errorf("simulator: dialling %s: %w (HTTP %d)", endpoint, err, resp.StatusCode)
+			return nil, fmt.Errorf("simulator: dialling %s: %w (HTTP %d)", endpoint, err, resp.StatusCode)
 		}
-		return fmt.Errorf("simulator: dialling %s: %w", endpoint, err)
+		return nil, fmt.Errorf("simulator: dialling %s: %w", endpoint, err)
 	}
 
-	s.conn = ocppj.New(ws, ocppj.Options{
+	conn := ocppj.New(ws, ocppj.Options{
 		ID:      s.opts.ID,
 		Version: s.opts.Version,
 		// A station keeps talking to a CSMS that has gone quiet, so there is
@@ -337,36 +432,148 @@ func (s *Simulator) Connect(ctx context.Context) error {
 		Log:         s.log,
 	})
 
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		_ = ws.Close()
+		return nil, errClosed
+	}
+	s.link = conn
+	s.mu.Unlock()
+
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		reason := s.conn.Run(ctx, s)
+		reason := conn.Run(ctx, s)
 		s.log.Info("disconnected from csms", "reason", reason)
-		s.Close()
+		s.dropped(conn)
 	}()
 
 	s.log.Info("connected to csms", "url", endpoint, "version", string(s.opts.Version))
 
-	if err := s.boot(ctx); err != nil {
-		s.Close()
-		return err
-	}
-	if err := s.reportInitialStatus(ctx); err != nil {
-		s.Close()
-		return err
+	if err := s.bringUp(ctx, conn); err != nil {
+		conn.Close()
+		return nil, err
 	}
 
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		s.heartbeatLoop(ctx)
+		s.heartbeatLoop(ctx, conn)
 	}()
-
-	return nil
+	return conn, nil
 }
 
-// Run connects and blocks until the context is cancelled or the connection
-// drops.
+// bringUp boots over a fresh connection, marks it online, and reports every
+// status on it.
+func (s *Simulator) bringUp(ctx context.Context, conn *ocppj.Conn) error {
+	if err := s.boot(ctx, conn); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	if s.link == conn {
+		s.online = conn
+	}
+	s.mu.Unlock()
+
+	return s.reportInitialStatus(ctx, conn)
+}
+
+// dropped forgets a connection that has ended. Without Reconnect, that ends
+// the simulator.
+func (s *Simulator) dropped(conn *ocppj.Conn) {
+	s.mu.Lock()
+	if s.link == conn {
+		s.link, s.online = nil, nil
+	}
+	s.mu.Unlock()
+
+	if !s.opts.Reconnect {
+		s.Close()
+	}
+}
+
+// supervise redials each time the current connection drops, until the
+// simulator closes, the context ends, or a redial is rejected.
+func (s *Simulator) supervise(ctx context.Context, conn *ocppj.Conn) {
+	for {
+		select {
+		case <-conn.Done():
+		case <-s.done:
+			return
+		case <-ctx.Done():
+			return
+		}
+		if conn = s.redial(ctx); conn == nil {
+			return
+		}
+	}
+}
+
+// redial dials until a connection is up and booted. It returns nil if the
+// simulator closes, the context ends, or the CSMS rejects the boot, which
+// stops the simulator.
+func (s *Simulator) redial(ctx context.Context) *ocppj.Conn {
+	for attempt := 1; ; attempt++ {
+		wait := s.opts.ReconnectBackoff(attempt)
+		s.log.Info("reconnecting", "attempt", attempt, "in", wait.String())
+		if !s.sleep(ctx, s.opts.ReconnectAfterFunc, wait) {
+			return nil
+		}
+
+		conn, err := s.establish(ctx)
+		switch {
+		case err == nil:
+			s.log.Info("reconnected", "attempt", attempt)
+			return conn
+		case errors.Is(err, errRejected):
+			s.fail(err)
+			return nil
+		case errors.Is(err, errClosed), ctx.Err() != nil, s.isClosed():
+			return nil
+		}
+		s.log.Warn("reconnect failed", "attempt", attempt, "error", err)
+	}
+}
+
+// sleep waits d on the given clock. It reports false, early, if the
+// simulator closes or the context ends first.
+func (s *Simulator) sleep(ctx context.Context, after func(time.Duration, func()) Stopper, d time.Duration) bool {
+	tick := make(chan struct{}, 1)
+	timer := after(d, func() { tick <- struct{}{} })
+	defer timer.Stop()
+
+	select {
+	case <-tick:
+		return true
+	case <-s.done:
+		return false
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (s *Simulator) isClosed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed
+}
+
+// fail stops the simulator because of err, which Run then returns.
+func (s *Simulator) fail(err error) {
+	s.log.Error("giving up", "error", err)
+	s.mu.Lock()
+	if s.fatal == nil {
+		s.fatal = err
+	}
+	s.mu.Unlock()
+	s.Close()
+}
+
+// Run connects and blocks until the context is cancelled or the simulator
+// stops: the connection drops without Reconnect, or a reconnect is rejected,
+// which Run then returns as its error.
 func (s *Simulator) Run(ctx context.Context) error {
 	if err := s.Connect(ctx); err != nil {
 		return err
@@ -377,35 +584,73 @@ func (s *Simulator) Run(ctx context.Context) error {
 	}
 	s.Close()
 	s.Wait()
-	return nil
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fatal
 }
 
-// Close disconnects. It is safe to call more than once.
+// Close disconnects and stops redialing. It is safe to call more than once.
 func (s *Simulator) Close() {
-	s.closeOnce.Do(func() {
-		close(s.done)
-		if s.conn != nil {
-			s.conn.Close()
-		}
-	})
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.closed = true
+	close(s.done)
+	conn := s.link
+	s.mu.Unlock()
+
+	s.cancelAll()
+	if conn != nil {
+		conn.Close()
+	}
 }
 
 // Wait blocks until every goroutine the simulator started has finished.
 func (s *Simulator) Wait() { s.wg.Wait() }
 
-// Done is closed when the simulator has disconnected.
+// Done is closed when the simulator has stopped: Close was called, the
+// connection dropped without Reconnect, or a reconnect was rejected. With
+// Reconnect, a dropped connection alone does not close it.
 func (s *Simulator) Done() <-chan struct{} { return s.done }
 
-// call sends one CALL and waits for its answer, queued behind any other CALL
-// still outstanding.
+// call sends one CALL on the booted connection and waits for its answer,
+// queued behind any other CALL still outstanding. Without a booted
+// connection it fails with ocpp.ErrNotConnected.
 func (s *Simulator) call(ctx context.Context, action string, payload any) (json.RawMessage, error) {
 	s.callMu.Lock()
 	defer s.callMu.Unlock()
-	return s.conn.Call(ctx, action, payload)
+	return s.callLocked(ctx, action, payload)
 }
 
-func (s *Simulator) boot(ctx context.Context) error {
-	raw, err := s.call(ctx, v16.ActionBootNotification, v16.BootNotificationReq{
+// callLocked is call for a caller that already holds callMu.
+func (s *Simulator) callLocked(ctx context.Context, action string, payload any) (json.RawMessage, error) {
+	conn := s.onlineConn()
+	if conn == nil {
+		return nil, ocpp.ErrNotConnected
+	}
+	return conn.Call(ctx, action, payload)
+}
+
+// callOn is call on a given connection, booted or not: the boot and status
+// round of a new connection, and the heartbeat bound to it.
+func (s *Simulator) callOn(ctx context.Context, conn *ocppj.Conn, action string, payload any) (json.RawMessage, error) {
+	s.callMu.Lock()
+	defer s.callMu.Unlock()
+	return conn.Call(ctx, action, payload)
+}
+
+func (s *Simulator) onlineConn() *ocppj.Conn {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.online
+}
+
+// boot sends BootNotification on conn.
+func (s *Simulator) boot(ctx context.Context, conn *ocppj.Conn) error {
+	raw, err := s.callOn(ctx, conn, v16.ActionBootNotification, v16.BootNotificationReq{
 		ChargePointVendor:       s.opts.Vendor,
 		ChargePointModel:        s.opts.Model,
 		ChargePointSerialNumber: s.opts.SerialNumber,
@@ -420,7 +665,7 @@ func (s *Simulator) boot(ctx context.Context) error {
 		return fmt.Errorf("simulator: BootNotification response: %w", err)
 	}
 	if conf.Status != "Accepted" {
-		return fmt.Errorf("simulator: csms answered BootNotification with %q", conf.Status)
+		return fmt.Errorf("simulator: csms answered BootNotification with %q: %w", conf.Status, errRejected)
 	}
 
 	if conf.Interval > 0 {
@@ -455,19 +700,21 @@ func signalLocked(ch *chan struct{}) {
 
 // reportInitialStatus tells the CSMS about connector 0 and every connector, as
 // a station does after booting.
-func (s *Simulator) reportInitialStatus(ctx context.Context) error {
-	if err := s.sendStatus(ctx, 0, s.stationStatus()); err != nil {
-		return err
-	}
-	for i := 1; i <= s.opts.Connectors; i++ {
-		if err := s.sendStatus(ctx, i, s.ConnectorStatus(i)); err != nil {
-			return err
+func (s *Simulator) reportInitialStatus(ctx context.Context, conn *ocppj.Conn) error {
+	for i := 0; i <= s.opts.Connectors; i++ {
+		status := s.stationStatus()
+		if i > 0 {
+			status = s.ConnectorStatus(i)
+		}
+		if _, err := s.callOn(ctx, conn, v16.ActionStatusNotification, s.statusReq(i, status)); err != nil {
+			return fmt.Errorf("simulator: StatusNotification(%d): %w", i, err)
 		}
 	}
 	return nil
 }
 
-func (s *Simulator) heartbeatLoop(ctx context.Context) {
+// heartbeatLoop heartbeats on conn until it drops.
+func (s *Simulator) heartbeatLoop(ctx context.Context, conn *ocppj.Conn) {
 	if s.opts.Scenario == ScenarioSilent {
 		// Deliberately never heartbeat. The connection stays open and pings
 		// still get answered, so only the CSMS's application-level watchdog
@@ -492,10 +739,13 @@ func (s *Simulator) heartbeatLoop(ctx context.Context) {
 		case <-s.done:
 			timer.Stop()
 			return
+		case <-conn.Done():
+			timer.Stop()
+			return
 		case <-tick:
 		}
 
-		if _, err := s.call(ctx, v16.ActionHeartbeat, struct{}{}); err != nil {
+		if _, err := s.callOn(ctx, conn, v16.ActionHeartbeat, struct{}{}); err != nil {
 			s.log.Debug("heartbeat failed", "error", err)
 			return
 		}
@@ -503,17 +753,28 @@ func (s *Simulator) heartbeatLoop(ctx context.Context) {
 }
 
 // sendStatus reports one connector's status. Connector 0 is the station.
+//
+// With Reconnect, a status that changes while there is no booted connection
+// is only kept: the status round after the next boot reports it. That is
+// what a station does instead of queueing status messages.
 func (s *Simulator) sendStatus(ctx context.Context, connectorID int, status string) error {
-	_, err := s.call(ctx, v16.ActionStatusNotification, v16.StatusNotificationReq{
-		ConnectorID: connectorID,
-		ErrorCode:   "NoError",
-		Status:      status,
-		Timestamp:   s.opts.Now().UTC().Format(time.RFC3339),
-	})
+	_, err := s.call(ctx, v16.ActionStatusNotification, s.statusReq(connectorID, status))
+	if s.opts.Reconnect && errors.Is(err, ocpp.ErrNotConnected) {
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("simulator: StatusNotification(%d): %w", connectorID, err)
 	}
 	return nil
+}
+
+func (s *Simulator) statusReq(connectorID int, status string) v16.StatusNotificationReq {
+	return v16.StatusNotificationReq{
+		ConnectorID: connectorID,
+		ErrorCode:   "NoError",
+		Status:      status,
+		Timestamp:   s.opts.Now().UTC().Format(time.RFC3339),
+	}
 }
 
 // SetConnectorStatus changes a connector's status and reports it, which is how
