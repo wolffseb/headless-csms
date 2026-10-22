@@ -125,6 +125,13 @@ type Options struct {
 	// milliseconds; GetConfiguration reports it rounded up to a second. The
 	// register counts whole Wh, so below about 75 ms of wall time a sample
 	// can repeat the previous reading.
+	//
+	// The car is a 75 kWh battery that starts at 20% and charges at a
+	// constant 50 kW, so the energy register rises strictly until the battery
+	// is full, after about 72 minutes. From then on power and current are 0,
+	// the SoC stays at 100 and the register stays put; the connector reports
+	// SuspendedEV once, and the session runs until it is stopped, with
+	// meterStop equal to the last streamed register.
 	MeterInterval time.Duration
 
 	Log *slog.Logger

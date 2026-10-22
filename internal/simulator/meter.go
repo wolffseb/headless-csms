@@ -40,6 +40,9 @@ type meter struct {
 	sampledAt time.Time
 	// streamed is set once the running transaction has sent MeterValues.
 	streamed bool
+	// suspended is set once the full battery has been reported as
+	// SuspendedEV, so that it is reported once per session.
+	suspended bool
 }
 
 // register is the energy reading in Wh, as MeterValues, meterStart and
@@ -51,15 +54,19 @@ func (m *meter) begin(now time.Time) {
 	m.sessionStart = m.mWh
 	m.sampledAt = now
 	m.streamed = false
+	m.suspended = false
 }
 
 func (m *meter) delivered() int64 { return m.mWh - m.sessionStart }
+
+// full reports whether the battery has taken all it can.
+func (m *meter) full() bool { return m.delivered() >= toFullMWh }
 
 // power is what the car draws right now: everything until the battery is
 // full, then nothing, so a long session flattens out instead of charging past
 // 100%.
 func (m *meter) power() int {
-	if m.delivered() >= toFullMWh {
+	if m.full() {
 		return 0
 	}
 	return chargePower
@@ -222,6 +229,14 @@ func (s *Simulator) sendMeterValues(connectorID, txID int, stop <-chan struct{})
 	c.meter.advance(now)
 	c.meter.streamed = true
 	values := c.meter.sampledValues()
+	// A full battery is what a real car signals with SuspendedEV: the session
+	// stays open, nothing flows. Say so once, right after the sample that
+	// shows it, unless something else has already moved the connector on.
+	suspend := c.meter.full() && !c.meter.suspended && c.status == v16.StatusCharging
+	if suspend {
+		c.meter.suspended = true
+		c.status = v16.StatusSuspendedEV
+	}
 	s.mu.Unlock()
 
 	_, err := s.conn.Call(context.Background(), v16.ActionMeterValues, v16.MeterValuesReq{
@@ -231,6 +246,18 @@ func (s *Simulator) sendMeterValues(connectorID, txID int, stop <-chan struct{})
 			Timestamp:    now.UTC().Format(time.RFC3339),
 			SampledValue: values,
 		}},
+	})
+	if err != nil || !suspend {
+		return err
+	}
+
+	// Still under the CALL slot, so it cannot be overtaken by the
+	// StopTransaction either.
+	_, err = s.conn.Call(context.Background(), v16.ActionStatusNotification, v16.StatusNotificationReq{
+		ConnectorID: connectorID,
+		ErrorCode:   "NoError",
+		Status:      v16.StatusSuspendedEV,
+		Timestamp:   now.UTC().Format(time.RFC3339),
 	})
 	return err
 }
