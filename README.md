@@ -100,6 +100,7 @@ Scenarios make it misbehave on purpose, which is how the unhappy paths get teste
 | `slow` | Stalls every answer past the call timeout |
 | `unlock-fails` | Refuses to release the cable lock |
 | `silent` | Boots, then stops sending anything while still answering pings — a station whose OCPP layer has hung but whose connection is fine. This is what `heartbeat_timeout` exists to catch, and the only way to exercise it by hand |
+| `offline-tx` | Charges through an outage, end to end. Implies `--reconnect`, and `--meter-interval 1s` unless given. Starts a transaction on connector 1 and waits for the connection to drop (stop `cpms run`, or have a proxy close it). Offline, it lets 3 meter values queue up, stops the transaction, and starts and stops a second one; only then does it redial, and after the boot it delivers the queue |
 
 `--meter-interval 10s` makes a running session send `MeterValues` that often, combined with
 any scenario (except `silent`, which still sends nothing). Each sample carries the
@@ -113,6 +114,55 @@ until it is stopped. `StopTransaction`'s `meterStop` is the last streamed regist
 then moves the meter by a flat 1000 Wh as before. The simulator also answers
 `ChangeConfiguration`, so a CSMS can move `MeterValueSampleInterval` (and
 `HeartbeatInterval`) at run time and read it back with `GetConfiguration`.
+
+By default the simulator exits when its connection drops. `--reconnect` makes it behave
+like a station instead: it redials with backoff (1 s, 2 s, 4 s … capped at 30 s, each wait
+shortened by up to a fifth at random), then sends `BootNotification` again and reports the
+station and every connector again. A `BootNotification` the CSMS rejects after a reconnect
+still makes it exit non-zero. The first dial is not retried: a CSMS that cannot be reached
+at start-up is more likely a wrong `--csms` than an outage.
+
+While it is offline it keeps charging, as a real station does. Sessions start and stop
+locally, the meter keeps streaming, and every transaction message (`StartTransaction`,
+`MeterValues`, `StopTransaction`) is queued with the timestamp it was made with. A session
+started offline runs under a placeholder id of the simulator's own, which never goes on the
+wire and which `TransactionID` does not report: that is 0 until the CSMS has answered the
+`StartTransaction`. Once it has, the queued `MeterValues` and `StopTransaction` carry the
+CSMS's id instead. Status changes are not queued: the status round after the boot reports where each
+connector ended up. After an Accepted boot the queue goes out first, in order, one call at
+a time, and a transaction message made while it does joins its end (OCPP 1.6 §3.7). The
+status round follows; a meter sample made in the meantime can go out between its
+`StatusNotification`s, which §3.7 allows. A message leaves the queue only once the CSMS has
+answered it:
+
+| Answer | What happens |
+|---|---|
+| `CALLRESULT` | Delivered |
+| Any `CALLERROR`, or no answer within the call timeout | The CSMS failed to process it, which is what OCPP 1.6 §3.7.1 lets a station skip a message for only if it happens repeatedly: sent again after the backoff, at most 3 times in all (the stand-in for `TransactionMessageAttempts`), then given up. `FormationViolation` and the other codes that blame the message are retried like `InternalError`; the specification makes no exception for them |
+| The connection drops | Stays queued, with everything behind it, for the next connection |
+
+A `StartTransaction` that is given up takes the queued messages of its session with it, and
+a session started offline that is still running ends locally: the meter stops and the
+connector is Available again, which the status round reports. The simulator never sends a
+message under the placeholder id, even though the CSMS may have opened the transaction and
+only its answers been lost.
+
+A replayed `StartTransaction` that the CSMS answers with an `idTagInfo.status` other than
+`Accepted` (cpms does so, with `transactionId` 0, for a tag it does not know) ends a session
+that is still running as `StopTransactionOnInvalidId=true` would (§3.5.4): the simulator
+sends `StopTransaction` for the id the CSMS gave, even 0, with reason `DeAuthorized`, and
+the connector is Available again. A session already stopped offline is delivered as made.
+
+The queue lives in memory: a simulator that is restarted starts with an empty one. Offline
+starts are always allowed; `LocalAuthorizeOffline` and `AllowOfflineTxForUnknownId` are not
+consulted yet.
+
+A reserved connector refuses a start for any idTag but the reserved one (compared
+case-insensitively; `parentIdTag` is not modelled), as OCPP 1.6 §5.13 requires: a local start
+returns an error, `RemoteStartTransaction` is answered `Rejected`, and the reservation stays.
+The reserved tag's start carries `reservationId`. `--allow-foreign-tag` (`Options.AllowForeignTagOnReservation`)
+turns the refusal off, for testing how a CSMS handles it when a station lets another tag
+start: the session then begins without `reservationId` and the reservation is dropped.
 
 `--connectors`, `--id`, `--csms`, `--tag`, `--vendor` and `--model` override the config
 when you want to point it somewhere else or fake a different station.
