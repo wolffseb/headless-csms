@@ -453,9 +453,14 @@ type fakeCSMS struct {
 	// bootStatus, when set, answers the nth BootNotification (from 1)
 	// instead of Accepted.
 	bootStatus func(n int) string
+	// respond, when set, can answer the nth CALL of an action (from 1)
+	// with a CALLERROR of the given code, or drop the connection instead of
+	// answering it.
+	respond func(action string, n int) (code string, drop bool)
 
 	mu          sync.Mutex
 	boots       int
+	seen        map[string]int
 	outstanding int
 	overlaps    int
 	calls       []fakeCall
@@ -517,7 +522,25 @@ func (f *fakeCSMS) serve(ws *websocket.Conn) {
 		}
 		f.outstanding++
 		f.calls = append(f.calls, fakeCall{action: action, payload: frame[3]})
+		if f.seen == nil {
+			f.seen = map[string]int{}
+		}
+		f.seen[action]++
+		n := f.seen[action]
+		var code string
+		var drop bool
+		if f.respond != nil {
+			code, drop = f.respond(action, n)
+		}
 		f.mu.Unlock()
+
+		if drop {
+			f.mu.Lock()
+			f.outstanding--
+			f.mu.Unlock()
+			_ = ws.Close()
+			return
+		}
 
 		var result any = struct{}{}
 		switch action {
@@ -531,7 +554,8 @@ func (f *fakeCSMS) serve(ws *websocket.Conn) {
 			f.mu.Unlock()
 			result = v16.BootNotificationConf{Status: status, Interval: 60, CurrentTime: time.Now().UTC().Format(time.RFC3339)}
 		case v16.ActionStartTransaction:
-			result = v16.StartTransactionConf{TransactionID: f.txID, IDTagInfo: v16.IDTagInfo{Status: v16.AuthAccepted}}
+			// Each session gets its own id, counting up from txID.
+			result = v16.StartTransactionConf{TransactionID: f.txID + n - 1, IDTagInfo: v16.IDTagInfo{Status: v16.AuthAccepted}}
 		}
 
 		replies.Add(1)
@@ -539,6 +563,9 @@ func (f *fakeCSMS) serve(ws *websocket.Conn) {
 			defer replies.Done()
 			time.Sleep(f.delay)
 			out, _ := json.Marshal([]any{3, id, result})
+			if code != "" {
+				out, _ = json.Marshal([]any{4, id, code, "fake", struct{}{}})
+			}
 
 			// The CALL stops being outstanding when the answer is on its way,
 			// which is the moment the station may send its next one.

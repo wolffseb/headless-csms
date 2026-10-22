@@ -90,6 +90,54 @@ func TestSimulateChargerNeedsATargetWithoutAConfig(t *testing.T) {
 	}
 }
 
+// TestSimulateChargerOfflineTx is the scenario as a downstream harness runs
+// it: `cpms run` is killed under a charging station and started again, and
+// the restarted CSMS receives the first session's stop and the whole second
+// session, which happened while it was gone.
+func TestSimulateChargerOfflineTx(t *testing.T) {
+	t.Parallel()
+
+	path := runConfig(t, 19951)
+
+	simCtx, stopSim := context.WithCancel(context.Background())
+	defer stopSim()
+	runCtx, kill := context.WithCancel(context.Background())
+	defer kill()
+
+	csmsOut, csmsDone := startRun(t, runCtx, "run", "-c", path)
+	waitForOutput(t, csmsOut, "ws://127.0.0.1:19951")
+
+	simOut, simDone := startRun(t, simCtx, "simulate", "charger", "-c", path,
+		"--scenario", "offline-tx", "--meter-interval", "200ms")
+	waitForOutput(t, csmsOut, "transaction 1 started on EVSE-1")
+
+	kill()
+	if err := <-csmsDone; err != nil {
+		t.Fatalf("cpms run returned %v", err)
+	}
+	waitForOutput(t, simOut, "offline part done")
+
+	runCtx, kill = context.WithCancel(context.Background())
+	defer kill()
+	csmsOut, csmsDone = startRun(t, runCtx, "run", "-c", path)
+	waitForOutput(t, csmsOut, "transaction 1 stopped")
+	waitForOutput(t, csmsOut, "transaction 2 started on EVSE-1")
+	waitForOutput(t, csmsOut, "transaction 2 stopped")
+
+	stopSim()
+	kill()
+	for _, done := range []<-chan error{simDone, csmsDone} {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("command returned %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("a command did not shut down after its context was cancelled")
+		}
+	}
+}
+
 // TestSimulateChargerReconnectsWhenRunComesBack kills `cpms run` under a
 // `cpms simulate charger --reconnect` and starts it again on the same port:
 // the simulator must connect again, boot again and report its connectors

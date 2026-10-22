@@ -127,12 +127,11 @@ func (s *Simulator) startMeterLocked(connectorID int, c *connector) {
 
 	stop := make(chan struct{})
 	c.stopMeter = stop
-	txID := c.transactionID
 
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		s.meterLoop(connectorID, txID, stop)
+		s.meterLoop(connectorID, stop)
 	}()
 }
 
@@ -145,8 +144,9 @@ func stopMeterLocked(c *connector) {
 }
 
 // meterLoop sends a sample every interval until the transaction stops, the
-// interval is set to 0, or the connection goes.
-func (s *Simulator) meterLoop(connectorID, txID int, stop <-chan struct{}) {
+// interval is set to 0, or the connection goes. With Reconnect the
+// connection going does not end it: the samples are queued instead.
+func (s *Simulator) meterLoop(connectorID int, stop <-chan struct{}) {
 	for {
 		s.mu.Lock()
 		interval, on := s.meterOnLocked(connectorID, stop)
@@ -173,7 +173,7 @@ func (s *Simulator) meterLoop(connectorID, txID int, stop <-chan struct{}) {
 			return
 		}
 
-		if err := s.sendMeterValues(connectorID, txID, stop); err != nil {
+		if err := s.sendMeterValues(connectorID, stop); err != nil {
 			if errors.Is(err, errMeterOff) || errors.Is(err, ocpp.ErrNotConnected) {
 				return
 			}
@@ -203,12 +203,15 @@ func (s *Simulator) meterOnLocked(connectorID int, stop <-chan struct{}) (time.D
 	return 0, false
 }
 
-// sendMeterValues advances the meter and reports it.
+// sendMeterValues advances the meter and reports it, or queues the sample
+// while offline.
 //
 // The sample is taken while holding the CALL slot, so that it cannot be
 // overtaken by the StopTransaction of the same session: either it goes out
-// before the stop, or the stop has already happened and it is dropped.
-func (s *Simulator) sendMeterValues(connectorID, txID int, stop <-chan struct{}) error {
+// before the stop, or the stop has already happened and it is dropped. It
+// carries the session's id as it is at that moment: a placeholder while the
+// session's StartTransaction is still queued, rewritten once that is answered.
+func (s *Simulator) sendMeterValues(connectorID int, stop <-chan struct{}) error {
 	s.callMu.Lock()
 	defer s.callMu.Unlock()
 
@@ -225,6 +228,7 @@ func (s *Simulator) sendMeterValues(connectorID, txID int, stop <-chan struct{})
 		return errMeterOff
 	}
 	c := s.connectors[connectorID]
+	txID := c.transactionID
 	now := s.opts.Now()
 	c.meter.advance(now)
 	c.meter.streamed = true
@@ -239,25 +243,30 @@ func (s *Simulator) sendMeterValues(connectorID, txID int, stop <-chan struct{})
 	}
 	s.mu.Unlock()
 
-	_, err := s.callLocked(context.Background(), v16.ActionMeterValues, v16.MeterValuesReq{
+	m := &txMessage{action: v16.ActionMeterValues, meter: &v16.MeterValuesReq{
 		ConnectorID:   connectorID,
 		TransactionID: &txID,
 		MeterValue: []v16.MeterValue{{
 			Timestamp:    now.UTC().Format(time.RFC3339),
 			SampledValue: values,
 		}},
-	})
-	if err != nil || !suspend {
-		return err
+	}}
+	s.deliverTxLocked(context.Background(), m)
+	if m.err != nil || !suspend {
+		return m.err
 	}
 
 	// Still under the CALL slot, so it cannot be overtaken by the
-	// StopTransaction either.
-	_, err = s.callLocked(context.Background(), v16.ActionStatusNotification, v16.StatusNotificationReq{
+	// StopTransaction either. Offline, the status round after the reconnect
+	// reports it instead.
+	_, err := s.callLocked(context.Background(), v16.ActionStatusNotification, v16.StatusNotificationReq{
 		ConnectorID: connectorID,
 		ErrorCode:   "NoError",
 		Status:      v16.StatusSuspendedEV,
 		Timestamp:   now.UTC().Format(time.RFC3339),
 	})
+	if s.opts.Reconnect && errors.Is(err, ocpp.ErrNotConnected) {
+		return nil
+	}
 	return err
 }

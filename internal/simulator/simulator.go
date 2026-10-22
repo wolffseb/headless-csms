@@ -51,13 +51,24 @@ const (
 	// the watchdog cannot be exercised by hand at all, because a cooperative
 	// station keeps it fed.
 	ScenarioSilent Scenario = "silent"
+	// ScenarioOfflineTx scripts a station charging through an outage. It
+	// implies Reconnect, and streams meter values every second unless
+	// MeterInterval says otherwise.
+	//
+	// Once booted it starts a transaction on connector 1 and waits for the
+	// connection to drop, which is the CSMS's or a proxy's doing. Offline,
+	// it lets offlineSamples meter values queue up, stops the transaction,
+	// and starts and stops a second one. Only then does it redial, so that
+	// the queue is the same however fast the CSMS comes back; after the
+	// boot it delivers the queue, and carries on as a normal station.
+	ScenarioOfflineTx Scenario = "offline-tx"
 )
 
 // Scenarios lists every scenario, for the CLI's help text and validation.
 func Scenarios() []Scenario {
 	return []Scenario{
 		ScenarioNormal, ScenarioRejectReserve, ScenarioOccupied,
-		ScenarioSlow, ScenarioUnlockFails, ScenarioSilent,
+		ScenarioSlow, ScenarioUnlockFails, ScenarioSilent, ScenarioOfflineTx,
 	}
 }
 
@@ -80,6 +91,10 @@ const (
 	// StartTransaction; doing it in one breath would reverse that order on the
 	// wire and misrepresent how a charger behaves.
 	commandSettle = 50 * time.Millisecond
+	// offlineTxMeterInterval is ScenarioOfflineTx's meter interval when none
+	// is given, and offlineSamples how many samples it queues while offline.
+	offlineTxMeterInterval = time.Second
+	offlineSamples         = 3
 	// fallbackHeartbeat is used when the CSMS boot response gives no interval.
 	fallbackHeartbeat = 60 * time.Second
 
@@ -160,13 +175,19 @@ type Options struct {
 	//
 	// The first Connect is not retried: a CSMS that cannot be reached at all
 	// at start-up is more likely a wrong URL than an outage.
+	//
+	// Offline, the station keeps charging: StartTransaction and
+	// StopTransaction work locally, and every transaction-related message is
+	// queued, in memory, and delivered in order after the next Accepted boot,
+	// ahead of everything else (see deliverTxLocked and classify).
 	Reconnect bool
 	// ReconnectBackoff, when set, is the wait before redial attempt n,
 	// counting from 1 after every drop, in place of the default 1 s, 2 s,
-	// 4 s … capped at 30 s, with jitter. Tests set it for short, predictable
-	// waits.
+	// 4 s … capped at 30 s, with jitter. It also spaces out the retries of a
+	// transaction message the CSMS failed to process, n counting those.
+	// Tests set it for short, predictable waits.
 	ReconnectBackoff func(attempt int) time.Duration
-	// ReconnectAfterFunc schedules the waits between redials. Like
+	// ReconnectAfterFunc schedules the waits between redials and retries. Like
 	// HeartbeatAfterFunc it is a clock of its own, so that a test can step
 	// it alone; it defaults to real time.
 	ReconnectAfterFunc func(time.Duration, func()) Stopper
@@ -197,6 +218,12 @@ func (o *Options) applyDefaults() {
 	}
 	if o.Scenario == "" {
 		o.Scenario = ScenarioNormal
+	}
+	if o.Scenario == ScenarioOfflineTx {
+		o.Reconnect = true
+		if o.MeterInterval == 0 {
+			o.MeterInterval = offlineTxMeterInterval
+		}
 	}
 	if o.SlowDelay <= 0 {
 		o.SlowDelay = defaultSlowDelay
@@ -255,7 +282,9 @@ func (o Options) validate() error {
 // connector is one outlet's state.
 type connector struct {
 	status string
-	// transactionID is the id the CSMS assigned, or 0 when idle.
+	// transactionID is the id the CSMS assigned, or 0 when idle. While the
+	// session's StartTransaction waits for an answer it is a negative
+	// placeholder (see nextLocalID).
 	transactionID int
 	// reservationID is the CSMS's reservation id, or 0 when not reserved.
 	reservationID int
@@ -299,6 +328,17 @@ type Simulator struct {
 	heartbeatChanged chan struct{}
 	meterChanged     chan struct{}
 
+	// queue holds the transaction-related messages not yet answered, oldest
+	// first; see deliverTxLocked. It is only ever used with Reconnect, and
+	// lives in memory only: a restarted simulator starts empty. It changes
+	// only under callMu as well as mu. queueChanged is signalled on every
+	// change.
+	queue        []*txMessage
+	queueChanged chan struct{}
+	// nextLocalID is the placeholder id for the next session, counting down
+	// from -1 so that it can never be mistaken for one the CSMS assigned.
+	nextLocalID int
+
 	// callMu keeps at most one CALL of ours outstanding, as OCPP-J requires
 	// of each direction. Heartbeats, status reports, transactions and meter
 	// samples come from different goroutines; holding this across the round
@@ -336,6 +376,8 @@ func New(opts Options) (*Simulator, error) {
 
 		heartbeatChanged: make(chan struct{}),
 		meterChanged:     make(chan struct{}),
+		queueChanged:     make(chan struct{}),
+		nextLocalID:      -1,
 	}
 	for i := 1; i <= opts.Connectors; i++ {
 		s.connectors[i] = &connector{status: v16.StatusAvailable}
@@ -380,11 +422,24 @@ func (s *Simulator) Connect(ctx context.Context) error {
 		return err
 	}
 
+	// The scenario holds the first redial until its offline part is done.
+	scripted := make(chan struct{})
+	if s.opts.Scenario == ScenarioOfflineTx {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			defer close(scripted)
+			s.offlineTx(ctx, conn)
+		}()
+	} else {
+		close(scripted)
+	}
+
 	if s.opts.Reconnect {
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
-			s.supervise(ctx, conn)
+			s.supervise(ctx, conn, scripted)
 		}()
 	}
 	return nil
@@ -464,18 +519,27 @@ func (s *Simulator) establish(ctx context.Context) (*ocppj.Conn, error) {
 	return conn, nil
 }
 
-// bringUp boots over a fresh connection, marks it online, and reports every
-// status on it.
+// bringUp boots over a fresh connection, delivers the queue, which marks it
+// online, and reports every status on it.
 func (s *Simulator) bringUp(ctx context.Context, conn *ocppj.Conn) error {
 	if err := s.boot(ctx, conn); err != nil {
 		return err
 	}
 
+	// Whatever was queued while offline goes first, ahead of even the status
+	// round; delivering the queue is what marks the connection online.
+	s.callMu.Lock()
 	s.mu.Lock()
-	if s.link == conn {
-		s.online = conn
-	}
+	queued := len(s.queue)
 	s.mu.Unlock()
+	err := s.drainLocked(conn)
+	s.callMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("simulator: delivering queued transaction messages: %w", err)
+	}
+	if queued > 0 {
+		s.log.Info("delivered transaction messages queued while offline", "messages", queued)
+	}
 
 	return s.reportInitialStatus(ctx, conn)
 }
@@ -495,11 +559,19 @@ func (s *Simulator) dropped(conn *ocppj.Conn) {
 }
 
 // supervise redials each time the current connection drops, until the
-// simulator closes, the context ends, or a redial is rejected.
-func (s *Simulator) supervise(ctx context.Context, conn *ocppj.Conn) {
+// simulator closes, the context ends, or a redial is rejected. It does not
+// redial before ready is closed.
+func (s *Simulator) supervise(ctx context.Context, conn *ocppj.Conn, ready <-chan struct{}) {
 	for {
 		select {
 		case <-conn.Done():
+		case <-s.done:
+			return
+		case <-ctx.Done():
+			return
+		}
+		select {
+		case <-ready:
 		case <-s.done:
 			return
 		case <-ctx.Done():
@@ -518,7 +590,7 @@ func (s *Simulator) redial(ctx context.Context) *ocppj.Conn {
 	for attempt := 1; ; attempt++ {
 		wait := s.opts.ReconnectBackoff(attempt)
 		s.log.Info("reconnecting", "attempt", attempt, "in", wait.String())
-		if !s.sleep(ctx, s.opts.ReconnectAfterFunc, wait) {
+		if !s.sleep(ctx, s.opts.ReconnectAfterFunc, wait, nil) {
 			return nil
 		}
 
@@ -538,8 +610,9 @@ func (s *Simulator) redial(ctx context.Context) *ocppj.Conn {
 }
 
 // sleep waits d on the given clock. It reports false, early, if the
-// simulator closes or the context ends first.
-func (s *Simulator) sleep(ctx context.Context, after func(time.Duration, func()) Stopper, d time.Duration) bool {
+// simulator closes, the context ends, or abort is closed first; a nil abort
+// never is.
+func (s *Simulator) sleep(ctx context.Context, after func(time.Duration, func()) Stopper, d time.Duration, abort <-chan struct{}) bool {
 	tick := make(chan struct{}, 1)
 	timer := after(d, func() { tick <- struct{}{} })
 	defer timer.Stop()
@@ -550,6 +623,8 @@ func (s *Simulator) sleep(ctx context.Context, after func(time.Duration, func())
 	case <-s.done:
 		return false
 	case <-ctx.Done():
+		return false
+	case <-abort:
 		return false
 	}
 }
@@ -817,7 +892,9 @@ func (s *Simulator) stationStatus() string {
 	return s.station
 }
 
-// TransactionID reports the running transaction on a connector, or 0.
+// TransactionID reports the running transaction on a connector, or 0. A
+// session started while offline has a negative placeholder id until the CSMS
+// has answered its StartTransaction.
 func (s *Simulator) TransactionID(connectorID int) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()

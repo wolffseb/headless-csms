@@ -100,6 +100,7 @@ Scenarios make it misbehave on purpose, which is how the unhappy paths get teste
 | `slow` | Stalls every answer past the call timeout |
 | `unlock-fails` | Refuses to release the cable lock |
 | `silent` | Boots, then stops sending anything while still answering pings — a station whose OCPP layer has hung but whose connection is fine. This is what `heartbeat_timeout` exists to catch, and the only way to exercise it by hand |
+| `offline-tx` | Charges through an outage, end to end. Implies `--reconnect`, and `--meter-interval 1s` unless given. Starts a transaction on connector 1 and waits for the connection to drop (stop `cpms run`, or have a proxy close it). Offline, it lets 3 meter values queue up, stops the transaction, and starts and stops a second one; only then does it redial, and after the boot it delivers the queue |
 
 `--meter-interval 10s` makes a running session send `MeterValues` that often, combined with
 any scenario (except `silent`, which still sends nothing). Each sample carries the
@@ -117,10 +118,30 @@ then moves the meter by a flat 1000 Wh as before. The simulator also answers
 By default the simulator exits when its connection drops. `--reconnect` makes it behave
 like a station instead: it redials with backoff (1 s, 2 s, 4 s … capped at 30 s, each wait
 shortened by up to a fifth at random), then sends `BootNotification` again and reports the
-station and every connector again. Status changes while it is offline are not queued; that
-status round reports where each connector ended up. A `BootNotification` the CSMS rejects
-after a reconnect still makes it exit non-zero. The first dial is not retried: a CSMS that
-cannot be reached at start-up is more likely a wrong `--csms` than an outage.
+station and every connector again. A `BootNotification` the CSMS rejects after a reconnect
+still makes it exit non-zero. The first dial is not retried: a CSMS that cannot be reached
+at start-up is more likely a wrong `--csms` than an outage.
+
+While it is offline it keeps charging, as a real station does. Sessions start and stop
+locally, the meter keeps streaming, and every transaction message (`StartTransaction`,
+`MeterValues`, `StopTransaction`) is queued with the timestamp it was made with. A session
+started offline runs under a negative placeholder id; once the CSMS answers its queued
+`StartTransaction`, its queued `MeterValues` and `StopTransaction` carry the CSMS's id
+instead. Status changes are not queued: the status round after the boot reports where each
+connector ended up. After an Accepted boot the queue goes out first, in order, one call at
+a time, before the status round and before anything new. A message leaves the queue only
+once the CSMS has answered it:
+
+| Answer | What happens |
+|---|---|
+| `CALLRESULT` | Delivered |
+| `CALLERROR` `InternalError`, `GenericError` or a non-standard code, or no answer within the call timeout | The CSMS failed to process it: sent again after the backoff, at most 3 times in all, then given up (OCPP 1.6 §4.10) |
+| Any other `CALLERROR` (`FormationViolation`, `PropertyConstraintViolation`, `OccurenceConstraintViolation`, `TypeConstraintViolation`, `ProtocolError`, `NotImplemented`, `NotSupported`, `SecurityError`, `RpcFrameworkError`) | The same message would get the same answer: given up at once. A given-up `StartTransaction` takes the queued messages of its session with it |
+| The connection drops | Stays queued, with everything behind it, for the next connection |
+
+The queue lives in memory: a simulator that is restarted starts with an empty one. Offline
+starts are always allowed; `LocalAuthorizeOffline` and `AllowOfflineTxForUnknownId` are not
+consulted yet.
 
 `--connectors`, `--id`, `--csms`, `--tag`, `--vendor` and `--model` override the config
 when you want to point it somewhere else or fake a different station.

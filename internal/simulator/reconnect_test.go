@@ -3,8 +3,6 @@ package simulator_test
 import (
 	"context"
 	"encoding/json"
-	"io"
-	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -15,94 +13,9 @@ import (
 	"github.com/wolffseb/cli-cpms/internal/clocktest"
 	"github.com/wolffseb/cli-cpms/internal/core"
 	v16 "github.com/wolffseb/cli-cpms/internal/ocpp/v16"
+	"github.com/wolffseb/cli-cpms/internal/ocpptest"
 	"github.com/wolffseb/cli-cpms/internal/simulator"
 )
-
-// proxy is a TCP relay between the simulator and a CSMS that a test can cut,
-// which is how a CSMS that went away, or a proxy that closed the connection
-// on purpose, looks to a station: the connection drops, and redials fail
-// until it is restored.
-type proxy struct {
-	ln     net.Listener
-	target string
-
-	mu       sync.Mutex
-	refusing bool
-	conns    []net.Conn
-	wg       sync.WaitGroup
-}
-
-func newProxy(t *testing.T, target string) *proxy {
-	t.Helper()
-
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("proxy listen: %v", err)
-	}
-	p := &proxy{ln: ln, target: target}
-	p.wg.Add(1)
-	go p.serve()
-	t.Cleanup(func() {
-		_ = ln.Close()
-		p.cut()
-		p.wg.Wait()
-	})
-	return p
-}
-
-// url is the WebSocket URL to give the simulator.
-func (p *proxy) url() string { return "ws://" + p.ln.Addr().String() }
-
-func (p *proxy) serve() {
-	defer p.wg.Done()
-	for {
-		down, err := p.ln.Accept()
-		if err != nil {
-			return
-		}
-		p.mu.Lock()
-		if p.refusing {
-			p.mu.Unlock()
-			_ = down.Close()
-			continue
-		}
-		up, err := net.Dial("tcp", p.target)
-		if err != nil {
-			p.mu.Unlock()
-			_ = down.Close()
-			continue
-		}
-		p.conns = append(p.conns, down, up)
-		p.wg.Add(2)
-		p.mu.Unlock()
-
-		relay := func(dst, src net.Conn) {
-			defer p.wg.Done()
-			_, _ = io.Copy(dst, src)
-			_ = dst.Close()
-			_ = src.Close()
-		}
-		go relay(up, down)
-		go relay(down, up)
-	}
-}
-
-// cut drops every relayed connection and refuses new ones until restore.
-func (p *proxy) cut() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.refusing = true
-	for _, c := range p.conns {
-		_ = c.Close()
-	}
-	p.conns = nil
-}
-
-func (p *proxy) restore() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.refusing = false
-}
 
 // backoffLog records the attempts the simulator asked for a wait before,
 // and answers every one with the same wait.
@@ -195,14 +108,14 @@ func TestReconnectBootsAndReportsAgain(t *testing.T) {
 	t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
 
 	f := newFakeCSMS(t, 0, 1)
-	p := newProxy(t, strings.TrimPrefix(f.url(), "ws://"))
+	p := ocpptest.NewProxy(t, strings.TrimPrefix(f.url(), "ws://"))
 	clk := clocktest.New(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
 	b := &backoffLog{wait: 5 * time.Second}
-	sim := startSim(t, p.url(), reconnecting(clk, b))
+	sim := startSim(t, p.URL(), reconnecting(clk, b))
 
 	waitFor(t, "the first status round", func() bool { return f.count(v16.ActionStatusNotification) == 3 })
 
-	p.cut()
+	p.Cut()
 	waitFor(t, "the first redial to be scheduled", func() bool { return clk.Pending() == 1 })
 	select {
 	case <-sim.Done():
@@ -214,7 +127,7 @@ func TestReconnectBootsAndReportsAgain(t *testing.T) {
 	clk.Advance(5 * time.Second)
 	waitFor(t, "the second redial to be scheduled", func() bool { return len(b.seen()) == 2 && clk.Pending() == 1 })
 
-	p.restore()
+	p.Restore()
 	clk.Advance(5 * time.Second)
 	waitFor(t, "a second boot", func() bool { return f.count(v16.ActionBootNotification) == 2 })
 	waitFor(t, "the second status round", func() bool { return f.count(v16.ActionStatusNotification) == 6 })
@@ -236,7 +149,7 @@ func TestReconnectBootsAndReportsAgain(t *testing.T) {
 	}
 
 	// A second drop starts the count again.
-	p.cut()
+	p.Cut()
 	waitFor(t, "a redial after the second drop", func() bool { return len(b.seen()) == 3 })
 	if got := b.seen()[2]; got != 1 {
 		t.Errorf("first attempt after the second drop = %d, want 1", got)
@@ -300,9 +213,9 @@ func TestReconnectEndsCleanly(t *testing.T) {
 			t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
 
 			f := newFakeCSMS(t, 0, 1)
-			p := newProxy(t, strings.TrimPrefix(f.url(), "ws://"))
+			p := ocpptest.NewProxy(t, strings.TrimPrefix(f.url(), "ws://"))
 			clk := clocktest.New(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
-			opts := simulator.Options{URL: p.url(), ID: testCP, IDTag: testTag, Log: discard()}
+			opts := simulator.Options{URL: p.URL(), ID: testCP, IDTag: testTag, Log: discard()}
 			reconnecting(clk, &backoffLog{wait: time.Hour})(&opts)
 			sim, err := simulator.New(opts)
 			if err != nil {
@@ -314,7 +227,7 @@ func TestReconnectEndsCleanly(t *testing.T) {
 				t.Fatalf("connect: %v", err)
 			}
 
-			p.cut()
+			p.Cut()
 			waitFor(t, "the redial to be scheduled", func() bool { return clk.Pending() == 1 })
 
 			if how == "close" {
@@ -343,21 +256,21 @@ func TestReconnectEndsCleanly(t *testing.T) {
 func TestReconnectAgainstTheCSMS(t *testing.T) {
 	t.Parallel()
 
-	var p *proxy
+	var p *ocpptest.Proxy
 	clk := clocktest.New(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
 	r := newRig(t, reconnecting(clk, &backoffLog{wait: time.Second}), func(o *simulator.Options) {
-		p = newProxy(t, strings.TrimPrefix(o.URL, "ws://"))
-		o.URL = p.url()
+		p = ocpptest.NewProxy(t, strings.TrimPrefix(o.URL, "ws://"))
+		o.URL = p.URL()
 	})
 	waitFor(t, "both EVSEs to report available", func() bool { return evsesAre(r, core.StatusAvailable) })
 
 	events, unsubscribe := r.core.Subscribe("test")
 	defer unsubscribe()
 
-	p.cut()
+	p.Cut()
 	waitFor(t, "core to see the station go", func() bool { return !r.core.IsOnline(testCP) && evsesAre(r, core.StatusUnknown) })
 	waitFor(t, "the redial to be scheduled", func() bool { return clk.Pending() == 1 })
-	p.restore()
+	p.Restore()
 	clk.Advance(time.Second)
 
 	waitFor(t, "the station to come back", func() bool { return r.core.IsOnline(testCP) && evsesAre(r, core.StatusAvailable) })

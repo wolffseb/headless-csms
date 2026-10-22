@@ -1,4 +1,5 @@
-// Package ocpptest provides a raw OCPP-J WebSocket client for tests.
+// Package ocpptest provides a raw OCPP-J WebSocket client for tests, and a
+// TCP proxy that can cut a station off its CSMS.
 //
 // It speaks the wire format directly rather than reusing the server's own
 // framing code, so a bug in that code cannot hide behind a test that shares
