@@ -62,6 +62,7 @@ Then start the CSMS and point the station at the URL it prints:
 
 ```
 cpms listening for ALP-HYC-001 on ws://127.0.0.1:9000/ocpp/ALP-HYC-001
+OCPI versions endpoint http://192.168.1.10:8080/ocpi/versions (listening on 0.0.0.0:8080)
 waiting for the charge point to connect; press Ctrl-C to stop
 INFO msg="charge point connected" charge_point=ALP-HYC-001 version=1.6
 INFO msg="ALP-HYC-001 booted (Alpitronic HYC300)"
@@ -255,6 +256,59 @@ If the station is not connected, `cpms probe` exits 3 and prints the CSMS URL to
 the station, the same one `cpms config validate` prints, plus when and why it last
 disconnected.
 
+## OCPI
+
+`cpms run` also serves OCPI 2.3.0 on `server.ocpi_bind`, and prints the versions URL next
+to the OCPP line:
+
+```
+cpms listening for ALP-HYC-001 on ws://127.0.0.1:9000/ocpp/ALP-HYC-001
+OCPI versions endpoint http://192.168.1.10:8080/ocpi/versions (listening on 0.0.0.0:8080)
+```
+
+The versions URL is `ocpi.public_base_url` plus `/versions`. That URL, together with
+`ocpi.token_a`, is what the counterparty gets out of band. The **path** of
+`public_base_url` is also where cpms serves: `http://192.168.1.10:8080/ocpi` serves under
+`/ocpi`, so what is advertised and what is served cannot disagree. Its host is what the
+counterparty dials, which is why it is set separately from `ocpi_bind`.
+
+Every request needs `Authorization: Token <base64 of the token>`: standard, padded Base64
+(RFC 4648 §4), as OCPI requires since 2.2-d2. A raw, unencoded token is refused like any
+unknown one. Encode with `printf '%s'`, not `echo`, or the newline becomes part of the token, and strip the
+line breaks GNU `base64` adds every 76 columns (tokens of 58 bytes or more), or the header
+breaks on Linux:
+
+```sh
+TOKEN_A=change-me-token-a   # ocpi.token_a from your config
+curl -s -H "Authorization: Token $(printf '%s' "$TOKEN_A" | base64 | tr -d '\n')" \
+  http://127.0.0.1:8080/ocpi/versions
+```
+
+```json
+{"data":[{"version":"2.3.0","url":"http://192.168.1.10:8080/ocpi/2.3.0"}],"status_code":1000,"status_message":"Success","timestamp":"2026-10-21T20:15:04Z"}
+```
+
+`GET .../2.3.0` lists the modules. So far that is only `credentials`, which answers HTTP 501
+until registration is built (roadmap step 5.2); until then only `TOKEN_A` is accepted, and
+only for versions and credentials.
+
+- A missing header, bad Base64, and an unknown token all get the same HTTP 401, so the
+  answer gives no hint which one it was.
+- Every answer is an OCPI envelope with a UTC `timestamp` ending in `Z`, and carries
+  `X-Request-ID` and `X-Correlation-ID`: the ones the request sent, or fresh UUIDs.
+- Handlers get both ids in the request context (`ocpi.RequestID`, `ocpi.CorrelationID`), and
+  the debug log line carries both.
+- The HTTP server times out reading headers after 10 s, reading a whole request after 30 s,
+  writing a response after 60 s and an idle keep-alive connection after 120 s. On shutdown the
+  server cancels its lifetime context, which every request context and background delivery
+  hangs off, so handlers stop with it.
+- Request bodies are capped at 1 MiB. JSON that does not parse gets HTTP 400 with
+  `status_code` 2001; unknown fields are accepted, as OCPI requires.
+- `--log-level debug` logs one line per request (method, path, status, duration, request
+  id, correlation id). Tokens are never logged.
+
+There is no TLS: this is a LAN tool, by decision.
+
 ## Configuration
 
 Everything lives in one YAML file — see [`config.example.yaml`](config.example.yaml),
@@ -303,7 +357,7 @@ flowchart LR
 
     subgraph run ["cpms run (one process)"]
         sock["Control socket<br/>control/socket"]
-        ocpi["OCPI server<br/>(planned)"]
+        ocpi["OCPI server<br/>ocpi (versions so far)"]
         ctrl["control<br/>the one way to act<br/>on the station"]
         csms["OCPP server<br/>ocpp/csms + ocpp/v16"]
         core["core<br/>state + event bus"]
@@ -358,6 +412,7 @@ A few rules hold the design together:
 internal/core            domain state and the event bus — the single source of truth
 internal/control         the one place that acts on the station: reserve, cancel, start, stop, unlock, probe
 internal/control/socket  the Unix socket the one-shot commands reach `cpms run` through
+internal/ocpi            the OCPI transport: HTTP server, envelope, token auth, module registry, versions
 internal/ocpp            version-agnostic RPC errors, versions, the Handler and ChargePoint interfaces, ProbeReport
 internal/ocpp/ocppj      the OCPP-J RPC layer: framing, correlation, connection goroutines
 internal/ocpp/csms       the WebSocket server a charge point dials into
@@ -594,7 +649,7 @@ Built in tracked steps; each lands as its own PR.
 | 2 | OCPP 1.6-J CSMS: WebSocket server and message routing | done |
 | 3 | Built-in charge point simulator | done |
 | 4 | Outbound OCPP commands, reservation lifecycle, one-shot CLI | in progress: commands and `cpms probe` done, on-site hardware check next |
-| 5 | OCPI foundation: versions + credentials handshake | |
+| 5 | OCPI foundation: versions + credentials handshake | in progress: HTTP transport and versions done, credentials handshake next |
 | 6 | OCPI Locations module (sender) | |
 | 7 | PATCH location on status change | |
 | 8 | OCPI Commands module (receiver) | |

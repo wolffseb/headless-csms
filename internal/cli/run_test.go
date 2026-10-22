@@ -33,11 +33,18 @@ func (b *syncBuffer) String() string {
 }
 
 // runConfig writes a config file bound to the given OCPP port, with any
-// further substitutions applied, and returns its path.
+// further substitutions applied, and returns its path. The OCPI listener
+// goes on ocppPort+1000; runConfigPorts places it in a test's own range.
 //
 // Ports are fixed rather than 0 because cpms rejects port 0 on purpose: a
 // listener a charger has to dial cannot live on a random port.
 func runConfig(t *testing.T, ocppPort int, replacements ...string) string {
+	t.Helper()
+	return runConfigPorts(t, ocppPort, ocppPort+1000, replacements...)
+}
+
+// runConfigPorts is runConfig with the OCPI port chosen explicitly.
+func runConfigPorts(t *testing.T, ocppPort, ocpiPort int, replacements ...string) string {
 	t.Helper()
 
 	base := `
@@ -78,9 +85,7 @@ location:
           max_amperage: 500
 `
 	base = strings.Replace(base, "OCPP_PORT", strconv.Itoa(ocppPort), 1)
-	// The two listeners may not share a port; the OCPI one is unused until a
-	// later step, so it only has to be distinct.
-	base = strings.Replace(base, "OCPI_PORT", strconv.Itoa(ocppPort+1000), 1)
+	base = strings.Replace(base, "OCPI_PORT", strconv.Itoa(ocpiPort), 1)
 
 	for i := 0; i+1 < len(replacements); i += 2 {
 		base = strings.Replace(base, replacements[i], replacements[i+1], 1)
