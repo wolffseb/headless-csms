@@ -2,7 +2,7 @@ bin/
 coverage.out
 
 # The real config holds the OCPI tokens; only config.example.yaml is tracked.
-config.yaml
+/config.yaml
 
 # Runtime state owned by the tool.
 state.json
