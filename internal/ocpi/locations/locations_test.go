@@ -193,8 +193,8 @@ func TestBuildPassesStaticDataThrough(t *testing.T) {
 		loc.Coordinates.Longitude != cfg.Location.Coordinates.Longitude {
 		t.Errorf("coordinates = %+v, want %+v", loc.Coordinates, cfg.Location.Coordinates)
 	}
-	if loc.TimeZone != cfg.Location.TimeZone || loc.Publish != cfg.Location.Publish {
-		t.Errorf("time_zone, publish = %q, %v; want %q, %v", loc.TimeZone, loc.Publish, cfg.Location.TimeZone, cfg.Location.Publish)
+	if loc.TimeZone != cfg.Location.TimeZone || loc.Publish != cfg.Location.IsPublished() {
+		t.Errorf("time_zone, publish = %q, %v; want %q, %v", loc.TimeZone, loc.Publish, cfg.Location.TimeZone, cfg.Location.IsPublished())
 	}
 	if loc.CountryCode != cfg.OCPI.CountryCode || loc.PartyID != cfg.OCPI.PartyID {
 		t.Errorf("party = %s*%s, want %s*%s", loc.CountryCode, loc.PartyID, cfg.OCPI.CountryCode, cfg.OCPI.PartyID)

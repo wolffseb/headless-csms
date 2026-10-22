@@ -334,6 +334,19 @@ func TestLoadValidFile(t *testing.T) {
 	}
 }
 
+func TestPublishCanBeTurnedOff(t *testing.T) {
+	t.Parallel()
+
+	in := rep("  time_zone: Europe/Berlin\n", "  time_zone: Europe/Berlin\n  publish: false\n", 1)(baseYAML)
+	cfg, err := config.Parse(strings.NewReader(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Location.IsPublished() {
+		t.Error("publish: false was read as true")
+	}
+}
+
 func TestReservableCanBeTurnedOff(t *testing.T) {
 	t.Parallel()
 
@@ -369,8 +382,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 		{"ocpi_bind", cfg.Server.OCPIBind, config.DefaultOCPIBind},
 		{"push.debounce", cfg.OCPI.Push.Debounce.Duration(), config.DefaultPushDebounce},
 		{"push.max_retries", cfg.OCPI.Push.MaxRetries, config.DefaultPushMaxRetries},
-		// An office charger stays out of public apps unless asked.
-		{"location.publish", cfg.Location.Publish, false},
+		// publish=false would hide the location from every driver: cpms
+		// never sends publish_allowed_to.
+		{"location.publish", cfg.Location.IsPublished(), true},
 		{"location.evses[0].reservable", cfg.Location.EVSEs[0].IsReservable(), true},
 	}
 	for _, c := range checks {

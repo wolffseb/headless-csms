@@ -375,8 +375,9 @@ during the OCPI handshake as implementations usually do.
 
 The location needs `time_zone`, an IANA name such as `Europe/Berlin`, which OCPI requires.
 The zone database is built into the binary, so this works on hosts without one. `publish`
-(default `false`) decides whether apps may show the location to anyone; an office charger
-stays private unless you say so. Each EVSE's `reservable` (default `true`) controls the
+(default `true`) is OCPI's flag for whether the partner may show the location to its
+drivers, and in public apps if it forwards it. `false` limits it to the tokens in
+`publish_allowed_to`, which cpms does not send, so it would be hidden from every driver. Each EVSE's `reservable` (default `true`) controls the
 OCPI `RESERVABLE` capability: set it to `false` if `cpms probe` shows no Reservation profile.
 
 Two listener rules worth knowing, both enforced at validation time:
