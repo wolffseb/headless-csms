@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -362,6 +363,19 @@ func TestUnregisterDeadlineDuringTheDeleteStillUnregisters(t *testing.T) {
 	}
 }
 
+// readSignal closes reading on the first Read of the wrapped body: the point
+// at which the handler is known to be reading it.
+type readSignal struct {
+	io.ReadCloser
+	reading chan struct{}
+	once    sync.Once
+}
+
+func (b *readSignal) Read(p []byte) (int, error) {
+	b.once.Do(func() { close(b.reading) })
+	return b.ReadCloser.Read(p)
+}
+
 // A body that trickles in must not hold up the operator: it is read before
 // anything is locked.
 func TestSlowBodyDoesNotDelayUnregister(t *testing.T) {
@@ -369,16 +383,26 @@ func TestSlowBodyDoesNotDelayUnregister(t *testing.T) {
 	h, emsp := newHarness(t), newFakeEMSP(t)
 	h.register(emsp)
 
-	held := h.gate.hold(t)
+	// The same handler behind a server that tells us when it starts reading
+	// the body. Without that, Unregister would usually win the race to the
+	// lock and the test would pass whatever the handler does.
+	reading := make(chan struct{})
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = &readSignal{ReadCloser: r.Body, reading: reading}
+		h.server.ServeHTTP(w, r)
+	}))
+	t.Cleanup(front.Close)
+	slowH := *h
+	slowH.http = front
+
 	pr, pw := io.Pipe()
 	t.Cleanup(func() { pw.Close() })
-	slow := async(func() reply { return h.do(http.MethodPut, "credentials", h.cfg.OCPI.TokenC, pr) })
-	held.wait(t)
-	held.Release()
-	// The handler is now reading a body that is only half there.
+	slow := async(func() reply { return slowH.do(http.MethodPut, "credentials", h.cfg.OCPI.TokenC, pr) })
+	// The handler gets half a body, then waits for the rest.
 	go func() { _, _ = pw.Write([]byte(`{"token":"`)) }()
+	waitFor(t, reading, "the handler to read the body")
 
-	ctx, cancel := context.WithTimeout(context.Background(), guard)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	if _, err := h.reg.Unregister(ctx); err != nil {
 		t.Fatalf("Unregister behind a slow body: %v", err)
