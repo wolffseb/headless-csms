@@ -52,9 +52,10 @@ func newHarness(t *testing.T) *harness {
 	t.Helper()
 
 	h := &harness{
-		t:     t,
-		cfg:   loadConfig(t, filepath.Join("testdata", "config.yaml"), staticAt),
-		clock: clocktest.New(staticAt.Add(time.Hour)),
+		t:   t,
+		cfg: loadConfig(t, filepath.Join("testdata", "config.yaml"), staticAt),
+		// A fraction of a second past the hour, which the wire format drops.
+		clock: clocktest.New(staticAt.Add(time.Hour + 400*time.Millisecond)),
 	}
 	h.registered.Store(true)
 	h.core = core.New(h.cfg, core.WithClock(h.clock.Now))
@@ -291,10 +292,12 @@ func TestPaginationOverTheOneLocation(t *testing.T) {
 	check("", 1, strconv.Itoa(locations.MaxLimit))
 	check("?offset=50", 0, strconv.Itoa(locations.MaxLimit))
 
-	// An empty page is still a list, not a missing field.
-	env := h.get("/locations?offset=1", h.cfg.OCPI.TokenC)
-	if string(env.Data) != "[]" {
-		t.Errorf("empty page data = %s, want []", env.Data)
+	// An empty page is still a list, not a missing field: past the end, and
+	// when the filter matches nothing at all.
+	for _, q := range []string{"?offset=1", "?date_from=2999-01-01T00:00:00Z"} {
+		if env := h.get("/locations"+q, h.cfg.OCPI.TokenC); string(env.Data) != "[]" {
+			t.Errorf("%s: data = %s, want []", q, env.Data)
+		}
 	}
 }
 
@@ -319,6 +322,11 @@ func TestDateFilters(t *testing.T) {
 		{"?date_to=" + at(0), 0},             // exclusive
 		{"?date_to=" + at(time.Second), 1},
 		{"?date_from=" + at(-time.Hour) + "&date_to=" + at(time.Hour), 1},
+		// The core clock stands 400ms past the second the client sees. The
+		// filter uses what the client sees, so a date_to just past that
+		// second, with a fraction, includes the Location.
+		{"?date_to=" + updated.Add(200*time.Millisecond).Format("2006-01-02T15:04:05.000Z"), 1},
+		{"?date_from=" + updated.Add(200*time.Millisecond).Format("2006-01-02T15:04:05.000Z"), 0},
 		// No zone designator means UTC.
 		{"?date_to=" + updated.UTC().Format("2006-01-02T15:04:05"), 0},
 	} {
