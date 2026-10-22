@@ -119,7 +119,7 @@ func parseBool(value string) error {
 	return nil
 }
 
-// setHeartbeatInterval takes effect from the next heartbeat on.
+// setHeartbeatInterval takes effect at once: the heartbeat timer is re-armed.
 func (s *Simulator) setHeartbeatInterval(value string) error {
 	n, err := parseSeconds(value)
 	if err != nil || n == 0 {
@@ -127,12 +127,14 @@ func (s *Simulator) setHeartbeatInterval(value string) error {
 	}
 	s.mu.Lock()
 	s.heartbeat = time.Duration(n) * time.Second
+	signalLocked(&s.heartbeatChanged)
 	s.mu.Unlock()
 	return nil
 }
 
-// setMeterInterval takes effect from the next sample on. Turning streaming on
-// starts it for sessions already running, as a station would.
+// setMeterInterval takes effect at once: running streams re-arm their timer,
+// or end on 0. Turning streaming on starts it for sessions already running,
+// as a station would.
 func (s *Simulator) setMeterInterval(value string) error {
 	n, err := parseSeconds(value)
 	if err != nil {
@@ -142,6 +144,7 @@ func (s *Simulator) setMeterInterval(value string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.meterInterval = time.Duration(n) * time.Second
+	signalLocked(&s.meterChanged)
 	for id, c := range s.connectors {
 		s.startMeterLocked(id, c)
 	}

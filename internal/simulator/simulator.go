@@ -132,12 +132,18 @@ type Options struct {
 	// AfterFunc schedules the meter samples. Together with Now it lets a test
 	// move time forward instead of waiting for it; see internal/clocktest.
 	AfterFunc func(time.Duration, func()) Stopper
+	// HeartbeatAfterFunc schedules the heartbeats. It is separate from
+	// AfterFunc so that a test counting meter timers does not see the
+	// heartbeat's; it defaults to real time.
+	HeartbeatAfterFunc func(time.Duration, func()) Stopper
 }
 
 // Stopper is a timer that can be cancelled, as time.AfterFunc returns.
 type Stopper interface {
 	Stop() bool
 }
+
+func realAfterFunc(d time.Duration, fn func()) Stopper { return time.AfterFunc(d, fn) }
 
 func (o *Options) applyDefaults() {
 	if o.Version == "" {
@@ -168,7 +174,10 @@ func (o *Options) applyDefaults() {
 		o.Now = time.Now
 	}
 	if o.AfterFunc == nil {
-		o.AfterFunc = func(d time.Duration, fn func()) Stopper { return time.AfterFunc(d, fn) }
+		o.AfterFunc = realAfterFunc
+	}
+	if o.HeartbeatAfterFunc == nil {
+		o.HeartbeatAfterFunc = realAfterFunc
 	}
 }
 
@@ -222,6 +231,11 @@ type Simulator struct {
 	// settings holds the writable configuration keys that change nothing
 	// in the simulator's behaviour, so that a CSMS reads back what it set.
 	settings map[string]string
+	// heartbeatChanged and meterChanged are closed, and replaced, whenever
+	// ChangeConfiguration moves the matching interval, so that a loop parked
+	// on a timer armed with the old value re-arms with the new one at once.
+	heartbeatChanged chan struct{}
+	meterChanged     chan struct{}
 
 	// callMu keeps at most one CALL of ours outstanding, as OCPP-J requires
 	// of each direction. Heartbeats, status reports, transactions and meter
@@ -254,6 +268,9 @@ func New(opts Options) (*Simulator, error) {
 
 		meterInterval: opts.MeterInterval,
 		settings:      defaultSettings(),
+
+		heartbeatChanged: make(chan struct{}),
+		meterChanged:     make(chan struct{}),
 	}
 	for i := 1; i <= opts.Connectors; i++ {
 		s.connectors[i] = &connector{status: v16.StatusAvailable}
@@ -414,6 +431,21 @@ func (s *Simulator) heartbeatInterval() time.Duration {
 	return s.heartbeat
 }
 
+// heartbeatState returns the interval together with the channel that is
+// closed when it next changes, read under one lock so no change is missed.
+func (s *Simulator) heartbeatState() (time.Duration, <-chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.heartbeat, s.heartbeatChanged
+}
+
+// signalLocked wakes everyone waiting on *ch and arms a fresh channel. The
+// caller holds s.mu.
+func signalLocked(ch *chan struct{}) {
+	close(*ch)
+	*ch = make(chan struct{})
+}
+
 // reportInitialStatus tells the CSMS about connector 0 and every connector, as
 // a station does after booting.
 func (s *Simulator) reportInitialStatus(ctx context.Context) error {
@@ -438,16 +470,22 @@ func (s *Simulator) heartbeatLoop(ctx context.Context) {
 	}
 
 	for {
-		timer := time.NewTimer(s.heartbeatInterval())
+		interval, changed := s.heartbeatState()
+		tick := make(chan struct{}, 1)
+		timer := s.opts.HeartbeatAfterFunc(interval, func() { tick <- struct{}{} })
 
 		select {
+		case <-changed:
+			// A new interval counts from now.
+			timer.Stop()
+			continue
 		case <-ctx.Done():
 			timer.Stop()
 			return
 		case <-s.done:
 			timer.Stop()
 			return
-		case <-timer.C:
+		case <-tick:
 		}
 
 		if _, err := s.call(ctx, v16.ActionHeartbeat, struct{}{}); err != nil {

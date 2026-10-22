@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -284,14 +285,104 @@ func TestChangeConfigurationMeterValueSampleInterval(t *testing.T) {
 	if got := change("0"); got != v16.ConfigAccepted {
 		t.Fatalf("set 0 = %q, want Accepted", got)
 	}
-	// The next tick sees 0 and ends the stream without sending.
-	waitFor(t, "the meter timer", func() bool { return clk.Pending() == 1 })
-	clk.Advance(10 * time.Second)
+	// The stream ends at once, without sending.
 	waitFor(t, "the stream to end", func() bool { return clk.Pending() == 0 })
+	clk.Advance(10 * time.Second)
 	noMeterValues(t, events, 100*time.Millisecond)
 
 	if got := change("-5"); got != v16.ConfigRejected {
 		t.Errorf("set -5 = %q, want Rejected", got)
+	}
+}
+
+// TestMeterIntervalChangeIsEffectiveImmediately: Accepted means the change is
+// effective immediately (OCPP 1.6 section 5.3). A stream parked on an hour
+// timer must start sampling at the new interval, and stop at once on 0.
+func TestMeterIntervalChangeIsEffectiveImmediately(t *testing.T) {
+	t.Parallel()
+
+	// armed is the delay of the most recent timer, so the test can tell the
+	// re-armed timer from the old one before it advances the clock.
+	var armed atomic.Int64
+	clk := clocktest.New(time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC))
+	r := newRig(t, func(o *simulator.Options) {
+		o.MeterInterval = time.Hour
+		o.Now = clk.Now
+		o.AfterFunc = func(d time.Duration, fn func()) simulator.Stopper {
+			armed.Store(int64(d))
+			return clk.AfterFunc(d, fn)
+		}
+	})
+	waitFor(t, "the station to come online", func() bool { return r.core.IsOnline(testCP) })
+
+	events, unsubscribe := r.core.Subscribe("test")
+	defer unsubscribe()
+
+	if err := r.sim.StartTransaction(context.Background(), 1); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	waitFor(t, "the hourly meter timer", func() bool { return clk.Pending() == 1 })
+
+	change := func(value string) {
+		var conf v16.ChangeConfigurationConf
+		r.call(t, v16.ActionChangeConfiguration,
+			v16.ChangeConfigurationReq{Key: v16.KeyMeterValueSampleInterval, Value: value}, &conf)
+		if conf.Status != v16.ConfigAccepted {
+			t.Fatalf("set %s = %q, want Accepted", value, conf.Status)
+		}
+	}
+
+	change("10")
+	waitFor(t, "the timer to be re-armed at 10 s", func() bool { return armed.Load() == int64(10*time.Second) })
+	clk.Advance(10 * time.Second)
+	nextMeterValues(t, events)
+
+	// Switching off ends the stream without waiting for the next tick.
+	change("0")
+	waitFor(t, "the stream to end", func() bool { return clk.Pending() == 0 })
+	clk.Advance(time.Hour)
+	noMeterValues(t, events, 100*time.Millisecond)
+}
+
+// TestHeartbeatIntervalChangeIsEffectiveImmediately: a CSMS that lowers the
+// interval after boot must not wait out the old one.
+func TestHeartbeatIntervalChangeIsEffectiveImmediately(t *testing.T) {
+	t.Parallel()
+
+	var armed atomic.Int64
+	clk := clocktest.New(time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC))
+	r := newRig(t, func(o *simulator.Options) {
+		o.HeartbeatAfterFunc = func(d time.Duration, fn func()) simulator.Stopper {
+			armed.Store(int64(d))
+			return clk.AfterFunc(d, fn)
+		}
+	})
+	waitFor(t, "the station to come online", func() bool { return r.core.IsOnline(testCP) })
+	// The CSMS handed out 60 s at boot.
+	waitFor(t, "the heartbeat timer", func() bool { return clk.Pending() == 1 })
+
+	events, unsubscribe := r.core.Subscribe("test")
+	defer unsubscribe()
+
+	var conf v16.ChangeConfigurationConf
+	r.call(t, v16.ActionChangeConfiguration,
+		v16.ChangeConfigurationReq{Key: v16.KeyHeartbeatInterval, Value: "10"}, &conf)
+	if conf.Status != v16.ConfigAccepted {
+		t.Fatalf("status %q, want Accepted", conf.Status)
+	}
+
+	waitFor(t, "the timer to be re-armed at 10 s", func() bool { return armed.Load() == int64(10*time.Second) })
+	clk.Advance(10 * time.Second)
+	timeout := time.After(3 * time.Second)
+	for {
+		select {
+		case e := <-events:
+			if e.Kind == core.EventHeartbeat {
+				return
+			}
+		case <-timeout:
+			t.Fatal("no heartbeat 10 s after the interval was lowered from 60 s")
+		}
 	}
 }
 

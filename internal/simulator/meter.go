@@ -143,6 +143,7 @@ func (s *Simulator) meterLoop(connectorID, txID int, stop <-chan struct{}) {
 	for {
 		s.mu.Lock()
 		interval, on := s.meterOnLocked(connectorID, stop)
+		changed := s.meterChanged
 		s.mu.Unlock()
 		if !on {
 			return
@@ -152,6 +153,11 @@ func (s *Simulator) meterLoop(connectorID, txID int, stop <-chan struct{}) {
 		timer := s.opts.AfterFunc(interval, func() { tick <- struct{}{} })
 		select {
 		case <-tick:
+		case <-changed:
+			// A new interval counts from now; 0 ends the stream at the top
+			// of the loop.
+			timer.Stop()
+			continue
 		case <-stop:
 			timer.Stop()
 			return
