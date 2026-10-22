@@ -132,6 +132,9 @@ type harness struct {
 	server *ocpi.Server
 	http   *httptest.Server
 	logs   *syncBuffer
+	// gate lets a test hold one request between the Authenticator and its
+	// handler.
+	gate *gatedAuth
 }
 
 func exampleConfig(t *testing.T) *config.Config {
@@ -164,7 +167,8 @@ func newHarnessOn(t *testing.T, store *statetest.Store, logs *syncBuffer) *harne
 		BusinessName: cfg.OCPIBusinessName(),
 		Log:          log,
 	})
-	s, err := ocpi.New(ocpi.Options{PublicBaseURL: cfg.OCPI.PublicBaseURL, Auth: reg.Authenticator(), Log: log})
+	gate := &gatedAuth{inner: reg.Authenticator()}
+	s, err := ocpi.New(ocpi.Options{PublicBaseURL: cfg.OCPI.PublicBaseURL, Auth: gate, Log: log})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +177,7 @@ func newHarnessOn(t *testing.T, store *statetest.Store, logs *syncBuffer) *harne
 	}
 	h := httptest.NewServer(s)
 	t.Cleanup(h.Close)
-	return &harness{t: t, cfg: cfg, store: store, reg: reg, server: s, http: h, logs: logs}
+	return &harness{t: t, cfg: cfg, store: store, reg: reg, server: s, http: h, logs: logs, gate: gate}
 }
 
 type reply struct {
@@ -195,6 +199,8 @@ func (h *harness) do(method, path, token string, body any) reply {
 	case nil:
 	case string:
 		r = strings.NewReader(b)
+	case io.Reader:
+		r = b
 	default:
 		raw, err := json.Marshal(b)
 		if err != nil {
@@ -437,26 +443,30 @@ func TestConcurrentPostsRegisterOnce(t *testing.T) {
 	t.Parallel()
 	h, emsp := newHarness(t), newFakeEMSP(t)
 
-	statuses := make(chan int, 2)
+	registered := make(chan bool, 2)
 	var wg sync.WaitGroup
 	for range 2 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			statuses <- h.do(http.MethodPost, "credentials", h.cfg.OCPI.TokenA, theirCredentials(tokenB, emsp.versionsURL())).status
+			r := h.do(http.MethodPost, "credentials", h.cfg.OCPI.TokenA, theirCredentials(tokenB, emsp.versionsURL()))
+			registered <- r.status == http.StatusOK && r.env.StatusCode == 1000
 		}()
 	}
 	wg.Wait()
-	close(statuses)
+	close(registered)
 
-	count := map[int]int{}
-	for s := range statuses {
-		count[s]++
+	count := 0
+	for ok := range registered {
+		if ok {
+			count++
+		}
 	}
-	// The loser either saw the registration (405) or was refused TOKEN_A
-	// because it was already gone (401); it never registers twice.
-	if count[http.StatusOK] != 1 {
-		t.Errorf("statuses = %v, want exactly one 200", count)
+	// The loser was refused as busy (2000), saw the registration (405) or was
+	// refused TOKEN_A because it was already gone (401); it never registers
+	// twice.
+	if count != 1 {
+		t.Errorf("%d POSTs registered, want exactly one", count)
 	}
 	if n := len(emsp.got()); n != 2 {
 		t.Errorf("eMSP was called %d times, want one handshake (2)", n)
