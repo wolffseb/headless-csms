@@ -673,6 +673,8 @@ func TestReservationIDOnlyForTheReservedTag(t *testing.T) {
 		{"local start, another tag", "SOMEONEELSE", "", false},
 		{"remote start, reserved tag", "RESERVED", "RESERVED", true},
 		{"remote start, another tag", "RESERVED", "SOMEONEELSE", false},
+		{"local start, reserved tag in other case", strings.ToLower(testTag), "", true},
+		{"remote start, reserved tag in other case", "RESERVED", "reserved", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ignore := goleak.IgnoreCurrent()
