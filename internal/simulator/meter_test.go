@@ -490,19 +490,29 @@ func TestMeterValuesShareTheCallSlot(t *testing.T) {
 		t.Fatalf("simulator transaction = %d, want the CSMS's %d", got, txID)
 	}
 
-	// Status reports on the other connector, racing the stream.
+	// Status reports on the other connector, racing the stream. They keep
+	// going through the stop, so that a sample is usually queued for the
+	// slot at the moment StopTransaction takes it.
 	var reporters sync.WaitGroup
+	quit := make(chan struct{})
 	reporters.Add(1)
 	go func() {
 		defer reporters.Done()
-		for range 5 {
+		for {
+			select {
+			case <-quit:
+				return
+			default:
+			}
 			_ = sim.SetConnectorStatus(ctx, 2, v16.StatusAvailable)
 		}
 	}()
 
 	waitFor(t, "a few samples", func() bool { return f.count(v16.ActionMeterValues) >= 5 })
+	err = sim.StopTransaction(ctx, 1)
+	close(quit)
 	reporters.Wait()
-	if err := sim.StopTransaction(ctx, 1); err != nil {
+	if err != nil {
 		t.Fatalf("stop: %v", err)
 	}
 	// Long enough for a leftover tick to show up if the stream survived.

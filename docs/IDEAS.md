@@ -181,8 +181,8 @@ where it was decided.
 - **Set the station's HeartbeatInterval after boot.** Send `ChangeConfiguration
   HeartbeatInterval=<charger.heartbeat_interval>` once the station has booted, so its
   setting matches the interval cpms gave it in the BootNotification response (standard 1.6
-  Core). A v16-only method, not on the version-agnostic interface, and the simulator needs
-  a handler for it. Some stations, such as rey, report a stale setting while heartbeating at
+  Core). A v16-only method, not on the version-agnostic interface. The simulator already
+  answers it (#34). Some stations, such as rey, report a stale setting while heartbeating at
   the BootNotification interval, which is what made `cpms probe` overclaim; see the review
   on #31 (https://github.com/wolffseb/headless-csms/pull/31#pullrequestreview-5605519636).
 - **OCPI Sessions module**, minimal, so Fryte can learn the `session_id` it needs for

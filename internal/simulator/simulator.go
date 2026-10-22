@@ -122,7 +122,9 @@ type Options struct {
 	// ChangeConfiguration MeterValueSampleInterval.
 	//
 	// It is a duration rather than whole seconds so that tests can stream in
-	// milliseconds; GetConfiguration reports it rounded up to a second.
+	// milliseconds; GetConfiguration reports it rounded up to a second. The
+	// register counts whole Wh, so below about 75 ms of wall time a sample
+	// can repeat the previous reading.
 	MeterInterval time.Duration
 
 	Log *slog.Logger
