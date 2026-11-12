@@ -6,5 +6,10 @@ config.yaml
 
 # Runtime state owned by the tool.
 state.json
+state.json.lock
 
 .DS_Store
+
+# Claude Code: agent worktrees and machine-local agent memory are not shared.
+.claude/worktrees/
+.claude/agent-memory-local/
