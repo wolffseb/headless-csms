@@ -96,10 +96,12 @@ func TestMapStatus(t *testing.T) {
 		want core.EVSEStatus
 	}{
 		{v16.StatusAvailable, core.StatusAvailable},
-		// A car is plugged in but no energy flows; the connector can still be
-		// started, so AVAILABLE is the honest answer.
+		// Preparing is a deliberate deviation from OCPP §7.7: the driver
+		// plugs in first and starts from the app, so it stays AVAILABLE.
 		{v16.StatusPreparing, core.StatusAvailable},
-		{v16.StatusFinishing, core.StatusAvailable},
+		// Finishing: the last car is still at the connector, which is what
+		// OCPI means by BLOCKED.
+		{v16.StatusFinishing, core.StatusBlocked},
 		{v16.StatusCharging, core.StatusCharging},
 		// Suspensions are pauses inside a session, not the end of one.
 		{v16.StatusSuspendedEV, core.StatusCharging},

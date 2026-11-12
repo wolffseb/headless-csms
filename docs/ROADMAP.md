@@ -138,7 +138,8 @@ OCPP 1.6 `ChargePointStatus` → OCPI 2.3 `Status`, in one table with its own un
 
 | OCPP 1.6 | OCPI |
 |---|---|
-| Available, Preparing, Finishing | `AVAILABLE` |
+| Available, Preparing | `AVAILABLE` |
+| Finishing | `BLOCKED` |
 | Charging, SuspendedEV, SuspendedEVSE | `CHARGING` |
 | Reserved | `RESERVED` |
 | Unavailable | `INOPERATIVE` |

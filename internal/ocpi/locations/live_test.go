@@ -108,6 +108,17 @@ func TestLiveStatusFromTheSimulator(t *testing.T) {
 		t.Errorf("Location last_updated = %s, want past %s and equal to the EVSE's %s", got, locBefore, after.LastUpdated)
 	}
 
+	// The session ends but the car stays: Finishing is BLOCKED, not
+	// AVAILABLE, until the station reports Available.
+	if err := sim.SetConnectorStatus(ctx, target.OCPPConnectorID, "Finishing"); err != nil {
+		t.Fatal(err)
+	}
+	waitEVSE(core.StatusBlocked)
+	if err := sim.SetConnectorStatus(ctx, target.OCPPConnectorID, "Available"); err != nil {
+		t.Fatal(err)
+	}
+	waitEVSE(core.StatusAvailable)
+
 	// The station drops off: every EVSE reads UNKNOWN.
 	sim.Close()
 	sim.Wait()

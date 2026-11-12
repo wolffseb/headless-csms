@@ -21,19 +21,29 @@ const (
 // statusMap translates OCPP 1.6 connector status to the OCPI 2.3 status the
 // domain model speaks.
 //
-// Two groupings are worth explaining, because OCPI has a coarser vocabulary
+// Three choices are worth explaining, because OCPI has a coarser vocabulary
 // than OCPP here:
 //
-//   - Preparing and Finishing both mean "a car is at the connector but no
-//     energy is flowing". OCPI 2.3 has no state for that, and AVAILABLE is the
-//     honest answer: the connector can still be started.
+//   - Finishing is BLOCKED. OCPP 1.6 §7.7 defines it as a stopped transaction
+//     whose connector is "not yet available for a new user" (cable still in,
+//     vehicle still in the bay), and OCPI 2.3 AVAILABLE means "able to start a
+//     new charging session". BLOCKED ("not accessible because of a physical
+//     barrier, i.e. a car") is the state for that; AVAILABLE would send the
+//     next driver to an occupied bay.
+//   - Preparing stays AVAILABLE, a deliberate deviation from the letter of
+//     §7.7 ("no longer available for a new user"). Drivers plug in first and
+//     start from the app, so a roaming partner must still be able to route
+//     someone to a connector that is Preparing. Common practice agrees (SAP
+//     ev-server maps Preparing to AVAILABLE). The cost: a car that is plugged
+//     in and abandoned shows AVAILABLE, and the start is refused by the
+//     station.
 //   - SuspendedEV and SuspendedEVSE are pauses inside a running session, not
 //     the end of one, so they stay CHARGING rather than flapping the EVSE back
 //     to AVAILABLE mid-session and confusing a roaming partner.
 var statusMap = map[string]core.EVSEStatus{
 	StatusAvailable:     core.StatusAvailable,
 	StatusPreparing:     core.StatusAvailable,
-	StatusFinishing:     core.StatusAvailable,
+	StatusFinishing:     core.StatusBlocked,
 	StatusCharging:      core.StatusCharging,
 	StatusSuspendedEV:   core.StatusCharging,
 	StatusSuspendedEVSE: core.StatusCharging,
