@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -30,6 +31,7 @@ func newSimulateChargerCommand(opts *options) *cobra.Command {
 		version    string
 		connectors int
 		scenario   string
+		meterEvery time.Duration
 		idTag      string
 		vendor     string
 		model      string
@@ -44,7 +46,9 @@ func newSimulateChargerCommand(opts *options) *cobra.Command {
 			"With no flags it reads the config file and points itself at the CSMS\n" +
 			"cpms itself would serve, so `cpms run` in one terminal and\n" +
 			"`cpms simulate charger` in another is a working pair.\n\n" +
-			"Scenarios make the station misbehave on purpose: " + scenarioList() + ".",
+			"Scenarios make the station misbehave on purpose: " + scenarioList() + ".\n\n" +
+			"--meter-interval makes a running session send MeterValues (energy, power,\n" +
+			"current, SoC) that often, whatever the scenario.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			logger, err := newLogger(cmd.ErrOrStderr(), logLevel)
@@ -85,6 +89,8 @@ func newSimulateChargerCommand(opts *options) *cobra.Command {
 				Model:      model,
 				Scenario:   simulator.Scenario(scenario),
 				Log:        logger,
+
+				MeterInterval: meterEvery,
 			})
 			if err != nil {
 				return err
@@ -107,6 +113,7 @@ func newSimulateChargerCommand(opts *options) *cobra.Command {
 	f.StringVar(&version, "ocpp", string(ocpp.Version16), "OCPP version to speak")
 	f.IntVar(&connectors, "connectors", 0, "number of connectors (default: the config's EVSE count)")
 	f.StringVar(&scenario, "scenario", string(simulator.ScenarioNormal), "misbehaviour to simulate: "+scenarioList())
+	f.DurationVar(&meterEvery, "meter-interval", 0, "send MeterValues this often during a transaction, e.g. 10s (default: off)")
 	f.StringVar(&idTag, "tag", "", "RFID tag to quote when starting locally (default: the config's default_id_tag)")
 	f.StringVar(&vendor, "vendor", "", "chargePointVendor to report")
 	f.StringVar(&model, "model", "", "chargePointModel to report")

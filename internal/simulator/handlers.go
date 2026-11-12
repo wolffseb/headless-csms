@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
@@ -49,6 +48,8 @@ func (s *Simulator) HandleCall(ctx context.Context, _, action string, payload js
 		return s.triggerMessage(ctx, payload)
 	case v16.ActionGetConfiguration:
 		return s.getConfiguration(payload)
+	case v16.ActionChangeConfiguration:
+		return s.changeConfiguration(payload)
 	case v16.ActionChangeAvailability:
 		return s.changeAvailability(ctx, payload)
 	case v16.ActionReset:
@@ -250,7 +251,7 @@ func (s *Simulator) triggerMessage(ctx context.Context, payload json.RawMessage)
 		s.after(ctx, func(ctx context.Context) { _ = s.boot(ctx) })
 	case v16.ActionHeartbeat:
 		s.after(ctx, func(ctx context.Context) {
-			_, _ = s.conn.Call(ctx, v16.ActionHeartbeat, struct{}{})
+			_, _ = s.call(ctx, v16.ActionHeartbeat, struct{}{})
 		})
 	case v16.ActionStatusNotification:
 		status := s.stationStatus()
@@ -263,66 +264,6 @@ func (s *Simulator) triggerMessage(ctx context.Context, payload json.RawMessage)
 	}
 
 	return v16.TriggerMessageConf{Status: v16.TriggerAccepted}, nil
-}
-
-func (s *Simulator) getConfiguration(payload json.RawMessage) (any, *ocpp.RPCError) {
-	req, rpcErr := decodeCommand[v16.GetConfigurationReq](payload)
-	if rpcErr != nil {
-		return nil, rpcErr
-	}
-
-	// The Reservation profile is advertised unless the scenario says the
-	// station refuses reservations, so that `cpms probe` reports the same
-	// capability the station then actually honours.
-	profiles := "Core,FirmwareManagement,RemoteTrigger,Reservation"
-	if s.opts.Scenario == ScenarioRejectReserve {
-		profiles = "Core,FirmwareManagement,RemoteTrigger"
-	}
-	if s.opts.FeatureProfiles != "" {
-		profiles = s.opts.FeatureProfiles
-	}
-
-	// The values are what a station set up for a CSMS that decides every
-	// authorization itself: no local whitelist, no shortcuts.
-	var all []v16.ConfigurationKey
-	for _, key := range []v16.ConfigurationKey{
-		{Key: v16.KeySupportedFeatureProfiles, Readonly: true, Value: profiles},
-		{Key: v16.KeyNumberOfConnectors, Readonly: true,
-			Value: fmt.Sprintf("%d", s.opts.Connectors)},
-		{Key: v16.KeyHeartbeatInterval, Readonly: false,
-			Value: fmt.Sprintf("%d", int(s.heartbeatInterval().Seconds()))},
-		{Key: v16.KeyConnectionTimeOut, Readonly: false, Value: "60"},
-		{Key: v16.KeyMeterValueSampleInterval, Readonly: false, Value: "0"},
-		{Key: v16.KeyAuthorizeRemoteTxRequests, Readonly: false, Value: "false"},
-		{Key: v16.KeyLocalAuthListEnabled, Readonly: false, Value: "false"},
-		{Key: v16.KeyLocalPreAuthorize, Readonly: false, Value: "false"},
-		{Key: v16.KeyLocalAuthorizeOffline, Readonly: false, Value: "false"},
-		{Key: v16.KeyReserveConnectorZeroSupported, Readonly: true, Value: "false"},
-	} {
-		if !slices.Contains(s.opts.UnreportedKeys, key.Key) {
-			all = append(all, key)
-		}
-	}
-
-	if len(req.Key) == 0 {
-		return v16.GetConfigurationConf{ConfigurationKey: all}, nil
-	}
-
-	conf := v16.GetConfigurationConf{}
-	for _, want := range req.Key {
-		found := false
-		for _, key := range all {
-			if key.Key == want {
-				conf.ConfigurationKey = append(conf.ConfigurationKey, key)
-				found = true
-				break
-			}
-		}
-		if !found {
-			conf.UnknownKey = append(conf.UnknownKey, want)
-		}
-	}
-	return conf, nil
 }
 
 func (s *Simulator) changeAvailability(ctx context.Context, payload json.RawMessage) (any, *ocpp.RPCError) {
@@ -370,7 +311,7 @@ func (s *Simulator) startTransaction(ctx context.Context, connectorID int, idTag
 		s.mu.Unlock()
 		return fmt.Errorf("no connector %d", connectorID)
 	}
-	meterStart := c.meter
+	meterStart := c.meter.register()
 	s.mu.Unlock()
 
 	// Preparing first: a car is connected but no energy flows yet.
@@ -378,7 +319,7 @@ func (s *Simulator) startTransaction(ctx context.Context, connectorID int, idTag
 		return err
 	}
 
-	raw, err := s.conn.Call(ctx, v16.ActionStartTransaction, v16.StartTransactionReq{
+	raw, err := s.call(ctx, v16.ActionStartTransaction, v16.StartTransactionReq{
 		ConnectorID: connectorID,
 		IDTag:       idTag,
 		MeterStart:  meterStart,
@@ -401,6 +342,8 @@ func (s *Simulator) startTransaction(ctx context.Context, connectorID int, idTag
 	c.transactionID = conf.TransactionID
 	// Starting a session consumes any reservation held on the connector.
 	c.reservationID = 0
+	c.meter.begin(s.opts.Now())
+	s.startMeterLocked(connectorID, c)
 	s.mu.Unlock()
 
 	s.log.Info("transaction started",
@@ -410,26 +353,9 @@ func (s *Simulator) startTransaction(ctx context.Context, connectorID int, idTag
 
 // stopTransaction closes a session and reports it.
 func (s *Simulator) stopTransaction(ctx context.Context, connectorID int, reason string) error {
-	s.mu.Lock()
-	c, ok := s.connectors[connectorID]
-	if !ok || c.transactionID == 0 {
-		s.mu.Unlock()
-		return fmt.Errorf("no transaction on connector %d", connectorID)
-	}
-	txID := c.transactionID
-	// Stand in for energy delivered, so the meter moves across a session.
-	c.meter += 1000
-	meterStop := c.meter
-	c.transactionID = 0
-	s.mu.Unlock()
-
-	if _, err := s.conn.Call(ctx, v16.ActionStopTransaction, v16.StopTransactionReq{
-		TransactionID: txID,
-		MeterStop:     meterStop,
-		Timestamp:     s.opts.Now().UTC().Format(time.RFC3339),
-		Reason:        reason,
-	}); err != nil {
-		return fmt.Errorf("StopTransaction: %w", err)
+	txID, err := s.sendStopTransaction(ctx, connectorID, reason)
+	if err != nil {
+		return err
 	}
 
 	s.log.Info("transaction stopped",
@@ -440,6 +366,48 @@ func (s *Simulator) stopTransaction(ctx context.Context, connectorID int, reason
 		return err
 	}
 	return s.SetConnectorStatus(ctx, connectorID, v16.StatusAvailable)
+}
+
+// sendStopTransaction ends the session's meter stream and sends
+// StopTransaction.
+//
+// It holds the CALL slot from before the meter is read until the answer, the
+// same slot a meter sample holds, so that no sample of this session can go
+// out after its StopTransaction.
+func (s *Simulator) sendStopTransaction(ctx context.Context, connectorID int, reason string) (int, error) {
+	s.callMu.Lock()
+	defer s.callMu.Unlock()
+
+	s.mu.Lock()
+	c, ok := s.connectors[connectorID]
+	if !ok || c.transactionID == 0 {
+		s.mu.Unlock()
+		return 0, fmt.Errorf("no transaction on connector %d", connectorID)
+	}
+	txID := c.transactionID
+	metered := c.stopMeter != nil || c.meter.streamed
+	stopMeterLocked(c)
+	if !metered {
+		// Nothing was streamed, so stand in for energy delivered, so the
+		// meter still moves across a session.
+		c.meter.mWh += legacyStopMWh
+	}
+	// With a stream, meterStop is the last reading the CSMS was sent. The
+	// energy since that sample is not counted, as on a station whose register
+	// is read when it samples.
+	meterStop := c.meter.register()
+	c.transactionID = 0
+	s.mu.Unlock()
+
+	if _, err := s.conn.Call(ctx, v16.ActionStopTransaction, v16.StopTransactionReq{
+		TransactionID: txID,
+		MeterStop:     meterStop,
+		Timestamp:     s.opts.Now().UTC().Format(time.RFC3339),
+		Reason:        reason,
+	}); err != nil {
+		return 0, fmt.Errorf("StopTransaction: %w", err)
+	}
+	return txID, nil
 }
 
 // StartTransaction begins a session locally, standing in for someone holding

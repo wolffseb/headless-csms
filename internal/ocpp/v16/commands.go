@@ -16,6 +16,7 @@ const (
 	ActionUnlockConnector        = "UnlockConnector"
 	ActionTriggerMessage         = "TriggerMessage"
 	ActionGetConfiguration       = "GetConfiguration"
+	ActionChangeConfiguration    = "ChangeConfiguration"
 	ActionChangeAvailability     = "ChangeAvailability"
 	ActionReset                  = "Reset"
 )
@@ -154,6 +155,25 @@ const (
 	KeyConnectionTimeOut             = "ConnectionTimeOut"
 	KeyMeterValueSampleInterval      = "MeterValueSampleInterval"
 )
+
+// ChangeConfigurationReq sets one configuration key.
+type ChangeConfigurationReq struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// ConfigurationStatus values for ChangeConfiguration.conf.
+const (
+	ConfigAccepted       = "Accepted"
+	ConfigRejected       = "Rejected"
+	ConfigRebootRequired = "RebootRequired"
+	ConfigNotSupported   = "NotSupported"
+)
+
+// ChangeConfigurationConf answers a ChangeConfigurationReq.
+type ChangeConfigurationConf struct {
+	Status string `json:"status"`
+}
 
 // ChangeAvailabilityReq takes a connector, or the whole station with
 // connector 0, in or out of service.
