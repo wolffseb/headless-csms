@@ -79,7 +79,7 @@ func (s *Service) StartTransaction(cpID string, t TransactionStart) Transaction 
 	s.mu.Lock()
 	cp := s.ensure(cpID)
 	uid := s.evseUID(cpID, t.ConnectorID)
-	cp.addEVSE(uid, t.ConnectorID)
+	cp.addEVSE(uid, t.ConnectorID, s.now())
 
 	if old, ok := cp.transactions[t.ID]; ok && old.Active() {
 		s.log.Warn("station reused an active transaction id; replacing it",

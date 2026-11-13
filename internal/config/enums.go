@@ -17,10 +17,11 @@ var connectorStandards = set(
 	"IEC_60309_2_three_64",
 	"IEC_62196_T1", "IEC_62196_T1_COMBO", "IEC_62196_T2", "IEC_62196_T2_COMBO",
 	"IEC_62196_T3A", "IEC_62196_T3C",
+	"MCS",
 	"NEMA_5_20", "NEMA_6_30", "NEMA_6_50", "NEMA_10_30", "NEMA_10_50",
 	"NEMA_14_30", "NEMA_14_50",
 	"PANTOGRAPH_BOTTOM_UP", "PANTOGRAPH_TOP_DOWN",
-	"TESLA_R", "TESLA_S",
+	"SAE_J3400", "TESLA_R", "TESLA_S",
 )
 
 // connectorFormats is OCPI 2.3.0 ConnectorFormat.

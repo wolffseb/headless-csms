@@ -2,10 +2,13 @@ package config_test
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+	// As in main: the time_zone check must not depend on the host's zoneinfo.
+	_ "time/tzdata"
 
 	"github.com/wolffseb/cli-cpms/internal/config"
 )
@@ -45,6 +48,7 @@ location:
   coordinates:
     latitude: "52.520008"
     longitude: "13.404954"
+  time_zone: Europe/Berlin
   evses:
     - uid: ALP-HYC-001-1
       evse_id: DE*FRY*E001*1
@@ -195,6 +199,53 @@ func TestInvalidConfigsNameTheOffendingField(t *testing.T) {
 		mutate:    rep("\n  country: DEU", "\n  country: DE", 1),
 		wantPaths: []string{"location.country"},
 	}, {
+		name:      "time zone missing",
+		mutate:    rep("  time_zone: Europe/Berlin\n", "", 1),
+		wantPaths: []string{"location.time_zone"},
+	}, {
+		name:      "time zone is not an IANA name",
+		mutate:    rep("time_zone: Europe/Berlin", "time_zone: Europe/Munich", 1),
+		wantPaths: []string{"location.time_zone"},
+	}, {
+		name:      "time zone is an offset, not a zone",
+		mutate:    rep("time_zone: Europe/Berlin", `time_zone: "+01:00"`, 1),
+		wantPaths: []string{"location.time_zone"},
+	}, {
+		// time.LoadLocation accepts "Local", which names the host's zone.
+		name:      "time zone is the host's local zone",
+		mutate:    rep("time_zone: Europe/Berlin", "time_zone: Local", 1),
+		wantPaths: []string{"location.time_zone"},
+	}, {
+		// Case-insensitive file systems (macOS) load these; Linux does not.
+		// The spelling is checked here so every host agrees.
+		name:      "time zone in lower case",
+		mutate:    rep("time_zone: Europe/Berlin", "time_zone: europe/berlin", 1),
+		wantPaths: []string{"location.time_zone"},
+	}, {
+		name:      "time zone in upper case",
+		mutate:    rep("time_zone: Europe/Berlin", "time_zone: EUROPE/BERLIN", 1),
+		wantPaths: []string{"location.time_zone"},
+	}, {
+		name:      "time zone in mixed case",
+		mutate:    rep("time_zone: Europe/Berlin", "time_zone: Europe/BerLin", 1),
+		wantPaths: []string{"location.time_zone"},
+	}, {
+		name:      "evse uid differs only in case",
+		mutate:    rep("uid: ALP-HYC-001-2", "uid: alp-hyc-001-1", 1),
+		wantPaths: []string{"location.evses[1].uid"},
+	}, {
+		name:      "evse id differs only in case",
+		mutate:    rep("evse_id: DE*FRY*E001*2", "evse_id: de*fry*e001*1", 1),
+		wantPaths: []string{"location.evses[1].evse_id"},
+	}, {
+		name: "connector id differs only in case",
+		mutate: rep("          max_electric_power: 400000\n    - uid: ALP-HYC-001-2",
+			"          max_electric_power: 400000\n"+
+				"        - id: a\n          standard: IEC_62196_T2_COMBO\n          format: CABLE\n          power_type: DC\n          max_voltage: 920\n          max_amperage: 500\n"+
+				"        - id: A\n          standard: IEC_62196_T2_COMBO\n          format: CABLE\n          power_type: DC\n          max_voltage: 920\n          max_amperage: 500\n"+
+				"    - uid: ALP-HYC-001-2", 1),
+		wantPaths: []string{"location.evses[0].connectors[2].id"},
+	}, {
 		name:      "duplicate ocpp connector id",
 		mutate:    rep("ocpp_connector_id: 2", "ocpp_connector_id: 1", 1),
 		wantPaths: []string{"location.evses[1].ocpp_connector_id"},
@@ -301,6 +352,43 @@ func TestLoadValidFile(t *testing.T) {
 	if got, want := len(cfg.Location.EVSEs), 2; got != want {
 		t.Errorf("evse count = %d, want %d", got, want)
 	}
+
+	// Load records when the file last changed; OCPI's last_updated for the
+	// static location data comes from it.
+	info, err := os.Stat(filepath.Join("testdata", "valid.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.ModTime.Equal(info.ModTime()) {
+		t.Errorf("ModTime = %v, want the file's %v", cfg.ModTime, info.ModTime())
+	}
+}
+
+func TestPublishCanBeTurnedOff(t *testing.T) {
+	t.Parallel()
+
+	in := rep("  time_zone: Europe/Berlin\n", "  time_zone: Europe/Berlin\n  publish: false\n", 1)(baseYAML)
+	cfg, err := config.Parse(strings.NewReader(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Location.IsPublished() {
+		t.Error("publish: false was read as true")
+	}
+}
+
+func TestReservableCanBeTurnedOff(t *testing.T) {
+	t.Parallel()
+
+	in := rep("      ocpp_connector_id: 2\n", "      ocpp_connector_id: 2\n      reservable: false\n", 1)(baseYAML)
+	cfg, err := config.Parse(strings.NewReader(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Location.EVSEs[0].IsReservable() || cfg.Location.EVSEs[1].IsReservable() {
+		t.Errorf("reservable = %v, %v; want true (default), false",
+			cfg.Location.EVSEs[0].IsReservable(), cfg.Location.EVSEs[1].IsReservable())
+	}
 }
 
 func TestLoadAppliesDefaults(t *testing.T) {
@@ -324,6 +412,10 @@ func TestLoadAppliesDefaults(t *testing.T) {
 		{"ocpi_bind", cfg.Server.OCPIBind, config.DefaultOCPIBind},
 		{"push.debounce", cfg.OCPI.Push.Debounce.Duration(), config.DefaultPushDebounce},
 		{"push.max_retries", cfg.OCPI.Push.MaxRetries, config.DefaultPushMaxRetries},
+		// publish=false would hide the location from every driver: cpms
+		// never sends publish_allowed_to.
+		{"location.publish", cfg.Location.IsPublished(), true},
+		{"location.evses[0].reservable", cfg.Location.EVSEs[0].IsReservable(), true},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -449,4 +541,20 @@ func contains(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// OCPI 2.3.0 added MCS and SAE_J3400 to ConnectorType.
+func TestConnectorStandardsAddedIn230(t *testing.T) {
+	t.Parallel()
+
+	for _, standard := range []string{"MCS", "SAE_J3400"} {
+		t.Run(standard, func(t *testing.T) {
+			t.Parallel()
+
+			in := rep("standard: IEC_62196_T2_COMBO", "standard: "+standard, 1)(baseYAML)
+			if _, err := config.Parse(strings.NewReader(in)); err != nil {
+				t.Errorf("%s was rejected: %v", standard, err)
+			}
+		})
+	}
 }

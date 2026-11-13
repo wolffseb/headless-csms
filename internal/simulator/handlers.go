@@ -99,8 +99,10 @@ func (s *Simulator) reserveNow(ctx context.Context, payload json.RawMessage) (an
 		s.mu.Unlock()
 		return v16.ReserveNowConf{Status: v16.ReservationRejected}, nil
 	}
-	// A connector already in a session, or already held, cannot be reserved.
-	if c.transactionID != 0 || c.status == v16.StatusCharging || c.status == v16.StatusPreparing {
+	// A connector already in a session, with a car still at it (Finishing), or
+	// already held, cannot be reserved.
+	if c.transactionID != 0 || c.status == v16.StatusCharging || c.status == v16.StatusPreparing ||
+		c.status == v16.StatusFinishing {
 		s.mu.Unlock()
 		return v16.ReserveNowConf{Status: v16.ReservationOccupied}, nil
 	}

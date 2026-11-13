@@ -67,12 +67,24 @@ location:
   coordinates:
     latitude: "48.134000"
     longitude: "11.539000"
+  # Required by OCPI: the IANA time zone the location is in.
+  time_zone: Europe/Berlin
+  # OCPI's publish flag. true: the partner may show this location to its
+  # drivers, and possibly in public apps if it forwards it. false: only
+  # tokens listed in publish_allowed_to may see it; cpms does not send that
+  # list, so false hides the location from every driver.
+  # Optional, default true.
+  publish: true
   evses:
     - uid: ALP-HYC-001-1
       evse_id: DE*FYT*E001*1
       # OCPP 1.6 addresses this outlet by connector id. 0 is reserved for the
       # charge point as a whole, so EVSEs start at 1.
       ocpp_connector_id: 1
+      # Advertise the OCPI RESERVABLE capability. Set it to false if
+      # `cpms probe` reports the station has no Reservation profile.
+      # Optional, default true.
+      reservable: true
       connectors:
         - id: "1"
           standard: IEC_62196_T2_COMBO

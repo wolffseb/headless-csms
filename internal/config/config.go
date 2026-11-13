@@ -16,6 +16,11 @@ type Config struct {
 	Auth     Auth     `yaml:"auth"`
 	OCPI     OCPI     `yaml:"ocpi"`
 	Location Location `yaml:"location"`
+
+	// ModTime is the config file's modification time, read once by Load. It
+	// is when the static Location data last changed, so OCPI stamps the
+	// connectors' last_updated with it. Parse leaves it zero.
+	ModTime time.Time `yaml:"-"`
 }
 
 // Charger describes the physical charging station we manage.
@@ -94,8 +99,18 @@ type Location struct {
 	PostalCode  string      `yaml:"postal_code"`
 	Country     string      `yaml:"country"`
 	Coordinates Coordinates `yaml:"coordinates"`
-	EVSEs       []EVSE      `yaml:"evses"`
+	// TimeZone is the IANA name of the location's zone, e.g. "Europe/Berlin".
+	// OCPI requires it on every Location.
+	TimeZone string `yaml:"time_zone"`
+	// Publish is OCPI's publish flag. Unset means true: the partner may show
+	// the location to its drivers. false would limit it to the tokens in
+	// publish_allowed_to, which cpms does not send, so no driver would see it.
+	Publish *bool  `yaml:"publish"`
+	EVSEs   []EVSE `yaml:"evses"`
 }
+
+// IsPublished reports the OCPI publish flag; unset means true.
+func (l Location) IsPublished() bool { return l.Publish == nil || *l.Publish }
 
 // Coordinates are decimal degrees as strings, matching OCPI's wire format.
 type Coordinates struct {
@@ -107,11 +122,18 @@ type Coordinates struct {
 // OCPP 1.6 addresses it by an integer connector id. The mapping is explicit
 // here so that nothing anywhere else has to guess it.
 type EVSE struct {
-	UID             string      `yaml:"uid"`
-	EVSEID          string      `yaml:"evse_id"`
-	OCPPConnectorID int         `yaml:"ocpp_connector_id"`
-	Connectors      []Connector `yaml:"connectors"`
+	UID             string `yaml:"uid"`
+	EVSEID          string `yaml:"evse_id"`
+	OCPPConnectorID int    `yaml:"ocpp_connector_id"`
+	// Reservable advertises the OCPI RESERVABLE capability. Unset means true;
+	// set it to false for a station without the Reservation feature profile,
+	// which `cpms probe` reports.
+	Reservable *bool       `yaml:"reservable"`
+	Connectors []Connector `yaml:"connectors"`
 }
+
+// IsReservable reports whether the EVSE is advertised as RESERVABLE.
+func (e EVSE) IsReservable() bool { return e.Reservable == nil || *e.Reservable }
 
 // Connector is an OCPI Connector object.
 type Connector struct {

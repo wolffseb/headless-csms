@@ -91,6 +91,9 @@ type chargePointState struct {
 	// effective is what the rest of cpms sees, and what status-change events
 	// are diffed against.
 	effective map[string]EVSEStatus
+	// changedAt is when each effective status last changed: the moment of its
+	// EventEVSEStatusChanged, or when the EVSE was first tracked.
+	changedAt map[string]time.Time
 
 	transactions map[string]*Transaction
 }
@@ -191,8 +194,9 @@ func New(cfg *config.Config, opts ...Option) *Service {
 
 	if cfg != nil {
 		cp := s.newChargePoint(cfg.Charger.ID)
+		at := s.now()
 		for _, e := range cfg.Location.EVSEs {
-			cp.addEVSE(e.UID, e.OCPPConnectorID)
+			cp.addEVSE(e.UID, e.OCPPConnectorID, at)
 		}
 		s.cps[cp.id] = cp
 	}
@@ -227,17 +231,19 @@ func (s *Service) newChargePoint(id string) *chargePointState {
 		reported:     make(map[string]EVSEStatus),
 		errorCode:    make(map[string]string),
 		effective:    make(map[string]EVSEStatus),
+		changedAt:    make(map[string]time.Time),
 		transactions: make(map[string]*Transaction),
 	}
 }
 
-func (cp *chargePointState) addEVSE(uid string, connectorID int) {
+func (cp *chargePointState) addEVSE(uid string, connectorID int, at time.Time) {
 	if _, ok := cp.effective[uid]; ok {
 		return
 	}
 	cp.order = append(cp.order, uid)
 	cp.connectorIDs[uid] = connectorID
 	cp.effective[uid] = StatusUnknown
+	cp.changedAt[uid] = at
 }
 
 // recompute re-derives every effective EVSE status and returns the changes.
@@ -253,6 +259,7 @@ func (cp *chargePointState) recompute(at time.Time) []Event {
 			continue
 		}
 		cp.effective[uid] = want
+		cp.changedAt[uid] = at
 		events = append(events, Event{
 			Kind:          EventEVSEStatusChanged,
 			At:            at,
@@ -393,7 +400,7 @@ func (s *Service) SetConnectorStatus(cpID string, connectorID int, status EVSESt
 		}
 	} else {
 		uid := s.evseUID(cpID, connectorID)
-		cp.addEVSE(uid, connectorID)
+		cp.addEVSE(uid, connectorID, at)
 		cp.reported[uid] = status
 		cp.errorCode[uid] = errorCode
 	}
@@ -411,7 +418,7 @@ func (s *Service) RecordMeterValues(cpID string, connectorID int, summary string
 	s.mu.Lock()
 	cp := s.ensure(cpID)
 	uid := s.evseUID(cpID, connectorID)
-	cp.addEVSE(uid, connectorID)
+	cp.addEVSE(uid, connectorID, at)
 	cp.lastSeen = at
 	s.mu.Unlock()
 
@@ -454,6 +461,11 @@ type EVSESnapshot struct {
 	ConnectorID int
 	Status      EVSEStatus
 	ErrorCode   string
+	// LastUpdated is when Status last changed, the moment its
+	// EventEVSEStatusChanged was emitted; before any change, when the Service
+	// started tracking the EVSE. A repeated StatusNotification that changes
+	// nothing leaves it alone, so OCPI's last_updated means what it says.
+	LastUpdated time.Time
 }
 
 // ChargePointSnapshot is one charge point as seen by a reader.
@@ -513,6 +525,7 @@ func (s *Service) Snapshot() Snapshot {
 				ConnectorID: cp.connectorIDs[uid],
 				Status:      cp.effective[uid],
 				ErrorCode:   cp.errorCode[uid],
+				LastUpdated: cp.changedAt[uid],
 			})
 		}
 		for _, tx := range cp.transactions {
