@@ -275,6 +275,28 @@ func TestReserveNowOnABusyConnector(t *testing.T) {
 	}
 }
 
+// A connector in Finishing still has the last car at it (OCPP 1.6 §7.7, and
+// BLOCKED in OCPI), so it cannot take a reservation.
+func TestReserveNowOnAFinishingConnector(t *testing.T) {
+	t.Parallel()
+
+	r := newRig(t)
+	waitFor(t, "the station to come online", func() bool { return r.core.IsOnline(testCP) })
+
+	if err := r.sim.SetConnectorStatus(context.Background(), 1, v16.StatusFinishing); err != nil {
+		t.Fatalf("finishing: %v", err)
+	}
+
+	var conf v16.ReserveNowConf
+	r.call(t, v16.ActionReserveNow, v16.ReserveNowReq{
+		ConnectorID: 1, IDTag: testTag, ReservationID: 8,
+	}, &conf)
+
+	if conf.Status != v16.ReservationOccupied {
+		t.Errorf("status = %q, want Occupied for a connector in Finishing", conf.Status)
+	}
+}
+
 func TestCancelReservation(t *testing.T) {
 	t.Parallel()
 
