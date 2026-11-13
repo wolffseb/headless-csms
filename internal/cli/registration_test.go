@@ -70,7 +70,32 @@ func TestRegistrationThroughCPMSRun(t *testing.T) {
 			t.Fatalf("POST credentials: HTTP %d, status_code %d, %v", resp.StatusCode, env.StatusCode, err)
 		}
 	}
+	// getLocations is the seam between registration and Locations: the
+	// module answers only to the token registration grants.
+	locationsURL := "http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(ocpiPort)) + "/ocpi/2.3.0/locations"
+	getLocations := func(token string) int {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, locationsURL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Token "+base64.StdEncoding.EncodeToString([]byte(token)))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
 	register()
+
+	if code := getLocations(cfg.OCPI.TokenC); code != http.StatusOK {
+		t.Errorf("GET locations with TOKEN_C after registration: HTTP %d, want 200", code)
+	}
+	if code := getLocations(cfg.OCPI.TokenA); code != http.StatusUnauthorized {
+		t.Errorf("GET locations with TOKEN_A after registration: HTTP %d, want 401", code)
+	}
 
 	push := emsp.srv.URL + "/2.3.0/locations"
 	st := s.status()
@@ -94,6 +119,9 @@ func TestRegistrationThroughCPMSRun(t *testing.T) {
 	}
 	if st := s.status(); st.OCPI.Registered {
 		t.Errorf("still registered after unregister: %+v", st.OCPI)
+	}
+	if code := getLocations(cfg.OCPI.TokenC); code != http.StatusUnauthorized {
+		t.Errorf("GET locations with TOKEN_C after unregister: HTTP %d, want 401", code)
 	}
 
 	// A partner that cannot be told does not undo the unregistration: the
