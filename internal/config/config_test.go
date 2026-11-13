@@ -216,6 +216,20 @@ func TestInvalidConfigsNameTheOffendingField(t *testing.T) {
 		mutate:    rep("time_zone: Europe/Berlin", "time_zone: Local", 1),
 		wantPaths: []string{"location.time_zone"},
 	}, {
+		// Case-insensitive file systems (macOS) load these; Linux does not.
+		// The spelling is checked here so every host agrees.
+		name:      "time zone in lower case",
+		mutate:    rep("time_zone: Europe/Berlin", "time_zone: europe/berlin", 1),
+		wantPaths: []string{"location.time_zone"},
+	}, {
+		name:      "time zone in upper case",
+		mutate:    rep("time_zone: Europe/Berlin", "time_zone: EUROPE/BERLIN", 1),
+		wantPaths: []string{"location.time_zone"},
+	}, {
+		name:      "time zone in mixed case",
+		mutate:    rep("time_zone: Europe/Berlin", "time_zone: Europe/BerLin", 1),
+		wantPaths: []string{"location.time_zone"},
+	}, {
 		name:      "evse uid differs only in case",
 		mutate:    rep("uid: ALP-HYC-001-2", "uid: alp-hyc-001-1", 1),
 		wantPaths: []string{"location.evses[1].uid"},

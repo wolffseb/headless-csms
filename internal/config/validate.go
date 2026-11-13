@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 )
 
 var (
@@ -216,9 +215,7 @@ func (c *Config) validateLocation(v *validator) {
 	}
 
 	if v.required("location.time_zone", l.TimeZone) {
-		// LoadLocation also takes "Local", which is whatever the host is set
-		// to, not a zone name a roaming partner can use.
-		if _, err := time.LoadLocation(l.TimeZone); err != nil || l.TimeZone == "Local" {
+		if !validTimeZone(l.TimeZone) {
 			v.add("location.time_zone", "%q is not an IANA time zone name, e.g. \"Europe/Berlin\"", l.TimeZone)
 		}
 	}
