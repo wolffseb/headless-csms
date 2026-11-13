@@ -3,8 +3,8 @@ package config
 import (
 	"archive/zip"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +28,11 @@ func TestEveryListedTimeZoneLoads(t *testing.T) {
 func TestTimeZoneListIsCurrent(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(runtime.GOROOT(), "lib", "time", "zoneinfo.zip")
+	out, err := exec.Command("go", "env", "GOROOT").Output()
+	if err != nil {
+		t.Skipf("no go tool to locate tzdata: %v", err)
+	}
+	path := filepath.Join(strings.TrimSpace(string(out)), "lib", "time", "zoneinfo.zip")
 	if _, err := os.Stat(path); err != nil {
 		t.Skipf("no toolchain tzdata at %s", path)
 	}
