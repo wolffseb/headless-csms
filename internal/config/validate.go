@@ -231,6 +231,8 @@ func (c *Config) validateLocation(v *validator) {
 		return
 	}
 
+	// uid, evse_id and connector id are OCPI CiStrings: "a" and "A" name the
+	// same object, so the maps are keyed on the upper-cased value.
 	seenUID := map[string]int{}
 	seenConnectorID := map[int]int{}
 	seenEVSEID := map[string]int{}
@@ -242,10 +244,10 @@ func (c *Config) validateLocation(v *validator) {
 			if len(e.UID) > 36 {
 				v.add(base+".uid", "must be at most 36 characters (OCPI CiString36), got %d", len(e.UID))
 			}
-			if first, dup := seenUID[e.UID]; dup {
+			if first, dup := seenUID[strings.ToUpper(e.UID)]; dup {
 				v.add(base+".uid", "%q is already used by location.evses[%d]", e.UID, first)
 			} else {
-				seenUID[e.UID] = i
+				seenUID[strings.ToUpper(e.UID)] = i
 			}
 		}
 
@@ -253,10 +255,10 @@ func (c *Config) validateLocation(v *validator) {
 			if !evseIDRe.MatchString(e.EVSEID) {
 				v.add(base+".evse_id", "%q does not look like an eMI3 EVSE ID, e.g. \"DE*FRY*E001*1\"", e.EVSEID)
 			}
-			if first, dup := seenEVSEID[e.EVSEID]; dup {
+			if first, dup := seenEVSEID[strings.ToUpper(e.EVSEID)]; dup {
 				v.add(base+".evse_id", "%q is already used by location.evses[%d]", e.EVSEID, first)
 			} else {
-				seenEVSEID[e.EVSEID] = i
+				seenEVSEID[strings.ToUpper(e.EVSEID)] = i
 			}
 		}
 
@@ -285,10 +287,10 @@ func validateConnectors(v *validator, base string, connectors []Connector) {
 		path := fmt.Sprintf("%s.connectors[%d]", base, j)
 
 		if v.required(path+".id", conn.ID) {
-			if first, dup := seen[conn.ID]; dup {
+			if first, dup := seen[strings.ToUpper(conn.ID)]; dup {
 				v.add(path+".id", "%q is already used by %s.connectors[%d]", conn.ID, base, first)
 			} else {
-				seen[conn.ID] = j
+				seen[strings.ToUpper(conn.ID)] = j
 			}
 		}
 

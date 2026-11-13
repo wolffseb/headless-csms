@@ -216,6 +216,22 @@ func TestInvalidConfigsNameTheOffendingField(t *testing.T) {
 		mutate:    rep("time_zone: Europe/Berlin", "time_zone: Local", 1),
 		wantPaths: []string{"location.time_zone"},
 	}, {
+		name:      "evse uid differs only in case",
+		mutate:    rep("uid: ALP-HYC-001-2", "uid: alp-hyc-001-1", 1),
+		wantPaths: []string{"location.evses[1].uid"},
+	}, {
+		name:      "evse id differs only in case",
+		mutate:    rep("evse_id: DE*FRY*E001*2", "evse_id: de*fry*e001*1", 1),
+		wantPaths: []string{"location.evses[1].evse_id"},
+	}, {
+		name: "connector id differs only in case",
+		mutate: rep("          max_electric_power: 400000\n    - uid: ALP-HYC-001-2",
+			"          max_electric_power: 400000\n"+
+				"        - id: a\n          standard: IEC_62196_T2_COMBO\n          format: CABLE\n          power_type: DC\n          max_voltage: 920\n          max_amperage: 500\n"+
+				"        - id: A\n          standard: IEC_62196_T2_COMBO\n          format: CABLE\n          power_type: DC\n          max_voltage: 920\n          max_amperage: 500\n"+
+				"    - uid: ALP-HYC-001-2", 1),
+		wantPaths: []string{"location.evses[0].connectors[2].id"},
+	}, {
 		name:      "duplicate ocpp connector id",
 		mutate:    rep("ocpp_connector_id: 2", "ocpp_connector_id: 1", 1),
 		wantPaths: []string{"location.evses[1].ocpp_connector_id"},
