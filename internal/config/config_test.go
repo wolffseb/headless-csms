@@ -542,3 +542,19 @@ func contains(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+// OCPI 2.3.0 added MCS and SAE_J3400 to ConnectorType.
+func TestConnectorStandardsAddedIn230(t *testing.T) {
+	t.Parallel()
+
+	for _, standard := range []string{"MCS", "SAE_J3400"} {
+		t.Run(standard, func(t *testing.T) {
+			t.Parallel()
+
+			in := rep("standard: IEC_62196_T2_COMBO", "standard: "+standard, 1)(baseYAML)
+			if _, err := config.Parse(strings.NewReader(in)); err != nil {
+				t.Errorf("%s was rejected: %v", standard, err)
+			}
+		})
+	}
+}
