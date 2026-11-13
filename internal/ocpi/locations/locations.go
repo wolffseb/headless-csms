@@ -149,7 +149,10 @@ func buildEVSE(e config.EVSE, staticAt time.Time, live core.EVSESnapshot) EVSE {
 		status = core.StatusUnknown
 	}
 
-	caps := []Capability{CapabilityRemoteStartStop, CapabilityUnlock}
+	caps := []Capability{CapabilityRemoteStartStop}
+	if unlockable(e) {
+		caps = append(caps, CapabilityUnlock)
+	}
 	if e.IsReservable() {
 		caps = append(caps, CapabilityReservable)
 	}
@@ -176,6 +179,20 @@ func buildEVSE(e config.EVSE, staticAt time.Time, live core.EVSESnapshot) EVSE {
 	}
 	evse.LastUpdated = DateTime(updated)
 	return evse
+}
+
+// unlockable reports whether UNLOCK_CAPABLE is honest for the EVSE: OCPP 1.6
+// UnlockConnector releases the cable retention lock of a socket (§5.18), and
+// a tethered cable has none, so the station can only answer NotSupported. One
+// CABLE connector is enough to withhold it, because the command addresses the
+// EVSE, not a connector.
+func unlockable(e config.EVSE) bool {
+	for _, c := range e.Connectors {
+		if c.Format != "SOCKET" {
+			return false
+		}
+	}
+	return true
 }
 
 func latest(a, b time.Time) time.Time {

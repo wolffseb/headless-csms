@@ -19,7 +19,6 @@
       "status": "CHARGING",
       "capabilities": [
         "REMOTE_START_STOP_CAPABLE",
-        "UNLOCK_CAPABLE",
         "RESERVABLE"
       ],
       "connectors": [
@@ -42,7 +41,6 @@
       "status": "AVAILABLE",
       "capabilities": [
         "REMOTE_START_STOP_CAPABLE",
-        "UNLOCK_CAPABLE",
         "RESERVABLE"
       ],
       "connectors": [

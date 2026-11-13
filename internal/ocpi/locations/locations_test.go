@@ -200,14 +200,69 @@ func TestBuildPassesStaticDataThrough(t *testing.T) {
 		t.Errorf("party = %s*%s, want %s*%s", loc.CountryCode, loc.PartyID, cfg.OCPI.CountryCode, cfg.OCPI.PartyID)
 	}
 
-	// RESERVABLE follows config; the rest are always there.
+	// RESERVABLE follows config, UNLOCK_CAPABLE follows the connector
+	// formats (see TestUnlockCapableNeedsEverySocket); remote start/stop is
+	// always there.
 	for i, e := range loc.EVSEs {
-		want := []locations.Capability{locations.CapabilityRemoteStartStop, locations.CapabilityUnlock}
+		want := []locations.Capability{locations.CapabilityRemoteStartStop}
+		if allSockets(cfg.Location.EVSEs[i]) {
+			want = append(want, locations.CapabilityUnlock)
+		}
 		if cfg.Location.EVSEs[i].IsReservable() {
 			want = append(want, locations.CapabilityReservable)
 		}
 		if !equal(e.Capabilities, want) {
 			t.Errorf("%s capabilities = %v, want %v", e.UID, e.Capabilities, want)
+		}
+	}
+}
+
+func allSockets(e config.EVSE) bool {
+	for _, c := range e.Connectors {
+		if c.Format != "SOCKET" {
+			return false
+		}
+	}
+	return true
+}
+
+// A tethered cable has no retention lock to release (OCPP 1.6 §5.18, OCPI
+// UNLOCK_CAPABLE), so the capability needs every connector to be a SOCKET.
+func TestUnlockCapableNeedsEverySocket(t *testing.T) {
+	t.Parallel()
+
+	cfg := loadConfig(t, filepath.Join("testdata", "config.yaml"), staticAt)
+	evse := cfg.Location.EVSEs[0]
+	template := evse.Connectors[0]
+	mk := func(uid string, formats ...string) config.EVSE {
+		e := evse
+		e.UID = uid
+		e.Connectors = nil
+		for i, f := range formats {
+			c := template
+			c.ID = string(rune('1' + i))
+			c.Format = f
+			e.Connectors = append(e.Connectors, c)
+		}
+		return e
+	}
+	cfg.Location.EVSEs = []config.EVSE{
+		mk("SOCKET-ONLY", "SOCKET"),
+		mk("CABLE-ONLY", "CABLE"),
+		mk("MIXED", "SOCKET", "CABLE"),
+	}
+
+	loc := locations.Build(cfg, staticAt, core.Snapshot{})
+	want := map[string]bool{"SOCKET-ONLY": true, "CABLE-ONLY": false, "MIXED": false}
+	for _, e := range loc.EVSEs {
+		got := false
+		for _, c := range e.Capabilities {
+			if c == locations.CapabilityUnlock {
+				got = true
+			}
+		}
+		if got != want[e.UID] {
+			t.Errorf("%s UNLOCK_CAPABLE = %v, want %v (capabilities %v)", e.UID, got, want[e.UID], e.Capabilities)
 		}
 	}
 }

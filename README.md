@@ -378,8 +378,9 @@ curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations/OFFICE-01/ALP-HYC-
 - **`last_updated`**: a Connector's is the config file's modification time, read once at
   startup; an EVSE's is the later of that and its last status change; the Location's is the
   latest of all. Status repeats from the station that change nothing do not move it.
-- **Capabilities** per EVSE: `REMOTE_START_STOP_CAPABLE`, `UNLOCK_CAPABLE`, and `RESERVABLE`
-  unless the EVSE has `reservable: false`.
+- **Capabilities** per EVSE: `REMOTE_START_STOP_CAPABLE`; `UNLOCK_CAPABLE` only when every
+  connector is a `SOCKET` (a tethered cable has no lock to release, OCPP 1.6 §5.18); and
+  `RESERVABLE` unless the EVSE has `reservable: false`.
 - **The list** is paginated: `offset`, `limit` (default and maximum 100), `date_from`
   (inclusive) and `date_to` (exclusive) on the Location's `last_updated`. Answers carry
   `X-Total-Count`, `X-Limit` (the limit applied, not the number returned) and, when more
