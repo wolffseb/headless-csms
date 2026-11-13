@@ -9,6 +9,9 @@ Lessons from earlier fix passes in this repo. Newest last within each section. K
 - Look for an earlier deliberate decision before reversing behaviour: git blame the test, README or comment. If you find one, stop and report instead of flipping it.
 - Read the orchestrator's brief against the code. If a requested outcome can't happen, implement what the state actually decides and say why. In #41, "TOKEN_A PUT during a POST → 401" was really 405, because TOKEN_A is valid while nothing is registered.
 - Don't invent spec exemptions. OCPP 1.6 §3.7.1 lets a station give up on a transaction message only after repeated failures, with no exception for FormationViolation and similar codes (#42).
+- Validating a name against the host (`time.LoadLocation`) gives host-dependent answers (macOS is case-insensitive). A shape regex is leaky too (`Europe/BerLin`); match against an embedded canonical list and test it against the toolchain data, using `go env GOROOT` (`runtime.GOROOT` trips SA1019) (2026-11-13, #40).
+- When a mapping changes a core status (e.g. Finishing → BLOCKED), grep consumers for comparisons with the old value; core itself only passes status through, so the audit mostly lands in the simulator's fake station (2026-11-13, #40).
+- When one test file holds rows for two fixes, remove the later fix's rows before the first commit and re-add them afterwards, since `git add -p` is unavailable.
 
 ## Testing
 
