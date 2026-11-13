@@ -220,11 +220,12 @@ func (s *Server) authorize(need Access, h http.Handler) http.Handler {
 			// One answer for a missing header, bad Base64, an unknown token and
 			// a token without enough access: which one it was is a hint for
 			// whoever is guessing.
-			w.Header().Set("WWW-Authenticate", "Token")
-			WriteError(w, http.StatusUnauthorized, StatusClientError, "Unauthorized")
+			WriteUnauthorized(w)
 			return
 		}
-		h.ServeHTTP(w, r)
+		// The handler may have to check the token again against state that
+		// changed since this decision; see TokenFromContext.
+		h.ServeHTTP(w, r.WithContext(withToken(r.Context(), token)))
 	})
 }
 
