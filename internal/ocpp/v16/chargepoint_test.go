@@ -83,45 +83,79 @@ func TestGoldenPayloads(t *testing.T) {
 
 	tests := []struct {
 		action string
-		send   func(context.Context, *v16.ChargePoint) error
+		// file names the golden file when an action has more than one;
+		// it defaults to the action.
+		file string
+		send func(context.Context, *v16.ChargePoint) error
 	}{
-		{v16.ActionReserveNow, func(ctx context.Context, cp *v16.ChargePoint) error {
+		{action: v16.ActionReserveNow, send: func(ctx context.Context, cp *v16.ChargePoint) error {
 			_, err := cp.ReserveNow(ctx, ocpp.ReserveRequest{
 				ReservationID: 42, EVSEUID: "EVSE-2", IDTag: testTag, ExpiresAt: expires,
 			})
 			return err
 		}},
-		{v16.ActionCancelReservation, func(ctx context.Context, cp *v16.ChargePoint) error {
+		{action: v16.ActionCancelReservation, send: func(ctx context.Context, cp *v16.ChargePoint) error {
 			_, err := cp.CancelReservation(ctx, 42)
 			return err
 		}},
-		{v16.ActionRemoteStartTransaction, func(ctx context.Context, cp *v16.ChargePoint) error {
+		{action: v16.ActionRemoteStartTransaction, send: func(ctx context.Context, cp *v16.ChargePoint) error {
 			// RemoteStartID has no 1.6 field and must leave no trace.
 			_, err := cp.RemoteStart(ctx, ocpp.RemoteStartRequest{
 				RemoteStartID: 7, EVSEUID: "EVSE-2", IDTag: testTag,
 			})
 			return err
 		}},
-		{v16.ActionRemoteStopTransaction, func(ctx context.Context, cp *v16.ChargePoint) error {
+		{action: v16.ActionRemoteStopTransaction, send: func(ctx context.Context, cp *v16.ChargePoint) error {
 			_, err := cp.RemoteStop(ctx, "1001")
 			return err
 		}},
-		{v16.ActionUnlockConnector, func(ctx context.Context, cp *v16.ChargePoint) error {
+		{action: v16.ActionUnlockConnector, send: func(ctx context.Context, cp *v16.ChargePoint) error {
 			_, err := cp.UnlockConnector(ctx, "EVSE-2")
 			return err
 		}},
-		{v16.ActionTriggerMessage, func(ctx context.Context, cp *v16.ChargePoint) error {
+		{action: v16.ActionTriggerMessage, send: func(ctx context.Context, cp *v16.ChargePoint) error {
 			_, err := cp.TriggerStatus(ctx, "EVSE-2")
 			return err
 		}},
-		{v16.ActionGetConfiguration, func(ctx context.Context, cp *v16.ChargePoint) error {
+		{action: v16.ActionGetConfiguration, send: func(ctx context.Context, cp *v16.ChargePoint) error {
 			_, err := cp.Capabilities(ctx)
+			return err
+		}},
+		{action: v16.ActionSetChargingProfile, send: func(ctx context.Context, cp *v16.ChargePoint) error {
+			// An Absolute TxDefault in W with two periods, as installed on a
+			// reserved EVSE. The start is in Berlin time with nanoseconds;
+			// the wire has UTC seconds.
+			_, err := cp.SetChargingProfile(ctx, txDefaultProfile(expires))
+			return err
+		}},
+		{action: v16.ActionSetChargingProfile, file: "SetChargingProfile-Tx", send: func(ctx context.Context, cp *v16.ChargePoint) error {
+			_, err := cp.SetChargingProfile(ctx, ocpp.ChargingProfile{
+				ID: 8, StackLevel: 1, Purpose: ocpp.PurposeTx, Kind: ocpp.KindRelative,
+				TransactionID: "1001", EVSEUID: "EVSE-2",
+				Schedule: ocpp.ChargingSchedule{
+					Unit:    ocpp.UnitA,
+					Periods: []ocpp.SchedulePeriod{{Start: 0, Limit: 16.5, Phases: ptr(3)}},
+				},
+			})
+			return err
+		}},
+		{action: v16.ActionClearChargingProfile, send: func(ctx context.Context, cp *v16.ChargePoint) error {
+			_, err := cp.ClearChargingProfile(ctx, ocpp.ClearProfileRequest{ID: ptr(7)})
+			return err
+		}},
+		{action: v16.ActionGetCompositeSchedule, send: func(ctx context.Context, cp *v16.ChargePoint) error {
+			unit := ocpp.UnitW
+			_, err := cp.GetCompositeSchedule(ctx, "EVSE-2", time.Hour, &unit)
 			return err
 		}},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.action, func(t *testing.T) {
+		file := tt.file
+		if file == "" {
+			file = tt.action
+		}
+		t.Run(file, func(t *testing.T) {
 			t.Parallel()
 
 			cp, fake := newFakeChargePoint(`{"status":"Accepted"}`)
@@ -137,7 +171,7 @@ func TestGoldenPayloads(t *testing.T) {
 				t.Fatalf("action = %q, want %q", sent[0].action, tt.action)
 			}
 
-			path := filepath.Join("testdata", "golden", tt.action+".json")
+			path := filepath.Join("testdata", "golden", file+".json")
 			if *update {
 				if err := os.WriteFile(path, sent[0].payload, 0o644); err != nil {
 					t.Fatalf("writing golden: %v", err)

@@ -131,6 +131,21 @@ func (f *fakeStation) Capabilities(context.Context) (ocpp.Capabilities, error) {
 	return ocpp.Capabilities{Reservation: ocpp.SupportYes}, nil
 }
 
+// The smart-charging commands are not used by control yet (#50).
+
+func (f *fakeStation) SetChargingProfile(context.Context, ocpp.ChargingProfile) (ocpp.Result, error) {
+	return f.respond("set-profile")
+}
+
+func (f *fakeStation) ClearChargingProfile(context.Context, ocpp.ClearProfileRequest) (ocpp.Result, error) {
+	return f.respond("clear-profile")
+}
+
+func (f *fakeStation) GetCompositeSchedule(context.Context, string, time.Duration, *ocpp.RateUnit) (ocpp.CompositeSchedule, error) {
+	res, err := f.respond("composite-schedule")
+	return ocpp.CompositeSchedule{Status: res.Status, Raw: res.Raw}, err
+}
+
 func (f *fakeStation) Probe(context.Context) (ocpp.ProbeReport, error) {
 	if _, err := f.respond("probe"); err != nil {
 		return ocpp.ProbeReport{}, err

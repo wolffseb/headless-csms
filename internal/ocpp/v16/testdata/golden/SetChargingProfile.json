@@ -1,0 +1,1 @@
+{"connectorId":2,"csChargingProfiles":{"chargingProfileId":7,"stackLevel":0,"chargingProfilePurpose":"TxDefaultProfile","chargingProfileKind":"Absolute","chargingSchedule":{"startSchedule":"2026-08-14T12:30:00Z","chargingRateUnit":"W","chargingSchedulePeriod":[{"startPeriod":0,"limit":20000},{"startPeriod":3600,"limit":11000}]}}}

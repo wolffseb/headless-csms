@@ -220,3 +220,134 @@ const (
 type ResetConf struct {
 	Status string `json:"status"`
 }
+
+// Action names for the Smart Charging profile.
+const (
+	ActionSetChargingProfile   = "SetChargingProfile"
+	ActionClearChargingProfile = "ClearChargingProfile"
+	ActionGetCompositeSchedule = "GetCompositeSchedule"
+)
+
+// ChargingProfilePurposeType values.
+const (
+	PurposeChargePointMax = "ChargePointMaxProfile"
+	PurposeTxDefault      = "TxDefaultProfile"
+	PurposeTx             = "TxProfile"
+)
+
+// ChargingProfileKindType values.
+const (
+	KindAbsolute  = "Absolute"
+	KindRecurring = "Recurring"
+	KindRelative  = "Relative"
+)
+
+// RecurrencyKindType values.
+const (
+	RecurrencyDaily  = "Daily"
+	RecurrencyWeekly = "Weekly"
+)
+
+// ChargingRateUnitType values.
+const (
+	UnitA = "A"
+	UnitW = "W"
+)
+
+// ChargingSchedulePeriod is one step of a schedule. StartPeriod is seconds
+// from the schedule's start.
+//
+// Limit is a plain float64: encoding/json writes it without an exponent for
+// every magnitude a charger can see (it switches only from 1e21), so 20000
+// goes out as 20000 and 16.5 as 16.5.
+type ChargingSchedulePeriod struct {
+	StartPeriod  int     `json:"startPeriod"`
+	Limit        float64 `json:"limit"`
+	NumberPhases *int    `json:"numberPhases,omitempty"`
+}
+
+// ChargingSchedule is the schedule inside a charging profile, and the
+// composite one GetCompositeSchedule answers with.
+type ChargingSchedule struct {
+	Duration               *int                     `json:"duration,omitempty"`
+	StartSchedule          string                   `json:"startSchedule,omitempty"`
+	ChargingRateUnit       string                   `json:"chargingRateUnit"`
+	ChargingSchedulePeriod []ChargingSchedulePeriod `json:"chargingSchedulePeriod"`
+	MinChargingRate        *float64                 `json:"minChargingRate,omitempty"`
+}
+
+// ChargingProfile is csChargingProfiles in SetChargingProfile.req.
+type ChargingProfile struct {
+	ChargingProfileID      int              `json:"chargingProfileId"`
+	TransactionID          *int             `json:"transactionId,omitempty"`
+	StackLevel             int              `json:"stackLevel"`
+	ChargingProfilePurpose string           `json:"chargingProfilePurpose"`
+	ChargingProfileKind    string           `json:"chargingProfileKind"`
+	RecurrencyKind         string           `json:"recurrencyKind,omitempty"`
+	ValidFrom              string           `json:"validFrom,omitempty"`
+	ValidTo                string           `json:"validTo,omitempty"`
+	ChargingSchedule       ChargingSchedule `json:"chargingSchedule"`
+}
+
+// SetChargingProfileReq installs a profile on a connector, or on the whole
+// station with connector 0.
+type SetChargingProfileReq struct {
+	ConnectorID        int             `json:"connectorId"`
+	CSChargingProfiles ChargingProfile `json:"csChargingProfiles"`
+}
+
+// ChargingProfileStatus values for SetChargingProfile.conf.
+const (
+	ProfileAccepted     = "Accepted"
+	ProfileRejected     = "Rejected"
+	ProfileNotSupported = "NotSupported"
+)
+
+// SetChargingProfileConf answers a SetChargingProfileReq.
+type SetChargingProfileConf struct {
+	Status string `json:"status"`
+}
+
+// ClearChargingProfileReq removes the profiles matching every field that is
+// set. With no field set it removes them all.
+type ClearChargingProfileReq struct {
+	ID                     *int   `json:"id,omitempty"`
+	ConnectorID            *int   `json:"connectorId,omitempty"`
+	ChargingProfilePurpose string `json:"chargingProfilePurpose,omitempty"`
+	StackLevel             *int   `json:"stackLevel,omitempty"`
+}
+
+// ClearChargingProfileStatus values. Unknown is a defined answer here: no
+// profile matched.
+const (
+	ClearAccepted = "Accepted"
+	ClearUnknown  = "Unknown"
+)
+
+// ClearChargingProfileConf answers a ClearChargingProfileReq.
+type ClearChargingProfileConf struct {
+	Status string `json:"status"`
+}
+
+// GetCompositeScheduleReq asks for the limits a connector (0: the station)
+// will see over the next Duration seconds.
+type GetCompositeScheduleReq struct {
+	ConnectorID      int    `json:"connectorId"`
+	Duration         int    `json:"duration"`
+	ChargingRateUnit string `json:"chargingRateUnit,omitempty"`
+}
+
+// GetCompositeScheduleStatus values.
+const (
+	CompositeAccepted = "Accepted"
+	CompositeRejected = "Rejected"
+)
+
+// GetCompositeScheduleConf answers a GetCompositeScheduleReq. Everything but
+// the status is optional, and absent when the station rejects the request.
+type GetCompositeScheduleConf struct {
+	Status           string            `json:"status"`
+	ConnectorID      *int              `json:"connectorId,omitempty"`
+	ScheduleStart    string            `json:"scheduleStart,omitempty"`
+	ChargingSchedule *ChargingSchedule `json:"chargingSchedule,omitempty"`
+}

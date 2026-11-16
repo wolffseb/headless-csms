@@ -45,6 +45,18 @@ type ChargePoint interface {
 	// Probe asks the station what it supports and how it is set up. It
 	// changes nothing on the station.
 	Probe(ctx context.Context) (ProbeReport, error)
+
+	// SetChargingProfile installs a charging profile. The profile is
+	// validated first; a bad one fails with ErrInvalidProfile and is not
+	// sent.
+	SetChargingProfile(ctx context.Context, p ChargingProfile) (Result, error)
+	// ClearChargingProfile removes the profiles r selects. A station with
+	// none matching answers CommandUnknownProfile.
+	ClearChargingProfile(ctx context.Context, r ClearProfileRequest) (Result, error)
+	// GetCompositeSchedule asks what limits an EVSE ("" for the whole
+	// station) will see over the next d. unit nil leaves the unit to the
+	// station.
+	GetCompositeSchedule(ctx context.Context, evseUID string, d time.Duration, unit *RateUnit) (CompositeSchedule, error)
 }
 
 // ReserveRequest asks for an EVSE to be held for a token.
@@ -99,8 +111,14 @@ const (
 	CommandUnlockFailed   CommandStatus = "UnlockFailed"
 	CommandNotSupported   CommandStatus = "NotSupported"
 	CommandNotImplemented CommandStatus = "NotImplemented"
+	// CommandUnknownProfile is ClearChargingProfile's "Unknown": the station
+	// has no profile matching the request. It is a defined answer, unlike
+	// CommandUnknown, and the two must not be confused even though 1.6 spells
+	// this one "Unknown" on the wire.
+	CommandUnknownProfile CommandStatus = "UnknownProfile"
 	// CommandUnknown is a status the station sent that the spec does not
-	// define for that command. Result.Raw holds what it was; it is never
+	// define for that command (not ClearChargingProfile's defined "Unknown",
+	// which is CommandUnknownProfile). Result.Raw holds what it was; it is never
 	// guessed at.
 	CommandUnknown CommandStatus = "Unknown"
 )

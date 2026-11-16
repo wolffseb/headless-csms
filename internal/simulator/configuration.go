@@ -47,11 +47,6 @@ func (s *Simulator) configuration() []configEntry {
 	// station refuses reservations, so that `cpms probe` reports the same
 	// capability the station then actually honours.
 	//
-	// SmartCharging is advertised before the simulator answers its messages
-	// (#47): nothing in cpms sends them yet. Its messages (SetChargingProfile,
-	// ClearChargingProfile, GetCompositeSchedule) answer NotImplemented until
-	// stack C1 of #47 lands.
-	//
 	// SupportedFeatureProfilesMaxLength is how many profiles the simulator
 	// implements. A FeatureProfiles override that long but without one of
 	// them then looks cut short, as on a station with more profiles than it
@@ -101,9 +96,10 @@ func (s *Simulator) configuration() []configEntry {
 		// Read-only, unlike on a real station: the stream does not follow it.
 		{key: v16.KeyMeterValuesSampledData, readonly: true, value: sampledMeasurands()},
 		{key: v16.KeyChargingScheduleAllowedChargingRateUnit, readonly: true, value: "Current,Power"},
-		{key: v16.KeyChargeProfileMaxStackLevel, readonly: true, value: "8"},
-		{key: v16.KeyChargingScheduleMaxPeriods, readonly: true, value: "24"},
-		{key: v16.KeyMaxChargingProfilesInstalled, readonly: true, value: "10"},
+		// The three limits below are enforced by SetChargingProfile.
+		{key: v16.KeyChargeProfileMaxStackLevel, readonly: true, value: strconv.Itoa(maxStackLevel)},
+		{key: v16.KeyChargingScheduleMaxPeriods, readonly: true, value: strconv.Itoa(maxSchedulePeriods)},
+		{key: v16.KeyMaxChargingProfilesInstalled, readonly: true, value: strconv.Itoa(maxProfilesInstalled)},
 	} {
 		if !slices.Contains(s.opts.UnreportedKeys, e.key) {
 			all = append(all, e)

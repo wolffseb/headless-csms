@@ -90,6 +90,15 @@ func (f fakeStation) TriggerStatus(context.Context, string) (ocpp.Result, error)
 func (f fakeStation) Capabilities(context.Context) (ocpp.Capabilities, error) {
 	return ocpp.Capabilities{}, nil
 }
+func (f fakeStation) SetChargingProfile(context.Context, ocpp.ChargingProfile) (ocpp.Result, error) {
+	return f.res, f.err
+}
+func (f fakeStation) ClearChargingProfile(context.Context, ocpp.ClearProfileRequest) (ocpp.Result, error) {
+	return f.res, f.err
+}
+func (f fakeStation) GetCompositeSchedule(context.Context, string, time.Duration, *ocpp.RateUnit) (ocpp.CompositeSchedule, error) {
+	return ocpp.CompositeSchedule{Status: f.res.Status, Raw: f.res.Raw}, f.err
+}
 func (f fakeStation) Probe(context.Context) (ocpp.ProbeReport, error) {
 	return ocpp.ProbeReport{Version: ocpp.Version16}, f.err
 }

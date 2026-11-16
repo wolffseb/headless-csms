@@ -62,6 +62,9 @@ const (
 	// the queue is the same however fast the CSMS comes back; after the
 	// boot it delivers the queue, and carries on as a normal station.
 	ScenarioOfflineTx Scenario = "offline-tx"
+	// ScenarioRejectProfile answers every SetChargingProfile with Rejected,
+	// as a station that will not take a limit from this CSMS does.
+	ScenarioRejectProfile Scenario = "reject-profile"
 )
 
 // Scenarios lists every scenario, for the CLI's help text and validation.
@@ -69,6 +72,7 @@ func Scenarios() []Scenario {
 	return []Scenario{
 		ScenarioNormal, ScenarioRejectReserve, ScenarioOccupied,
 		ScenarioSlow, ScenarioUnlockFails, ScenarioSilent, ScenarioOfflineTx,
+		ScenarioRejectProfile,
 	}
 }
 
@@ -333,6 +337,9 @@ type Simulator struct {
 	// settings holds the writable configuration keys that change nothing
 	// in the simulator's behaviour, so that a CSMS reads back what it set.
 	settings map[string]string
+	// profiles holds the installed charging profiles per connector, 0 being
+	// the station; see smartcharging.go.
+	profiles map[int][]v16.ChargingProfile
 	// heartbeatChanged and meterChanged are closed, and replaced, whenever
 	// ChangeConfiguration moves the matching interval, so that a loop parked
 	// on a timer armed with the old value re-arms with the new one at once.
@@ -384,6 +391,7 @@ func New(opts Options) (*Simulator, error) {
 
 		meterInterval: opts.MeterInterval,
 		settings:      defaultSettings(),
+		profiles:      make(map[int][]v16.ChargingProfile),
 
 		heartbeatChanged: make(chan struct{}),
 		meterChanged:     make(chan struct{}),
