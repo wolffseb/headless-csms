@@ -186,6 +186,13 @@ type Options struct {
 	// ahead of every transaction message made later (see deliverTxLocked and
 	// classify).
 	Reconnect bool
+	// ResumeWithoutBoot makes a redial with Reconnect behave like a station
+	// that kept running through the outage, as the Alpitronic HYC does: it
+	// sends no BootNotification and no status round, only what was queued
+	// offline and then heartbeats. The CSMS learns a connector's status when
+	// it asks with TriggerMessage or when the status changes. The first
+	// Connect still boots.
+	ResumeWithoutBoot bool
 	// AllowForeignTagOnReservation lets a start with an idTag other than the
 	// reserved one go ahead on a reserved connector. By default the station
 	// refuses it, as OCPP 1.6 section 5.13 requires, and the reservation
@@ -435,7 +442,7 @@ var errClosed = errors.New("simulator: closed")
 // It returns once the station is booted and observable. Run blocks instead.
 // With Reconnect, it also starts redialing whenever the connection drops.
 func (s *Simulator) Connect(ctx context.Context) error {
-	conn, err := s.establish(ctx)
+	conn, err := s.establish(ctx, false)
 	if err != nil {
 		s.Close()
 		return err
@@ -467,8 +474,8 @@ func (s *Simulator) Connect(ctx context.Context) error {
 // establish opens one connection and brings the station up on it: dial,
 // BootNotification, the status of the station and every connector, then the
 // heartbeat. The connection is closed again if anything before the heartbeat
-// fails.
-func (s *Simulator) establish(ctx context.Context) (*ocppj.Conn, error) {
+// fails. A redial skips the boot and the status round with ResumeWithoutBoot.
+func (s *Simulator) establish(ctx context.Context, redial bool) (*ocppj.Conn, error) {
 	endpoint, err := s.endpoint()
 	if err != nil {
 		return nil, err
@@ -525,7 +532,8 @@ func (s *Simulator) establish(ctx context.Context) (*ocppj.Conn, error) {
 
 	s.log.Info("connected to csms", "url", endpoint, "version", string(s.opts.Version))
 
-	if err := s.bringUp(ctx, conn); err != nil {
+	boot := !redial || !s.opts.ResumeWithoutBoot
+	if err := s.bringUp(ctx, conn, boot); err != nil {
 		conn.Close()
 		return nil, err
 	}
@@ -539,10 +547,13 @@ func (s *Simulator) establish(ctx context.Context) (*ocppj.Conn, error) {
 }
 
 // bringUp boots over a fresh connection, delivers the queue, which marks it
-// online, and reports every status on it.
-func (s *Simulator) bringUp(ctx context.Context, conn *ocppj.Conn) error {
-	if err := s.boot(ctx, conn); err != nil {
-		return err
+// online, and reports every status on it. Without boot it only delivers the
+// queue: the station resumes rather than starts.
+func (s *Simulator) bringUp(ctx context.Context, conn *ocppj.Conn, boot bool) error {
+	if boot {
+		if err := s.boot(ctx, conn); err != nil {
+			return err
+		}
 	}
 
 	// Whatever was queued while offline goes first, ahead of the status round
@@ -563,6 +574,9 @@ func (s *Simulator) bringUp(ctx context.Context, conn *ocppj.Conn) error {
 		s.log.Info("delivered transaction messages queued while offline", "messages", queued)
 	}
 
+	if !boot {
+		return nil
+	}
 	return s.reportInitialStatus(ctx, conn)
 }
 
@@ -616,7 +630,7 @@ func (s *Simulator) redial(ctx context.Context) *ocppj.Conn {
 			return nil
 		}
 
-		conn, err := s.establish(ctx)
+		conn, err := s.establish(ctx, true)
 		switch {
 		case err == nil:
 			s.log.Info("reconnected", "attempt", attempt)

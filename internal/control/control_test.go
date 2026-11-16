@@ -48,8 +48,10 @@ type fakeStation struct {
 	starts  []ocpp.RemoteStartRequest
 	stops   []string
 	cancels []int
-	answer  map[string]ocpp.Result
-	fail    map[string]error
+	// triggers are the EVSEs TriggerStatus was asked for, in order.
+	triggers []string
+	answer   map[string]ocpp.Result
+	fail     map[string]error
 
 	// cancelEntered, if set, receives when the first CancelReservation
 	// arrives, which then waits for cancelGate to be closed.
@@ -125,7 +127,10 @@ func (f *fakeStation) UnlockConnector(context.Context, string) (ocpp.Result, err
 	return f.respond("unlock")
 }
 
-func (f *fakeStation) TriggerStatus(context.Context, string) (ocpp.Result, error) {
+func (f *fakeStation) TriggerStatus(_ context.Context, evseUID string) (ocpp.Result, error) {
+	f.mu.Lock()
+	f.triggers = append(f.triggers, evseUID)
+	f.mu.Unlock()
 	return f.respond("trigger")
 }
 

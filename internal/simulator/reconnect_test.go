@@ -296,3 +296,61 @@ func evsesAre(r *rig, want core.EVSEStatus) bool {
 	b, _ := r.core.EVSEStatus("EVSE-2")
 	return a == want && b == want
 }
+
+// TestResumeWithoutBootSkipsTheBootAndTheStatusRound: with ResumeWithoutBoot
+// a redial is a station that kept running, as the office Alpitronic does
+// (#53). It sends what it queued offline, but no BootNotification and no
+// status round, so the CSMS learns nothing new about its connectors until it
+// asks. The first Connect still boots. Not parallel, for goleak.
+func TestResumeWithoutBootSkipsTheBootAndTheStatusRound(t *testing.T) {
+	ignore := goleak.IgnoreCurrent()
+	t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
+
+	f := newFakeCSMS(t, 0, 1)
+	p := ocpptest.NewProxy(t, strings.TrimPrefix(f.url(), "ws://"))
+	clk := clocktest.New(time.Date(2026, 11, 16, 16, 23, 0, 0, time.UTC))
+	b := &backoffLog{wait: time.Second}
+	sim := startSim(t, p.URL(), reconnecting(clk, b), func(o *simulator.Options) { o.ResumeWithoutBoot = true })
+
+	waitFor(t, "the first boot and status round", func() bool {
+		return f.count(v16.ActionBootNotification) == 1 && f.count(v16.ActionStatusNotification) == 3
+	})
+
+	p.Cut()
+	waitFor(t, "the redial to be scheduled", func() bool { return clk.Pending() == 1 })
+	// A session started offline changes connector 1, and the station only
+	// queues its transaction messages, not the status.
+	if err := sim.StartTransaction(context.Background(), 1); err != nil {
+		t.Fatalf("offline start: %v", err)
+	}
+	p.Restore()
+	clk.Advance(time.Second)
+
+	waitFor(t, "the queued StartTransaction", func() bool { return f.count(v16.ActionStartTransaction) == 1 })
+	// A status round would follow the queue at once; give it the chance.
+	time.Sleep(200 * time.Millisecond)
+	if n := f.count(v16.ActionBootNotification); n != 1 {
+		t.Errorf("%d BootNotifications, want only the first connection's", n)
+	}
+	if n := f.count(v16.ActionStatusNotification); n != 3 {
+		t.Errorf("%d StatusNotifications, want only the first connection's 3", n)
+	}
+
+	// The resumed connection is a working one: asked, the station reports.
+	one := 1
+	payload, _ := json.Marshal(v16.TriggerMessageReq{RequestedMessage: v16.ActionStatusNotification, ConnectorID: &one})
+	if _, rpcErr := sim.HandleCall(context.Background(), "", v16.ActionTriggerMessage, payload); rpcErr != nil {
+		t.Fatalf("TriggerMessage: %v", rpcErr)
+	}
+	waitFor(t, "the triggered status", func() bool { return f.count(v16.ActionStatusNotification) == 4 })
+	calls, _ := f.snapshot()
+	var last v16.StatusNotificationReq
+	for _, c := range calls {
+		if c.action == v16.ActionStatusNotification {
+			_ = json.Unmarshal(c.payload, &last)
+		}
+	}
+	if last.ConnectorID != 1 || last.Status != "Charging" {
+		t.Errorf("triggered status = connector %d %s, want connector 1 Charging", last.ConnectorID, last.Status)
+	}
+}

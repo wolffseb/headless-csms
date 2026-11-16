@@ -669,3 +669,136 @@ func TestNewRejectsIncompleteOptions(t *testing.T) {
 		t.Error("expected an error without any handler")
 	}
 }
+
+// boundCP is an ocpp.ChargePoint that only knows which connection it is
+// bound to; OnConnect tests call nothing else on it.
+type boundCP struct {
+	ocpp.ChargePoint
+	conn *ocppj.Conn
+}
+
+func (b boundCP) ID() string { return b.conn.ID() }
+
+// hookRecorder is an OnConnect that holds on until its context ends, the way
+// a hook waiting out a grace period would.
+type hookRecorder struct {
+	mu      sync.Mutex
+	started []*ocppj.Conn
+	ended   map[*ocppj.Conn]bool
+}
+
+func (h *hookRecorder) options(o *Options) {
+	o.NewChargePoint = func(conn *ocppj.Conn) (ocpp.ChargePoint, error) { return boundCP{conn: conn}, nil }
+	o.OnConnect = func(ctx context.Context, cp ocpp.ChargePoint) {
+		conn := cp.(boundCP).conn
+		h.mu.Lock()
+		h.started = append(h.started, conn)
+		h.mu.Unlock()
+
+		<-ctx.Done()
+		// Linger a little, so a Shutdown that does not wait for the hook
+		// returns before it has ended.
+		time.Sleep(20 * time.Millisecond)
+		h.mu.Lock()
+		h.ended[conn] = true
+		h.mu.Unlock()
+	}
+}
+
+func newHookRecorder() *hookRecorder { return &hookRecorder{ended: map[*ocppj.Conn]bool{}} }
+
+func (h *hookRecorder) startedOn(i int) (*ocppj.Conn, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if i >= len(h.started) {
+		return nil, false
+	}
+	return h.started[i], true
+}
+
+func (h *hookRecorder) hasEnded(conn *ocppj.Conn) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.ended[conn]
+}
+
+func TestOnConnectEndsWithItsConnection(t *testing.T) {
+	t.Parallel()
+
+	rec := newHookRecorder()
+	h := newHarness(t, rec.options)
+
+	client := ocpptest.MustDial(t, h.url(testCP))
+	var first *ocppj.Conn
+	waitFor(t, "OnConnect to start", func() bool {
+		var ok bool
+		first, ok = rec.startedOn(0)
+		return ok
+	})
+	if live, _ := h.ChargePoint(testCP); live != first {
+		t.Fatal("OnConnect was not given the new connection")
+	}
+	// The hook runs beside the connection, not in front of it.
+	client.MustCall("Echo", map[string]any{})
+
+	client.Close()
+	waitFor(t, "OnConnect to end with its connection", func() bool { return rec.hasEnded(first) })
+}
+
+func TestOnConnectEndsWhenItsConnectionIsReplaced(t *testing.T) {
+	t.Parallel()
+
+	// A station that redials before its old socket died gets a new hook; the
+	// old one must end then, not keep acting for a connection that is gone.
+	rec := newHookRecorder()
+	h := newHarness(t, rec.options)
+
+	first := ocpptest.MustDial(t, h.url(testCP))
+	defer first.Close()
+	waitFor(t, "the first OnConnect", func() bool { _, ok := rec.startedOn(0); return ok })
+	second := ocpptest.MustDial(t, h.url(testCP))
+	defer second.Close()
+	waitFor(t, "the second OnConnect", func() bool { _, ok := rec.startedOn(1); return ok })
+
+	firstConn, _ := rec.startedOn(0)
+	secondConn, _ := rec.startedOn(1)
+	waitFor(t, "the replaced connection's OnConnect to end", func() bool { return rec.hasEnded(firstConn) })
+	if rec.hasEnded(secondConn) {
+		t.Error("the live connection's OnConnect ended too")
+	}
+}
+
+func TestShutdownWaitsForOnConnect(t *testing.T) {
+	t.Parallel()
+
+	rec := newHookRecorder()
+	opts := Options{
+		Bind:        "127.0.0.1:0",
+		Core:        core.New(testConfig()),
+		Handlers:    map[ocpp.Version]ocpp.Handler{ocpp.Version16: stubHandler{}},
+		CallTimeout: 2 * time.Second,
+		Log:         discardLogger(),
+	}
+	rec.options(&opts)
+	srv, err := New(opts)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	client := ocpptest.MustDial(t, "ws://"+srv.Addr()+"/ocpp/"+testCP)
+	defer client.Close()
+	waitFor(t, "OnConnect to start", func() bool { _, ok := rec.startedOn(0); return ok })
+	conn, _ := rec.startedOn(0)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if !rec.hasEnded(conn) {
+		t.Error("Shutdown returned while OnConnect was still running")
+	}
+}

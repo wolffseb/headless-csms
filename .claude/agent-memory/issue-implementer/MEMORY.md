@@ -12,6 +12,7 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - A new required config key has to go into every inline YAML fixture: `config.example.yaml`, `internal/config/testdata/*.yaml`, `baseYAML`, `runConfigPorts` in cli/run_test.go, and cli_test.go.
 - The status golden file is regenerated with `go test ./internal/cli -run TestStatusJSONGolden -update`. Call the change out in the PR.
 - When the owner asks you to "consider" a feature, implement the small part, park the rest in `docs/IDEAS.md`, and say which went where in the PR.
+- Port ranges named in an issue may already be partly taken by merged tests (2026-11-16: #53 got 19600-19609, but `TestProbeWithoutSmartCharging` holds 19600). `grep -rn 196 internal --include='*_test.go'` before picking; an "address already in use" that repeats inside one `go test ./internal/cli` run is a collision, not another agent.
 
 ## Seams later issues build on
 
@@ -40,6 +41,7 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - Probe (#10, #47, 2026-11-16): a new capability needs `ocpp.Cap*` + `AllCapabilities()` (append last), a `neededProfiles` grant, a `Capabilities` field, and maybe a `needs` entry in cli/probe.go (only if cpms uses it). New simulator config keys change the raw-key count in `TestProbeJSONAndRaw` and both probe goldens (`go test ./internal/cli -run 'TestProbeNormalStation|TestProbeJSONAndRaw' -update`).
 - Smart charging C1 (#49, 2026-11-16): `ocpp.ChargePoint` has `SetChargingProfile`/`ClearChargingProfile`/`GetCompositeSchedule`. A new `ChargePoint` method needs stubs in the `fakeStation`s of `control/control_test.go` and `control/socket/server_test.go`. The v16 e2e `simRig.power` (a `powerLog` wrapping the handler) is how a test sees streamed W, since core records no power. Simulator tests can drive an unconnected sim with `offlineSim` + `handle[T]` (smartcharging_test.go). Meter cap: `meter.capW/capped`, refreshed in `sendMeterValues`.
 - Meter readings and station config (#48, 2026-11-16): `core.MeterReading` (power, current, offered, energy) is in `EVSESnapshot.Reading`, in memory only, and dropped on stop or disconnect. The v16 extraction is `meterReading` in `v16/meter.go`. `ocpp.ConfigurationChanger` is an optional interface beside `ocpp.ChargePoint` (1.6 only), behind `control.ChangeConfiguration` and socket op `config_set`.
+- Connect hook (#53, 2026-11-16): `csms.Options.OnConnect(ctx, cp)` runs per connection under `s.wg`, cp bound to that connection, ctx ends with it. `core.BootedSinceConnect` tells a resumed station from a booting one. `control.Options.AfterFunc`/`BootGrace` put the grace on a `clocktest` clock; `simRig.grace` and `simRig.hooksDone()` in control/e2e_test.go. Simulator `ResumeWithoutBoot` redials without boot or status round.
 
 ## OCPI/OCPP traps
 
@@ -52,6 +54,7 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - OCPP 1.6 `SupportedFeatureProfiles` can be truncated at `SupportedFeatureProfilesMaxLength` (Alpitronic HYC50 drops Reservation). Since #52 a profile missing from a full list is unknown with an `ocpp.Feature.Note`; the simulator reports max length = its profile count, so a same-length `FeatureProfiles` override reproduces it (2026-11-16).
 - OCPP 1.6 JSON schemas: the OCA zip is not on GitHub; mobilityhouse/ocpp vendors them at `ocpp/v16/schemas/<Action>.json` / `<Action>Response.json`. ClearChargingProfile's `Unknown` is a defined status, not "out of spec". `encoding/json` writes float64 without an exponent below 1e21, so a `limit` needs no custom marshaller.
 - The simulator reports `MeterValuesSampledData` as read-only and answers `Rejected` to it. Use `ConnectionTimeOut` or `HeartbeatInterval` when a test needs an `Accepted` ChangeConfiguration.
+- Core keeps each EVSE's last *reported* status through a disconnect and restores it on reconnect (`recompute`), so in-process the EVSEs are stale, not UNKNOWN; UNKNOWN only after a cpms restart. Write reconnect tests for the case you mean. OCPP 1.6 spec PDF: the OCA zip (openchargealliance.org/download-ocpp) has `ocpp-1.6 edition 2.pdf`; `pdftotext -layout` reads it.
 
 ## Process that worked
 
@@ -63,6 +66,7 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - For a CLI path the simulator cannot produce (such as a `RebootRequired` answer), a fake `cpms run` works: a unix listener in `shortDir` that reads one line and writes a canned `{"ok":true,"result":...}`. Pass it with `--socket`.
 - `bodyclose` flags test helpers that return `*http.Response`, even when they close the body. Return status, headers and the decoded body instead.
 - A Python mutation table (name, file, old, new, pkg, -run) applied one at a time with restore in `finally` makes the fail-without proof cheap; keep the script in the scratchpad.
+- A counter of finished hooks must count every connection's: the first connection's hook also finishes (cancelled) on a reconnect, so wait for n == 2, not 1. A fake-clock test that a timer has not fired yet should assert `clk.Pending()`, not only the absence of its effect, or a shortened timer survives mutation.
 
 ## Tooling
 

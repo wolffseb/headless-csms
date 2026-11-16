@@ -40,6 +40,12 @@ type Options struct {
 	// negotiated version. It is supplied by the caller so that this package
 	// never learns what a version adapter is; Command fails without it.
 	NewChargePoint func(*ocppj.Conn) (ocpp.ChargePoint, error)
+	// OnConnect, if set, runs once for every connection, in a goroutine of
+	// its own, after core has recorded the connection. cp is bound to that
+	// connection, ctx ends as soon as the connection does or the server shuts
+	// down, and Shutdown waits for OnConnect to return. It needs
+	// NewChargePoint.
+	OnConnect func(ctx context.Context, cp ocpp.ChargePoint)
 	// Accept decides whether a charge point identity may connect. A nil Accept
 	// accepts every identity.
 	Accept func(chargePointID string) bool
@@ -274,6 +280,7 @@ func (s *Server) serveConn(id string, version ocpp.Version, ws *websocket.Conn, 
 	s.log.Info("charge point connected",
 		"charge_point", id, "version", string(version), "path", urlPath, "remote", remote)
 	s.opts.Core.Connected(id)
+	s.onConnect(conn)
 
 	reason := conn.Run(s.ctx, s.opts.Handlers[version])
 
@@ -296,6 +303,40 @@ func (s *Server) serveConn(id string, version ocpp.Version, ws *websocket.Conn, 
 
 	s.log.Info("charge point disconnected", "charge_point", id, "reason", reason)
 	s.opts.Core.Disconnected(id, reason)
+}
+
+// onConnect starts OnConnect for a connection that core has just recorded.
+// It never blocks the connection: the hook may call the station, whose
+// answers only arrive once conn.Run is reading.
+func (s *Server) onConnect(conn *ocppj.Conn) {
+	if s.opts.OnConnect == nil || s.opts.NewChargePoint == nil {
+		return
+	}
+	cp, err := s.opts.NewChargePoint(conn)
+	if err != nil {
+		s.log.Warn("no command interface for the new connection", "charge_point", conn.ID(), "error", err)
+		return
+	}
+
+	// serveConn runs under s.wg, so the counter is above zero and this Add
+	// cannot race Shutdown's Wait.
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		// The hook's context ends with this connection, not only with the
+		// server: a hook still waiting when the station reconnects must not
+		// go on to act on a station it no longer has a connection to.
+		ctx, cancel := context.WithCancel(s.ctx)
+		defer cancel()
+		go func() {
+			select {
+			case <-conn.Done():
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+		s.opts.OnConnect(ctx, cp)
+	}()
 }
 
 // negotiate picks the first subprotocol the charger offered that we support,

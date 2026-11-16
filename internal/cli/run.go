@@ -104,6 +104,9 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	defer svc.Close()
 	handler := v16.NewHandler(cfg, svc, logger)
 
+	// commands is built right after the server and before it listens, so
+	// OnConnect never sees it nil.
+	var commands *control.Service
 	server, err := csms.New(csms.Options{
 		Bind:     cfg.Server.OCPPBind,
 		Core:     svc,
@@ -116,6 +119,11 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 				return nil, fmt.Errorf("no command adapter for OCPP %s", conn.Version())
 			}
 		},
+		// A station that reconnects without rebooting need not report its
+		// connectors, so ask, or every EVSE reads UNKNOWN until one changes.
+		OnConnect: func(ctx context.Context, cp ocpp.ChargePoint) {
+			commands.RefreshStatusOnConnect(ctx, cp)
+		},
 		// Exactly one station is configured, so anything else dialling in is a
 		// misconfiguration worth rejecting loudly.
 		Accept:      func(id string) bool { return id == cfg.Charger.ID },
@@ -126,15 +134,15 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	if err != nil {
 		return err
 	}
-	if err := server.Start(); err != nil {
-		return err
-	}
 
 	// Everything that acts on the station goes through control. The one-shot
 	// commands reach it through the socket.
-	commands := control.New(control.Options{
+	commands = control.New(control.Options{
 		Core: svc, Commands: server, Config: cfg, Log: logger,
 	})
+	if err := server.Start(); err != nil {
+		return err
+	}
 	ctl.Attach(commands, svc)
 
 	// OCPI starts last: it is another way in to control, like the socket.
