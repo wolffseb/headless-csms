@@ -101,6 +101,7 @@ Scenarios make it misbehave on purpose, which is how the unhappy paths get teste
 | `slow` | Stalls every answer past the call timeout |
 | `unlock-fails` | Refuses to release the cable lock |
 | `silent` | Boots, then stops sending anything while still answering pings — a station whose OCPP layer has hung but whose connection is fine. This is what `heartbeat_timeout` exists to catch, and the only way to exercise it by hand |
+| `reject-profile` | Answers every `SetChargingProfile` with `Rejected` |
 | `offline-tx` | Charges through an outage, end to end. Implies `--reconnect`, and `--meter-interval 1s` unless given. Starts a transaction on connector 1 and waits for the connection to drop (stop `cpms run`, or have a proxy close it). Offline, it lets 3 meter values queue up, stops the transaction, and starts and stops a second one; only then does it redial, and after the boot it delivers the queue |
 
 `--meter-interval 10s` makes a running session send `MeterValues` that often, combined with
@@ -117,8 +118,21 @@ then moves the meter by a flat 1000 Wh as before. The simulator also answers
 `HeartbeatInterval`) at run time and read it back with `GetConfiguration`.
 `MeterValuesSampledData` reports the four measurands above and is read-only, since the stream
 does not follow it. The simulator advertises the SmartCharging profile and reports its
-configuration keys (both rate units, stack level 8, 24 periods, 10 profiles), but does not
-answer the charging-profile messages yet.
+configuration keys (both rate units, stack level 8, 24 periods, 10 profiles), and answers
+`SetChargingProfile`, `ClearChargingProfile` and `GetCompositeSchedule` within those limits
+(beyond them: `Rejected`). Profiles are kept per connector (0 is the station) and replace
+one with the same id, or the same purpose and stack level. A `TxProfile` needs a running
+transaction (so a merely reserved connector refuses it) and ends with it; a
+`TxDefaultProfile` can be set while the connector is reserved. The limit at any moment is
+the highest stack level per purpose, `TxProfile` over `TxDefaultProfile`, capped by the
+connector's share of `ChargePointMaxProfile`; the streamed power (and current) is capped at
+it, with amperes taken at 400 V. `ChargePointMaxProfile` limits the station's total, so the
+simulator splits it evenly between the connectors with a running transaction (a share one
+connector leaves unused is not handed to the others), and `GetCompositeSchedule` for
+connector 0 reports the station's total. The model is simplified: `Relative` schedules always start "now",
+`Recurring` ones are read in their current recurrence only, and `GetCompositeSchedule`
+does not convert units (asking in A for profiles in W is `Rejected`). Profiles survive a
+reconnect and a `Reset` (errata 3.37), but not a restart of the simulator.
 
 By default the simulator exits when its connection drops. `--reconnect` makes it behave
 like a station instead: it redials with backoff (1 s, 2 s, 4 s … capped at 30 s, each wait
@@ -815,7 +829,11 @@ arrive later as a sibling of `v16` rather than as a rewrite.
 
 Commands go the other way through `ocpp.ChargePoint`, which `csms.Server.Command(id)` hands
 out: `ReserveNow`, `CancelReservation`, `RemoteStart`, `RemoteStop`, `UnlockConnector`,
-`TriggerStatus` and `Capabilities`. Callers address EVSEs by their OCPI `uid` from config and
+`TriggerStatus`, `Capabilities`, `Probe`, and the smart-charging trio `SetChargingProfile`,
+`ClearChargingProfile` and `GetCompositeSchedule` (no CLI yet). A charging profile is
+validated before anything is sent (periods from 0 and strictly increasing, limits with at
+most one decimal place, a `Tx` profile needs a transaction, only `StationMax` may address the
+whole station); a bad one fails with `ocpp.ErrInvalidProfile`. Callers address EVSEs by their OCPI `uid` from config and
 get back a version-agnostic status (`Accepted`, `Occupied`, `UnlockFailed`, ...) alongside the
 station's literal answer. A station saying no is a result, not an error; errors are for the
 call itself failing (`ocpp.ErrTimeout`, `ocpp.ErrNotConnected`, `ocpp.ErrUnknownEVSE`, or the

@@ -44,6 +44,10 @@ type meter struct {
 	// suspended is set once the full battery has been reported as
 	// SuspendedEV, so that it is reported once per session.
 	suspended bool
+	// capW is the charging-profile limit in W when capped is set. It is
+	// refreshed at each sample and applies to the whole interval before it.
+	capW   int
+	capped bool
 }
 
 // register is the energy reading in Wh, as MeterValues, meterStart and
@@ -69,6 +73,9 @@ func (m *meter) full() bool { return m.delivered() >= toFullMWh }
 func (m *meter) power() int {
 	if m.full() {
 		return 0
+	}
+	if m.capped {
+		return max(0, min(chargePower, m.capW))
 	}
 	return chargePower
 }
@@ -241,6 +248,7 @@ func (s *Simulator) sendMeterValues(connectorID int, stop <-chan struct{}) error
 	c := s.connectors[connectorID]
 	txID := c.transactionID
 	now := s.opts.Now()
+	c.meter.capW, c.meter.capped = s.limitWLocked(connectorID, now)
 	c.meter.advance(now)
 	c.meter.streamed = true
 	values := c.meter.sampledValues()

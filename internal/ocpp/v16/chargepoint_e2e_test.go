@@ -35,6 +35,8 @@ type simRig struct {
 	server *csms.Server
 	sim    *simulator.Simulator
 	cp     ocpp.ChargePoint
+	// power sees every MeterValues the station sends.
+	power *powerLog
 }
 
 func newSimRig(t *testing.T, callTimeout time.Duration, mutate ...func(*simulator.Options)) *simRig {
@@ -43,11 +45,12 @@ func newSimRig(t *testing.T, callTimeout time.Duration, mutate ...func(*simulato
 	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := testConfig()
 	svc := core.New(cfg)
+	power := &powerLog{Handler: v16.NewHandler(cfg, svc, discard)}
 
 	server, err := csms.New(csms.Options{
 		Bind:           "127.0.0.1:0",
 		Core:           svc,
-		Handlers:       map[ocpp.Version]ocpp.Handler{ocpp.Version16: v16.NewHandler(cfg, svc, discard)},
+		Handlers:       map[ocpp.Version]ocpp.Handler{ocpp.Version16: power},
 		NewChargePoint: newChargePointFactory(cfg),
 		CallTimeout:    callTimeout,
 		IdleTimeout:    30 * time.Second,
@@ -94,7 +97,7 @@ func newSimRig(t *testing.T, callTimeout time.Duration, mutate ...func(*simulato
 		cp, err = server.Command(testCP)
 		return err == nil
 	})
-	return &simRig{server: server, sim: sim, cp: cp}
+	return &simRig{server: server, sim: sim, cp: cp, power: power}
 }
 
 func pollUntil(t *testing.T, what string, cond func() bool) {

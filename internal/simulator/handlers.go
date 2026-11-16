@@ -54,7 +54,13 @@ func (s *Simulator) HandleCall(ctx context.Context, _, action string, payload js
 	case v16.ActionChangeAvailability:
 		return s.changeAvailability(ctx, payload)
 	case v16.ActionReset:
-		return v16.ResetConf{Status: v16.CmdAccepted}, nil
+		return s.reset()
+	case v16.ActionSetChargingProfile:
+		return s.setChargingProfile(payload)
+	case v16.ActionClearChargingProfile:
+		return s.clearChargingProfile(payload)
+	case v16.ActionGetCompositeSchedule:
+		return s.getCompositeSchedule(payload)
 	default:
 		return nil, ocpp.Errorf(ocpp.ErrNotImplemented, "action %q is not implemented", action)
 	}
@@ -430,6 +436,7 @@ func (s *Simulator) undoStart(connectorID, reservationID int) {
 	stopMeterLocked(c)
 	c.transactionID = 0
 	c.reservationID = reservationID
+	s.clearTxProfilesLocked(connectorID)
 }
 
 // stopTransaction closes a session and reports it.
@@ -483,6 +490,7 @@ func (s *Simulator) sendStopTransaction(ctx context.Context, connectorID int, re
 	// is read when it samples.
 	meterStop := c.meter.register()
 	c.transactionID = 0
+	s.clearTxProfilesLocked(connectorID)
 	s.mu.Unlock()
 
 	m := &txMessage{action: v16.ActionStopTransaction, stop: &v16.StopTransactionReq{

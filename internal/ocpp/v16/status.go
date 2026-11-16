@@ -99,6 +99,23 @@ var commandStatusMap = map[string]map[string]ocpp.CommandStatus{
 		TriggerRejected:       ocpp.CommandRejected,
 		TriggerNotImplemented: ocpp.CommandNotImplemented,
 	},
+	// ChargingProfileStatus.
+	ActionSetChargingProfile: {
+		ProfileAccepted:     ocpp.CommandAccepted,
+		ProfileRejected:     ocpp.CommandRejected,
+		ProfileNotSupported: ocpp.CommandNotSupported,
+	},
+	// ClearChargingProfileStatus. Its "Unknown" means "no such profile", a
+	// defined answer, not the out-of-spec CommandUnknown.
+	ActionClearChargingProfile: {
+		ClearAccepted: ocpp.CommandAccepted,
+		ClearUnknown:  ocpp.CommandUnknownProfile,
+	},
+	// GetCompositeScheduleStatus.
+	ActionGetCompositeSchedule: {
+		CompositeAccepted: ocpp.CommandAccepted,
+		CompositeRejected: ocpp.CommandRejected,
+	},
 }
 
 // MapCommandStatus converts the status in an action's .conf. Anything the

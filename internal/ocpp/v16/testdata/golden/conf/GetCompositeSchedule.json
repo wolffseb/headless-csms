@@ -1,0 +1,1 @@
+{"status":"Accepted","connectorId":2,"scheduleStart":"2026-11-16T12:00:00Z","chargingSchedule":{"duration":3600,"chargingRateUnit":"W","chargingSchedulePeriod":[{"startPeriod":0,"limit":20000},{"startPeriod":1800,"limit":16.5,"numberPhases":3}]}}
