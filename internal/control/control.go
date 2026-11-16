@@ -195,6 +195,11 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 	return active, nil
 }
 
+// orphanCancelSlack is how much longer than charger.call_timeout cancelOrphan
+// gives the cancel, so that the call timer, not this deadline, ends a cancel
+// the station does not answer.
+const orphanCancelSlack = time.Second
+
 // cancelOrphan asks the station to drop a reservation whose ReserveNow timed
 // out or failed. The request may have reached the station even though the
 // answer did not reach us, and a reservation we have forgotten would block
@@ -216,8 +221,13 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 func (s *Service) cancelOrphan(ctx context.Context, cp ocpp.ChargePoint, r core.Reservation) {
 	ctx = context.WithoutCancel(ctx)
 	if timeout := s.cfg.Charger.CallTimeout.Duration(); timeout > 0 {
+		// The connection's own call timer is what bounds a silent station,
+		// and its error names the action and the timeout for the log. This
+		// deadline only backstops a send that never gets out, so it must not
+		// tie with that timer, or the log would read "context deadline
+		// exceeded" whenever it wins the race.
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
+		ctx, cancel = context.WithTimeout(ctx, timeout+orphanCancelSlack)
 		defer cancel()
 	}
 
