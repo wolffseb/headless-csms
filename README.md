@@ -268,9 +268,9 @@ stdout too. Logs, validation problems and `cpms: …` errors go to stderr.
 
 ### Power, current and the station's configuration
 
-While a session runs, `cpms status` shows the newest meter reading per EVSE in a `METER`
-column: what the station draws, the most it offers the car (the limit it applies, which a
-charging profile changes), and how old the reading is.
+`cpms status` shows the newest meter reading per EVSE in a `METER` column: what the
+station draws, the most it offers the car (the limit it applies, which a charging profile
+changes), and how old the reading is.
 
 ```
 EVSE           STATUS    RESERVATION  TRANSACTION                   METER
@@ -289,7 +289,10 @@ column gives each its own, as in `50.0 kW 125.0 A 3s ago, offered 22.0 kW 1m0s a
 When a station reports only phases, power is the sum of the phases and current the highest
 phase. `kW` is converted to W; a value cpms cannot read is logged and left out. The reading
 is kept in memory only: it is not in `state.json`, and it is dropped when the session on the
-EVSE stops or the station disconnects.
+EVSE stops or the station disconnects. A `MeterValues` for a transaction that is not running
+on that EVSE (the stopped session's last values, arriving late or replayed from the
+station's offline queue) is logged but not kept. One without a transaction is kept: that is
+clock-aligned data, which a station also sends for an idle or Reserved connector.
 
 A station only reports the measurands listed in its `MeterValuesSampledData` key, which
 `cpms probe --raw` shows. The office Alpitronic reports only
@@ -300,6 +303,28 @@ $ cpms config set MeterValuesSampledData \
     Energy.Active.Import.Register,Power.Active.Import,Power.Offered,Current.Import,Current.Offered
 MeterValuesSampledData set to "Energy.Active.Import.Register,Power.Active.Import,..." on the station (Accepted)
 ```
+
+Sampled data only flows during a session (OCPP 1.6 §9.1, `MeterValueSampleInterval`: from
+the start of the transaction). On a connector that is `Available` or `Reserved` the `METER`
+column therefore stays `-` however `MeterValuesSampledData` is set; that does not mean the
+station ignored a charging profile. Outside a session the offered limit only arrives as
+clock-aligned data: `MeterValuesAlignedData` lists the measurands, sent every
+`ClockAlignedDataInterval` seconds, where `0` (the HYC50's setting) means none at all. To
+see the limit on a Reserved HYC50 connector, for instance while testing a charging profile:
+
+```
+$ cpms config set MeterValuesAlignedData Power.Offered,Current.Offered
+$ cpms config set ClockAlignedDataInterval 60
+```
+
+The HYC50 takes up to 7 measurands there (`MeterValuesAlignedDataMaxLength`); add
+`Energy.Active.Import.Register` if you want energy too. Per the spec an aligned value is sent
+at the end of each interval, stamped with the interval's start time, and may be an average
+over it. With 60 s its age therefore reads between one and two minutes, and a changed limit
+can take an interval to show fully.
+Setting the interval back to `0` turns aligned data off. The other way to read the limit is
+to start a session: the `Transaction.Begin` and periodic samples carry `Power.Offered` once
+`MeterValuesSampledData` lists it.
 
 `cpms config set` changes the station, which keeps the value; it does not change
 `config.yaml`, and cpms does not set it again after a reboot. It exits 0 when the station
