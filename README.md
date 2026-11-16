@@ -538,6 +538,23 @@ entries, so `cpms probe` may show SmartCharging as `?` although the station supp
 the four keys above. `cpms run` is running, the station is connected, and one EVSE is
 configured (otherwise add `--evse`). Use the RFID card you will charge with as `--tag`.
 
+0. **Turn on the readings.** The limit is checked on the meter: the `METER` column of `cpms
+   status`, or `power_w` and `power_offered_w` in `cpms status --json` (see [Power, current
+   and the station's configuration](#power-current-and-the-stations-configuration)). First
+   `cpms probe --raw` and **note the original values** of `MeterValuesSampledData`,
+   `MeterValuesAlignedData` and `ClockAlignedDataInterval`: the last step puts them back.
+   Then:
+
+   ```
+   cpms config set MeterValuesSampledData Energy.Active.Import.Register,Power.Active.Import,Power.Offered,Current.Import,Current.Offered
+   cpms config set MeterValuesAlignedData Power.Offered,Current.Offered
+   cpms config set ClockAlignedDataInterval 60
+   ```
+
+   The sampled data shows the power drawn and offered during a session; the aligned pair
+   is the only reading on a `Reserved` connector (step 4), where no session runs. Known
+   caveat (#64): the HYC50 may send aligned values for connector 0 too, which shows up as a
+   stray `-0` EVSE row in `cpms status`; ignore it.
 1. **Check the station.** `cpms probe`: the four keys above, and SmartCharging ✓ or `?`.
    `cpms limit show` should answer (exit 0). Exit 11 means only that the station does not
    answer `GetCompositeSchedule`: carry on with step 3, whose exit 11 is the real
@@ -550,6 +567,10 @@ configured (otherwise add `--evse`). Use the RFID card you will charge with as `
    - exit 11: no Smart Charging.
 4. **Ask what it applies.** `cpms limit show`: a period at `20.0 kW`. No period, or a higher
    one, means it accepted the profile but does not (yet) apply it to this connector.
+   Cross-check on the meter: within one to two aligned intervals `cpms status` shows `offered
+   20.0 kW` in the `METER` column (`power_offered_w` 20000 in `--json`) while still
+   `RESERVED`. No offered value at all means the station sends no aligned data for this
+   connector; that is not a finding about the limit.
 5. **Negative test.** `cpms limit set --purpose tx --kw 15 --force`: expected exit 4,
    `Rejected` (no session to bind it to). `Accepted` is worth noting: the station then holds a
    TxProfile without a session, which would cap the session in step 7 at 15 kW and hide
@@ -558,12 +579,15 @@ configured (otherwise add `--evse`). Use the RFID card you will charge with as `
 6. **A station cap leaves the reservation alone.** `cpms limit set --station --purpose
    station-max --kw 30`, then `cpms status`: still `RESERVED`, reservation unchanged.
 7. **Redeem.** Plug in the car and present the card (or `cpms start --tag <card>`).
-   `cpms status` shows `CHARGING` with the session, and the reservation gone. Wait for a meter
-   reading: the power stays at or below 20 kW and the offered power shows the limit. If it
-   charges above 20 kW, the station accepted the TxDefault but did not apply it to the session
-   that redeemed the reservation, which is the finding.
-8. **Tighten during the session.** `cpms limit set --purpose tx --kw 10`: exit 0, the power
-   falls to 10 kW or below within a meter interval, and `cpms limit show` shows 10.0 kW.
+   `cpms status` shows `CHARGING` with the session, and the reservation gone. Wait for a
+   sampled reading in the `METER` column: the power drawn stays at or below 20 kW
+   (`power_w` ≤ 20000) and the offered power reads 20.0 kW (`power_offered_w` 20000). If it
+   draws or offers more than 20 kW, the station accepted the TxDefault but did not apply it
+   to the session that redeemed the reservation, which is the finding.
+8. **Tighten during the session.** `cpms limit set --purpose tx --kw 10`: exit 0; within a
+   `MeterValueSampleInterval` the `METER` column shows `offered 10.0 kW` and the power drawn
+   falls to 10 kW or below (`power_offered_w` 10000, `power_w` ≤ 10000), and `cpms limit show`
+   shows 10.0 kW.
 9. **Stop and clean up.** `cpms stop`, then `cpms status`: the `tx` record is gone with the
    session, the `tx-default` and `station-max` remain. `cpms limit clear --all` removes
    everything (exit 0; exit 4 with `Unknown` means the station had already dropped them), and
