@@ -47,6 +47,9 @@ ocpi:
   # has the server generate this during the handshake; we take it from config
   # so this file stays read-only.
   token_c: "change-me-token-c"
+  # The name in our OCPI credentials (business_details.name). Optional: it
+  # defaults to location.name below, which is not always the company's name.
+  # business_name: Fryte GmbH
   push:
     # Coalesce rapid status flapping into a single PATCH.
     debounce: 500ms

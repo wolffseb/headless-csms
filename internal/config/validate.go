@@ -25,6 +25,9 @@ var (
 	// degrees as a string with 5 to 7 decimal places.
 	latitudeRe  = regexp.MustCompile(`^-?[0-9]{1,2}\.[0-9]{5,7}$`)
 	longitudeRe = regexp.MustCompile(`^-?[0-9]{1,3}\.[0-9]{5,7}$`)
+	// tokenRe is an OCPI credentials token: string(64) of printable
+	// non-whitespace ASCII, U+0021 to U+007E.
+	tokenRe = regexp.MustCompile(`^[\x21-\x7E]*$`)
 	// evseIDRe is a light eMI3 check: country, party, an 'E', then the rest.
 	evseIDRe = regexp.MustCompile(`^[A-Za-z]{2}\*?[A-Za-z0-9]{3}\*?[Ee][A-Za-z0-9*]{1,30}$`)
 )
@@ -33,6 +36,12 @@ var (
 // but a two-character shared secret on a LAN endpoint is a mistake worth
 // catching at validation time.
 const minTokenLen = 8
+
+// maxTokenLen is OCPI's own limit: a credentials token is a string(64).
+const maxTokenLen = 64
+
+// maxBusinessNameLen is OCPI BusinessDetails.name, a string(100).
+const maxBusinessNameLen = 100
 
 // Validate checks the whole config and returns every problem it finds as
 // ValidationErrors, or nil if the config is usable.
@@ -177,6 +186,10 @@ func (c *Config) validateOCPI(v *validator) {
 		v.add("ocpi.token_c", "must differ from ocpi.token_a")
 	}
 
+	if n := len(o.BusinessName); n > maxBusinessNameLen {
+		v.add("ocpi.business_name", "must be at most %d characters (OCPI BusinessDetails.name), got %d", maxBusinessNameLen, n)
+	}
+
 	if err := o.Push.Debounce.parse(); err != nil {
 		v.add("ocpi.push.debounce", "%q is not a duration; want e.g. \"500ms\"", o.Push.Debounce.raw)
 	} else if o.Push.Debounce.dur < 0 {
@@ -195,10 +208,16 @@ func validateToken(v *validator, path, token string) {
 	if len(token) < minTokenLen {
 		v.add(path, "must be at least %d characters", minTokenLen)
 	}
-	// The token is sent base64-encoded in an Authorization header; whitespace
-	// in the source value is almost always an accident.
-	if strings.ContainsAny(token, " \t\r\n") {
+	if len(token) > maxTokenLen {
+		v.add(path, "must be at most %d characters (OCPI string(64)), got %d", maxTokenLen, len(token))
+	}
+	// OCPI allows only printable ASCII without whitespace. Whitespace in the
+	// source value is almost always an accident, so it gets its own message.
+	switch {
+	case strings.ContainsAny(token, " \t\r\n"):
 		v.add(path, "must not contain whitespace")
+	case !tokenRe.MatchString(token):
+		v.add(path, "must contain only printable ASCII characters (U+0021 to U+007E)")
 	}
 }
 

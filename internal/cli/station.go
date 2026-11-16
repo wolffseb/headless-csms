@@ -290,6 +290,25 @@ func printStatus(cmd *cobra.Command, st socket.Status) {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", e.UID, status, reservation, transaction)
 	}
 	_ = w.Flush()
+	cmd.Println()
+	cmd.Println(ocpiLine(st.OCPI))
+}
+
+// ocpiLine is the registration in one line: who, since when, and where
+// status changes go.
+func ocpiLine(o socket.OCPIStatus) string {
+	if !o.Registered {
+		return "OCPI  not registered"
+	}
+	line := "OCPI  registered with " + o.Party
+	if o.Since != nil {
+		line += " since " + localTime(*o.Since)
+	}
+	push := o.PushEndpoint
+	if push == "" {
+		push = "no locations receiver"
+	}
+	return line + ", push: " + push
 }
 
 // localTime shows a timestamp the way a person at the station reads a clock:

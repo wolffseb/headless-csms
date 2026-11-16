@@ -54,8 +54,8 @@ type AuthenticatorFunc func(token string) Access
 func (f AuthenticatorFunc) Access(token string) Access { return f(token) }
 
 // NewStaticAuthenticator grants registration access to tokenA and nothing to
-// any other token. It is the stand-in until the credentials module knows
-// whether we are registered.
+// any other token. cpms run uses the registration-aware one from
+// internal/ocpi/credentials; this one serves tests of the transport alone.
 func NewStaticAuthenticator(tokenA string) Authenticator {
 	a := NewSecret(tokenA)
 	return AuthenticatorFunc(func(token string) Access {

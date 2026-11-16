@@ -20,8 +20,38 @@ import (
 	"github.com/wolffseb/cli-cpms/internal/control"
 	"github.com/wolffseb/cli-cpms/internal/control/socket"
 	"github.com/wolffseb/cli-cpms/internal/core"
+	"github.com/wolffseb/cli-cpms/internal/ocpi/credentials"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
+	"github.com/wolffseb/cli-cpms/internal/state"
 )
+
+// stuckOCPI is a registration whose Unregister waits for its context, as the
+// real one does behind a registration in progress.
+type stuckOCPI struct{}
+
+func (stuckOCPI) Registration() *state.OCPIRegistration { return nil }
+func (stuckOCPI) Unregister(ctx context.Context) (credentials.Unregistered, error) {
+	<-ctx.Done()
+	return credentials.Unregistered{}, fmt.Errorf("waiting for a registration in progress: %w", ctx.Err())
+}
+
+// Unregister is bounded by the server, below the CLI's own timeout, so the
+// CLI is told what happened rather than giving up locally while the server
+// goes on. Running out of time is a refusal: nothing was changed.
+func TestUnregisterTimesOutBeforeTheClientDoes(t *testing.T) {
+	t.Parallel()
+	path := serveWith(t, context.Background(), fakeStation{}, func(o *socket.Options) {
+		o.OCPI = stuckOCPI{}
+		o.UnregisterTimeout = 50 * time.Millisecond
+	})
+
+	// The client would wait a hundred times as long.
+	_, err := socket.Call(context.Background(), path, socket.Request{Op: socket.OpOCPIUnregister}, 5*time.Second)
+	var se *socket.Error
+	if !errors.As(err, &se) || se.Code != socket.CodeRefused || !strings.Contains(se.Message, "in progress") {
+		t.Fatalf("err = %v, want a refusal that says a registration is in progress", err)
+	}
+}
 
 func shortDir(t *testing.T) string {
 	t.Helper()
@@ -82,6 +112,12 @@ func serve(t *testing.T, station ocpp.ChargePoint) string {
 
 func serveCtx(t *testing.T, ctx context.Context, station ocpp.ChargePoint) string {
 	t.Helper()
+	return serveWith(t, ctx, station, func(*socket.Options) {})
+}
+
+// serveWith is serveCtx with a say in the server's options.
+func serveWith(t *testing.T, ctx context.Context, station ocpp.ChargePoint, tune func(*socket.Options)) string {
+	t.Helper()
 
 	cfg := &config.Config{
 		Charger:  config.Charger{ID: "CP"},
@@ -93,11 +129,16 @@ func serveCtx(t *testing.T, ctx context.Context, station ocpp.ChargePoint) strin
 	ctl := control.New(control.Options{Core: c, Commands: commands{station}, Config: cfg, Log: discard()})
 
 	path := filepath.Join(shortDir(t), "cpms.sock")
-	srv, err := socket.Listen(socket.Options{Path: path, ChargePointID: "CP", Log: discard()})
+	opts := socket.Options{Path: path, ChargePointID: "CP", Log: discard()}
+	tune(&opts)
+	srv, err := socket.Listen(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	srv.Attach(ctl, c)
+	if opts.OCPI != nil {
+		srv.AttachOCPI(opts.OCPI)
+	}
 	srv.Serve(ctx)
 	t.Cleanup(srv.Close)
 	return path

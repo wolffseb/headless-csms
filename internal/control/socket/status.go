@@ -4,7 +4,9 @@ import (
 	"time"
 
 	"github.com/wolffseb/cli-cpms/internal/core"
+	"github.com/wolffseb/cli-cpms/internal/ocpi/credentials"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
+	"github.com/wolffseb/cli-cpms/internal/state"
 )
 
 // BuildStatus renders a core snapshot as the status a person or a script
@@ -58,6 +60,19 @@ func BuildStatus(snap core.Snapshot, chargePointID string) Status {
 			row.Transaction = &TransactionStatus{ID: tx.ID, IDTag: tx.IDTag, StartedAt: tx.StartedAt.UTC()}
 		}
 		out.EVSEs = append(out.EVSEs, row)
+	}
+	return out
+}
+
+// BuildOCPIStatus renders the OCPI registration for status, without its
+// token. A nil registration is "not registered".
+func BuildOCPIStatus(reg *state.OCPIRegistration) OCPIStatus {
+	if reg == nil {
+		return OCPIStatus{}
+	}
+	out := OCPIStatus{Registered: true, Party: credentials.Party(reg), Since: utcOrNil(reg.RegisteredAt)}
+	if url, ok := credentials.PushEndpoint(reg); ok {
+		out.PushEndpoint = url
 	}
 	return out
 }
