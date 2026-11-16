@@ -137,9 +137,11 @@ reconnect and a `Reset` (errata 3.37), but not a restart of the simulator.
 By default the simulator exits when its connection drops. `--reconnect` makes it behave
 like a station instead: it redials with backoff (1 s, 2 s, 4 s … capped at 30 s, each wait
 shortened by up to a fifth at random), then sends `BootNotification` again and reports the
-station and every connector again. A `BootNotification` the CSMS rejects after a reconnect
-still makes it exit non-zero. The first dial is not retried: a CSMS that cannot be reached
-at start-up is more likely a wrong `--csms` than an outage.
+station and every connector again. (`simulator.Options.ResumeWithoutBoot`, for tests, makes a
+redial skip the boot and the status round instead, like the office Alpitronic.) A
+`BootNotification` the CSMS rejects after a reconnect still makes it exit non-zero. The
+first dial is not retried: a CSMS that cannot be reached at start-up is more likely a
+wrong `--csms` than an outage.
 
 While it is offline it keeps charging, as a real station does. Sessions start and stop
 locally, the meter keeps streaming, and every transaction message (`StartTransaction`,
@@ -866,8 +868,45 @@ sequenceDiagram
     Conn->>Conn: nothing for charger.heartbeat_timeout
     Conn->>Core: Disconnected ("heartbeat timeout")
     Core->>Core: every EVSE → UNKNOWN
-    Note over St,Core: a real station reconnects on its own,<br/>and its next StatusNotifications restore the real statuses
+    Note over St,Core: a real station reconnects on its own;<br/>see the next diagram for how the statuses come back
 ```
+
+#### The station reconnects
+
+OCPP 1.6 asks for `StatusNotification`s only after a `BootNotification`. A station that
+reconnects without rebooting (the office Alpitronic does) may send nothing but heartbeats,
+and until a connector changes state every EVSE would read `UNKNOWN` after a restart of
+cpms, or keep the status from before the outage, in `cpms status` and over OCPI. So every
+new connection gets a `TriggerMessage(StatusNotification)` per configured EVSE, unless the
+station boots within 5 seconds of connecting, in which case it reports by itself.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant St as Station
+    participant Srv as csms server
+    participant Ctl as control
+    participant Core as core
+
+    St->>Srv: WebSocket connect
+    Srv->>Core: Connected
+    Srv->>Ctl: RefreshStatusOnConnect (own goroutine, ends with the connection)
+    Note over Ctl: waits 5 s for a BootNotification
+    alt the station booted
+        St->>Core: BootNotification, then a StatusNotification per connector
+        Note over Ctl: nothing to ask
+    else it did not
+        loop each configured EVSE, one at a time
+            Ctl->>St: TriggerMessage(StatusNotification, connectorId)
+            St-->>Ctl: Accepted
+            St->>Core: StatusNotification
+        end
+    end
+```
+
+Each request is bounded by `charger.call_timeout` and nothing is retried. A station
+without the RemoteTrigger profile (`Rejected`, `NotImplemented`, or a CALLERROR) gets one
+INFO line in the log and stays connected; its EVSEs then wait for its next status change.
 
 #### Planned: Fryte reserves over OCPI
 
