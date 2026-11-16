@@ -282,7 +282,7 @@ Settings
   HeartbeatInterval                        60                                                                    seconds between heartbeats; cpms sets it at boot from charger.heartbeat_interval
   ConnectionTimeOut                        60                                                                    seconds the station waits for a cable after a remote start or a presented tag
   MeterValueSampleInterval                 0                                                                     seconds between meter values during a session; 0 means none are sent
-  MeterValuesSampledData                   Energy.Active.Import.Register,Power.Active.Import,Current.Import,SoC  measurands sent during a session; Power.Active.Import must be among them to see a charging limit take effect
+  MeterValuesSampledData                   Energy.Active.Import.Register,Power.Active.Import,Current.Import,SoC  measurands sent during a session; Power.Offered and Current.Offered carry a charging limit, Power.Active.Import and Current.Import its effect; entries may end in a phase, as in Current.Import.L1
   ChargingScheduleAllowedChargingRateUnit  Current,Power                                                         units a charging schedule may use (Current, Power or both); decides whether a limit can be set in kW or in A
   ChargeProfileMaxStackLevel               8                                                                     highest stack level the station accepts for a charging profile
   ChargingScheduleMaxPeriods               24                                                                    most periods the station accepts in one charging schedule
@@ -321,15 +321,16 @@ cpms: the station lacks 1 capability that cpms requires: reservation
 - **Settings** are the keys that change how the station behaves towards cpms. A key the
   station does not report shows as `not reported`; that is not an error. The last five are
   for charging limits: `ChargingScheduleAllowedChargingRateUnit` says whether a limit can be
-  given in power (`Power`), in current (`Current`) or both, and `MeterValuesSampledData` has
-  to include `Power.Active.Import` for a limit to be visible in the meter values.
+  given in power (`Power`), in current (`Current`) or both, and `MeterValuesSampledData`
+  says whether a limit can be seen in the meter values: `Power.Offered` and `Current.Offered`
+  carry the limit itself, `Power.Active.Import` and `Current.Import` its effect, and an entry
+  may end in a phase, as in `Current.Import.L1`.
 - **Checks** compare the station with config. A connector count that differs from the EVSEs
   in config, or a heartbeat interval other than `charger.heartbeat_interval`, is a warning
   (`!`); it does not change the exit code.
 - `--raw` adds every key the station reported, with whether it is read-only. `--json` prints
   the whole report, including every key, with `ok`, `missing`, `unconfirmed` and `warnings`
   for scripts. `ok` is false only when `missing` is not empty.
-
 If the station is not connected, `cpms probe` exits 3 and prints the CSMS URL to configure on
 the station, the same one `cpms config validate` prints, plus when and why it last
 disconnected.

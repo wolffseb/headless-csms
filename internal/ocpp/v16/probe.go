@@ -47,7 +47,7 @@ var probedSettings = []struct {
 	{KeyMeterValueSampleInterval,
 		"seconds between meter values during a session; 0 means none are sent"},
 	{KeyMeterValuesSampledData,
-		"measurands sent during a session; Power.Active.Import must be among them to see a charging limit take effect"},
+		"measurands sent during a session; Power.Offered and Current.Offered carry a charging limit, Power.Active.Import and Current.Import its effect; entries may end in a phase, as in Current.Import.L1"},
 	{KeyChargingScheduleAllowedChargingRateUnit,
 		"units a charging schedule may use (Current, Power or both); decides whether a limit can be set in kW or in A"},
 	{KeyChargeProfileMaxStackLevel,

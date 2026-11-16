@@ -18,7 +18,7 @@ Settings
   HeartbeatInterval                        60                                                                    seconds between heartbeats; cpms sets it at boot from charger.heartbeat_interval
   ConnectionTimeOut                        60                                                                    seconds the station waits for a cable after a remote start or a presented tag
   MeterValueSampleInterval                 0                                                                     seconds between meter values during a session; 0 means none are sent
-  MeterValuesSampledData                   Energy.Active.Import.Register,Power.Active.Import,Current.Import,SoC  measurands sent during a session; Power.Active.Import must be among them to see a charging limit take effect
+  MeterValuesSampledData                   Energy.Active.Import.Register,Power.Active.Import,Current.Import,SoC  measurands sent during a session; Power.Offered and Current.Offered carry a charging limit, Power.Active.Import and Current.Import its effect; entries may end in a phase, as in Current.Import.L1
   ChargingScheduleAllowedChargingRateUnit  Current,Power                                                         units a charging schedule may use (Current, Power or both); decides whether a limit can be set in kW or in A
   ChargeProfileMaxStackLevel               8                                                                     highest stack level the station accepts for a charging profile
   ChargingScheduleMaxPeriods               24                                                                    most periods the station accepts in one charging schedule

@@ -129,7 +129,7 @@
       "name": "MeterValuesSampledData",
       "value": "Energy.Active.Import.Register,Power.Active.Import,Current.Import,SoC",
       "reported": true,
-      "meaning": "measurands sent during a session; Power.Active.Import must be among them to see a charging limit take effect"
+      "meaning": "measurands sent during a session; Power.Offered and Current.Offered carry a charging limit, Power.Active.Import and Current.Import its effect; entries may end in a phase, as in Current.Import.L1"
     },
     {
       "name": "ChargingScheduleAllowedChargingRateUnit",
