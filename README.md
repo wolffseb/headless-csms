@@ -588,7 +588,7 @@ configured (otherwise add `--evse`). Use the RFID card you will charge with as `
    `MeterValueSampleInterval` the `METER` column shows `offered 10.0 kW` and the power drawn
    falls to 10 kW or below (`power_offered_w` 10000, `power_w` ≤ 10000), and `cpms limit show`
    shows 10.0 kW.
-9. **Stop and clean up.** `cpms stop`, then `cpms status`: the `tx` record is gone with the
+9. **Stop and clear.** `cpms stop`, then `cpms status`: the `tx` record is gone with the
    session, the `tx-default` and `station-max` remain. `cpms limit clear --all` removes
    everything (exit 0; exit 4 with `Unknown` means the station had already dropped them), and
    `cpms limit show` shows no limit.
@@ -597,6 +597,16 @@ configured (otherwise add `--evse`). Use the RFID card you will charge with as `
     should survive the reservation ending.
 11. **Units.** Repeat step 3 in the other unit (`--amps 32` after `--kw`); the HYC50 allows
     both, so both should be `Accepted`.
+12. **Clean up. Mandatory, also after a failed or aborted run.** The HYC50 keeps charging
+    profiles across reboots, so a limit left behind caps every later session on the
+    connector, and nothing in `cpms status` points to it once cpms has forgotten it.
+    - `cpms limit clear --all` (exit 0; exit 4 with `Unknown` means nothing was left), then
+      `cpms limit show`: no limit. Do not stop until it says so.
+    - `cpms cancel` if a reservation is still held.
+    - Put back the meter settings from step 0, with the originals you noted from `cpms probe
+      --raw`: `cpms config set ClockAlignedDataInterval 0` (or its original),
+      `cpms config set MeterValuesAlignedData <original>` and
+      `cpms config set MeterValuesSampledData <original>`. Check with `cpms probe --raw`.
 
 The simulator runs the same sequence: `cpms simulate charger --meter-interval 5s` caps its
 50 kW at the active limit, and `--scenario reject-profile` answers every profile `Rejected`.
