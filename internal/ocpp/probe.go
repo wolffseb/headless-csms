@@ -12,11 +12,13 @@ const (
 	CapUnlock          Capability = "unlock"
 	CapReservation     Capability = "reservation"
 	CapTriggerStatus   Capability = "trigger_status"
+	CapSmartCharging   Capability = "smart_charging"
 )
 
 // AllCapabilities lists every capability, in the order a report shows them.
+// New ones go last, so that the order of existing reports does not change.
 func AllCapabilities() []Capability {
-	return []Capability{CapRemoteStartStop, CapUnlock, CapReservation, CapTriggerStatus}
+	return []Capability{CapRemoteStartStop, CapUnlock, CapReservation, CapTriggerStatus, CapSmartCharging}
 }
 
 // Support is whether a station supports something.
@@ -65,8 +67,9 @@ type ProbeReport struct {
 type Feature struct {
 	Name    string
 	Support Support
-	// Grants are the capabilities this feature provides. A feature cpms has
-	// no use for grants none.
+	// Grants are the capabilities this feature provides, whether or not
+	// cpms uses them: SmartCharging grants CapSmartCharging although nothing
+	// requires it yet. What cpms requires is decided by the caller.
 	Grants []Capability
 	// Assumed is true when Support was not read from the station but
 	// inferred: Core is mandatory in OCPP 1.6, so a station that does not

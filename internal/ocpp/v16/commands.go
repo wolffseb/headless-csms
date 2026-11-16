@@ -154,6 +154,13 @@ const (
 	KeyLocalAuthorizeOffline         = "LocalAuthorizeOffline"
 	KeyConnectionTimeOut             = "ConnectionTimeOut"
 	KeyMeterValueSampleInterval      = "MeterValueSampleInterval"
+	KeyMeterValuesSampledData        = "MeterValuesSampledData"
+
+	// The Smart Charging profile's own keys.
+	KeyChargingScheduleAllowedChargingRateUnit = "ChargingScheduleAllowedChargingRateUnit"
+	KeyChargeProfileMaxStackLevel              = "ChargeProfileMaxStackLevel"
+	KeyChargingScheduleMaxPeriods              = "ChargingScheduleMaxPeriods"
+	KeyMaxChargingProfilesInstalled            = "MaxChargingProfilesInstalled"
 )
 
 // ChangeConfigurationReq sets one configuration key.

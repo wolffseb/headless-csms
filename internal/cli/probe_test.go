@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -64,6 +65,12 @@ func TestProbeNormalStation(t *testing.T) {
 		`Core +✓ +required`,
 		`Reservation +✓ +required`,
 		`RemoteTrigger +✓ +optional`,
+		`SmartCharging +✓ +not used by cpms`,
+		`MeterValuesSampledData +Energy\.Active\.Import\.Register,Power\.Active\.Import,Current\.Import,SoC +measurands`,
+		`ChargingScheduleAllowedChargingRateUnit +Current,Power +units`,
+		`ChargeProfileMaxStackLevel +8 +highest stack level`,
+		`ChargingScheduleMaxPeriods +24 +most periods`,
+		`MaxChargingProfilesInstalled +10 +how many charging profiles`,
 		`Every capability cpms requires is present\.`,
 	)
 	if strings.Contains(out, "All keys") {
@@ -87,8 +94,8 @@ func TestProbeJSONAndRaw(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &report); err != nil {
 		t.Fatalf("probe --json is not JSON: %v", err)
 	}
-	if !report.OK || len(report.Raw) != 10 {
-		t.Fatalf("ok = %v with %d raw keys, want ok with the simulator's 10", report.OK, len(report.Raw))
+	if !report.OK || len(report.Raw) != 15 {
+		t.Fatalf("ok = %v with %d raw keys, want ok with the simulator's 15", report.OK, len(report.Raw))
 	}
 
 	// --raw lists every key the station reported, with its value.
@@ -159,6 +166,66 @@ func TestProbeUnreportedKeys(t *testing.T) {
 		`ok +heartbeat every 60s`,
 		`Every capability cpms requires is present\.`,
 	)
+}
+
+// The smart charging probe on a station without it: the profile is absent,
+// its keys are not reported, and none of that fails the probe, because cpms
+// does not require smart charging.
+func TestProbeWithoutSmartCharging(t *testing.T) {
+	t.Parallel()
+	s := newStation(t, 19600)
+	smartChargingKeys := []string{
+		v16.KeyChargingScheduleAllowedChargingRateUnit,
+		v16.KeyChargeProfileMaxStackLevel,
+		v16.KeyChargingScheduleMaxPeriods,
+		v16.KeyMaxChargingProfilesInstalled,
+		v16.KeyMeterValuesSampledData,
+	}
+	s.connect(func(o *simulator.Options) {
+		o.FeatureProfiles = "Core,Reservation,RemoteTrigger"
+		o.UnreportedKeys = smartChargingKeys
+	})
+
+	stdout := s.mustCPMS("probe")
+	patterns := []string{`SmartCharging +✗ +not used by cpms`, `Every capability cpms requires is present\.`}
+	for _, k := range smartChargingKeys {
+		patterns = append(patterns, k+` +not reported`)
+	}
+	expectLines(t, stdout, patterns...)
+
+	var out struct {
+		OK           bool                     `json:"ok"`
+		Capabilities []socket.ProbeCapability `json:"capabilities"`
+		Features     []socket.ProbeFeature    `json:"features"`
+		Settings     []socket.ProbeSetting    `json:"settings"`
+	}
+	if err := json.Unmarshal([]byte(s.mustCPMS("probe", "--json")), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.OK {
+		t.Error("json ok = false, but smart charging is not required")
+	}
+	// grants is what a feature provides, not what cpms needs: SmartCharging
+	// grants smart_charging while ok stays true.
+	if !slices.ContainsFunc(out.Features, func(f socket.ProbeFeature) bool {
+		return f.Name == "SmartCharging" && f.Support == "no" &&
+			slices.Equal(f.Grants, []string{"smart_charging"})
+	}) {
+		t.Errorf("features = %+v, want SmartCharging no, granting smart_charging", out.Features)
+	}
+	if !slices.Contains(out.Capabilities, socket.ProbeCapability{Name: "smart_charging", Support: "no"}) {
+		t.Errorf("capabilities = %+v, want smart_charging no", out.Capabilities)
+	}
+	for _, k := range smartChargingKeys {
+		i := slices.IndexFunc(out.Settings, func(st socket.ProbeSetting) bool { return st.Name == k })
+		if i < 0 {
+			t.Errorf("settings have no %s: %+v", k, out.Settings)
+			continue
+		}
+		if st := out.Settings[i]; st.Reported || st.Value != "" || st.Meaning == "" {
+			t.Errorf("setting %+v, want not reported, with a meaning", st)
+		}
+	}
 }
 
 // A station that lists no feature profiles, like the third-party rey: Core is

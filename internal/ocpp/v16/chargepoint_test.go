@@ -295,36 +295,41 @@ func TestCapabilities(t *testing.T) {
 		want     ocpp.Capabilities
 	}{
 		{
-			name:     "both advertised",
-			response: `{"configurationKey":[{"key":"SupportedFeatureProfiles","readonly":true,"value":"Core,Reservation,RemoteTrigger"}]}`,
-			want:     ocpp.Capabilities{Reservation: ocpp.SupportYes, RemoteTrigger: ocpp.SupportYes},
+			name:     "all advertised",
+			response: `{"configurationKey":[{"key":"SupportedFeatureProfiles","readonly":true,"value":"Core,Reservation,RemoteTrigger,SmartCharging"}]}`,
+			want:     ocpp.Capabilities{Reservation: ocpp.SupportYes, RemoteTrigger: ocpp.SupportYes, SmartCharging: ocpp.SupportYes},
+		},
+		{
+			name:     "smart charging without remote trigger",
+			response: `{"configurationKey":[{"key":"SupportedFeatureProfiles","readonly":true,"value":"Core,Reservation,SmartCharging"}]}`,
+			want:     ocpp.Capabilities{Reservation: ocpp.SupportYes, RemoteTrigger: ocpp.SupportNo, SmartCharging: ocpp.SupportYes},
 		},
 		{
 			name:     "spaces after commas",
 			response: `{"configurationKey":[{"key":"SupportedFeatureProfiles","readonly":true,"value":"Core, Reservation"}]}`,
-			want:     ocpp.Capabilities{Reservation: ocpp.SupportYes, RemoteTrigger: ocpp.SupportNo},
+			want:     ocpp.Capabilities{Reservation: ocpp.SupportYes, RemoteTrigger: ocpp.SupportNo, SmartCharging: ocpp.SupportNo},
 		},
 		{
 			name:     "core only",
 			response: `{"configurationKey":[{"key":"SupportedFeatureProfiles","readonly":true,"value":"Core"}]}`,
-			want:     ocpp.Capabilities{Reservation: ocpp.SupportNo, RemoteTrigger: ocpp.SupportNo},
+			want:     ocpp.Capabilities{Reservation: ocpp.SupportNo, RemoteTrigger: ocpp.SupportNo, SmartCharging: ocpp.SupportNo},
 		},
 		{
 			// The value is optional in 1.6; without it nothing is known.
 			name:     "no value",
 			response: `{"configurationKey":[{"key":"SupportedFeatureProfiles","readonly":true}]}`,
-			want:     ocpp.Capabilities{Reservation: ocpp.SupportUnknown, RemoteTrigger: ocpp.SupportUnknown},
+			want:     ocpp.Capabilities{Reservation: ocpp.SupportUnknown, RemoteTrigger: ocpp.SupportUnknown, SmartCharging: ocpp.SupportUnknown},
 		},
 		{
 			name:     "blank value",
 			response: `{"configurationKey":[{"key":"SupportedFeatureProfiles","readonly":true,"value":" "}]}`,
-			want:     ocpp.Capabilities{Reservation: ocpp.SupportUnknown, RemoteTrigger: ocpp.SupportUnknown},
+			want:     ocpp.Capabilities{Reservation: ocpp.SupportUnknown, RemoteTrigger: ocpp.SupportUnknown, SmartCharging: ocpp.SupportUnknown},
 		},
 		{
 			// An unknown key is not a failure, and not a "no" either.
 			name:     "unknown key",
 			response: `{"unknownKey":["SupportedFeatureProfiles"]}`,
-			want:     ocpp.Capabilities{Reservation: ocpp.SupportUnknown, RemoteTrigger: ocpp.SupportUnknown},
+			want:     ocpp.Capabilities{Reservation: ocpp.SupportUnknown, RemoteTrigger: ocpp.SupportUnknown, SmartCharging: ocpp.SupportUnknown},
 		},
 	}
 

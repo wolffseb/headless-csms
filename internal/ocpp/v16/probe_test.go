@@ -23,6 +23,11 @@ const fullConfiguration = `{"configurationKey":[
 	{"key":"LocalPreAuthorize","readonly":false,"value":"false"},
 	{"key":"LocalAuthorizeOffline","readonly":false,"value":"true"},
 	{"key":"ReserveConnectorZeroSupported","readonly":true,"value":"false"},
+	{"key":"MeterValuesSampledData","readonly":false,"value":"Energy.Active.Import.Register,Power.Active.Import"},
+	{"key":"ChargingScheduleAllowedChargingRateUnit","readonly":true,"value":"Current"},
+	{"key":"ChargeProfileMaxStackLevel","readonly":true,"value":"8"},
+	{"key":"ChargingScheduleMaxPeriods","readonly":true,"value":"24"},
+	{"key":"MaxChargingProfilesInstalled","readonly":true,"value":"10"},
 	{"key":"VendorSpecificThing","readonly":true,"value":"42"}
 ]}`
 
@@ -54,13 +59,22 @@ func TestProbeReadsTheWholeConfigurationOnce(t *testing.T) {
 	for _, f := range report.Features {
 		names = append(names, f.Name)
 	}
-	want := []string{"Core", "Reservation", "RemoteTrigger", "FirmwareManagement", "SmartCharging"}
+	want := []string{"Core", "Reservation", "RemoteTrigger", "SmartCharging", "FirmwareManagement"}
 	if !slices.Equal(names, want) {
 		t.Errorf("features = %v, want %v", names, want)
 	}
-	for _, f := range report.Features[3:] {
-		if len(f.Grants) != 0 {
-			t.Errorf("%s grants %v, but cpms has no use for it", f.Name, f.Grants)
+	// Grants lists what a feature provides, whether or not cpms needs it:
+	// SmartCharging grants smart_charging although nothing requires it yet.
+	wantGrants := map[string][]ocpp.Capability{
+		"Core":               {ocpp.CapRemoteStartStop, ocpp.CapUnlock},
+		"Reservation":        {ocpp.CapReservation},
+		"RemoteTrigger":      {ocpp.CapTriggerStatus},
+		"SmartCharging":      {ocpp.CapSmartCharging},
+		"FirmwareManagement": nil,
+	}
+	for _, f := range report.Features {
+		if !slices.Equal(f.Grants, wantGrants[f.Name]) {
+			t.Errorf("%s grants %v, want %v", f.Name, f.Grants, wantGrants[f.Name])
 		}
 	}
 
@@ -78,17 +92,26 @@ func TestProbeReadsTheWholeConfigurationOnce(t *testing.T) {
 		}
 		settings[s.Name] = s
 	}
-	if len(settings) != 9 {
-		t.Errorf("%d settings, want 9", len(settings))
+	if len(settings) != 14 {
+		t.Errorf("%d settings, want 14", len(settings))
 	}
-	if s := settings["AuthorizeRemoteTxRequests"]; s.Value != "true" {
-		t.Errorf("AuthorizeRemoteTxRequests = %q", s.Value)
+	for key, want := range map[string]string{
+		"AuthorizeRemoteTxRequests":               "true",
+		"MeterValuesSampledData":                  "Energy.Active.Import.Register,Power.Active.Import",
+		"ChargingScheduleAllowedChargingRateUnit": "Current",
+		"ChargeProfileMaxStackLevel":              "8",
+		"ChargingScheduleMaxPeriods":              "24",
+		"MaxChargingProfilesInstalled":            "10",
+	} {
+		if got := settings[key].Value; got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
 	}
 
-	if len(report.Raw) != 11 {
-		t.Fatalf("%d raw keys, want all 11", len(report.Raw))
+	if len(report.Raw) != 16 {
+		t.Fatalf("%d raw keys, want all 16", len(report.Raw))
 	}
-	if last := report.Raw[10]; last != (ocpp.RawSetting{Key: "VendorSpecificThing", Value: "42", Readonly: true}) {
+	if last := report.Raw[15]; last != (ocpp.RawSetting{Key: "VendorSpecificThing", Value: "42", Readonly: true}) {
 		t.Errorf("raw key = %+v", last)
 	}
 }
@@ -106,6 +129,43 @@ func TestProbeWithoutReservationProfile(t *testing.T) {
 	}
 	if got := report.Support(ocpp.CapRemoteStartStop); got != ocpp.SupportYes {
 		t.Errorf("remote start/stop = %s, want yes", got)
+	}
+}
+
+// SmartCharging follows the same three states as every optional profile: a
+// list that names it, a list that does not, and no list at all.
+func TestProbeSmartChargingProfile(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		response string
+		want     ocpp.Support
+	}{
+		{"listed", `{"configurationKey":[{"key":"SupportedFeatureProfiles","readonly":true,"value":"Core,Reservation,SmartCharging"}]}`, ocpp.SupportYes},
+		{"list without it", `{"configurationKey":[{"key":"SupportedFeatureProfiles","readonly":true,"value":"Core,Reservation"}]}`, ocpp.SupportNo},
+		{"no list", `{"configurationKey":[]}`, ocpp.SupportUnknown},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cp, _ := newFakeChargePoint(tt.response)
+			report, err := cp.Probe(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := report.Support(ocpp.CapSmartCharging); got != tt.want {
+				t.Errorf("smart charging = %s, want %s", got, tt.want)
+			}
+			i := slices.IndexFunc(report.Features, func(f ocpp.Feature) bool { return f.Name == "SmartCharging" })
+			if i < 0 {
+				t.Fatalf("features = %+v, want SmartCharging among them", report.Features)
+			}
+			if f := report.Features[i]; f.Support != tt.want || !slices.Equal(f.Grants, []ocpp.Capability{ocpp.CapSmartCharging}) {
+				t.Errorf("feature = %+v, want %s granting smart_charging", f, tt.want)
+			}
+		})
 	}
 }
 

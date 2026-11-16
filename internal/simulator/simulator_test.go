@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -495,6 +496,32 @@ func TestGetConfigurationReportsFeatureProfiles(t *testing.T) {
 
 		if profiles := configValue(conf, v16.KeySupportedFeatureProfiles); strings.Contains(profiles, "Reservation") {
 			t.Errorf("profiles = %q, should not advertise Reservation", profiles)
+		}
+	})
+
+	t.Run("smart charging", func(t *testing.T) {
+		t.Parallel()
+
+		r := newRig(t)
+		waitFor(t, "the station to come online", func() bool { return r.core.IsOnline(testCP) })
+
+		var conf v16.GetConfigurationConf
+		r.call(t, v16.ActionGetConfiguration, v16.GetConfigurationReq{}, &conf)
+
+		if profiles := configValue(conf, v16.KeySupportedFeatureProfiles); !slices.Contains(strings.Split(profiles, ","), "SmartCharging") {
+			t.Errorf("profiles = %q, want SmartCharging among them", profiles)
+		}
+		for key, want := range map[string]string{
+			// What every MeterValues sample carries, in its order.
+			v16.KeyMeterValuesSampledData:                  "Energy.Active.Import.Register,Power.Active.Import,Current.Import,SoC",
+			v16.KeyChargingScheduleAllowedChargingRateUnit: "Current,Power",
+			v16.KeyChargeProfileMaxStackLevel:              "8",
+			v16.KeyChargingScheduleMaxPeriods:              "24",
+			v16.KeyMaxChargingProfilesInstalled:            "10",
+		} {
+			if got := configValue(conf, key); got != want {
+				t.Errorf("%s = %q, want %q", key, got, want)
+			}
 		}
 	})
 

@@ -420,6 +420,10 @@ func TestChangeConfiguration(t *testing.T) {
 		{v16.KeyAuthorizeRemoteTxRequests, "maybe", v16.ConfigRejected, "true"},
 		{v16.KeyNumberOfConnectors, "4", v16.ConfigRejected, "2"},
 		{v16.KeySupportedFeatureProfiles, "Core", v16.ConfigRejected, ""},
+		// The stream sends what it sends; the key only describes it.
+		{v16.KeyMeterValuesSampledData, "Energy.Active.Import.Register", v16.ConfigRejected,
+			"Energy.Active.Import.Register,Power.Active.Import,Current.Import,SoC"},
+		{v16.KeyChargeProfileMaxStackLevel, "4", v16.ConfigRejected, "8"},
 		// A key the station does not report is one it does not know.
 		{v16.KeyLocalPreAuthorize, "true", v16.ConfigNotSupported, ""},
 		{"NoSuchKey", "1", v16.ConfigNotSupported, ""},
