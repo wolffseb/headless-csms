@@ -309,6 +309,9 @@ type ChargePointStatus struct {
 	LastDisconnect *DisconnectStatus `json:"last_disconnect"`
 	// ChargingProfiles are the station-wide profiles it accepted, as sent.
 	ChargingProfiles []ChargingProfileStatus `json:"charging_profiles"`
+	// Meter is the station's own meter reading (OCPP 1.6 connector 0), such
+	// as clock-aligned Power.Offered. Omitted when there is none.
+	Meter *MeterStatus `json:"meter,omitempty"`
 }
 
 // DisconnectStatus is when and why the station last went offline.
@@ -324,11 +327,19 @@ type EVSEStatus struct {
 	ErrorCode   string             `json:"error_code"`
 	Reservation *ReservationStatus `json:"reservation"`
 	Transaction *TransactionStatus `json:"transaction"`
-	// The newest meter reading: what the station draws (power in W, the
-	// highest phase current in A) and the most it offers the car, which is
-	// the limit it applies. Each is omitted when the reading lacks it, and
-	// all of them, with ReadingAt, when there is no reading: none yet, or
-	// the session or the connection ended since.
+	// MeterStatus is the EVSE's newest meter reading, its fields inline.
+	MeterStatus
+	// ChargingProfiles are the profiles the station accepted for this EVSE,
+	// as sent.
+	ChargingProfiles []ChargingProfileStatus `json:"charging_profiles"`
+}
+
+// MeterStatus is the newest meter reading: what the station draws (power in
+// W, the highest phase current in A) and the most it offers the car, which is
+// the limit it applies. Each is omitted when the reading lacks it, and all of
+// them, with ReadingAt, when there is no reading: none yet, or the session or
+// the connection ended since.
+type MeterStatus struct {
 	PowerW          *float64   `json:"power_w,omitempty"`
 	CurrentA        *float64   `json:"current_a,omitempty"`
 	PowerOfferedW   *float64   `json:"power_offered_w,omitempty"`
@@ -341,9 +352,6 @@ type EVSEStatus struct {
 	CurrentAt        *time.Time `json:"current_at,omitempty"`
 	PowerOfferedAt   *time.Time `json:"power_offered_at,omitempty"`
 	CurrentOfferedAt *time.Time `json:"current_offered_at,omitempty"`
-	// ChargingProfiles are the profiles the station accepted for this EVSE,
-	// as sent.
-	ChargingProfiles []ChargingProfileStatus `json:"charging_profiles"`
 }
 
 // ReservationStatus is a reservation held on an EVSE.

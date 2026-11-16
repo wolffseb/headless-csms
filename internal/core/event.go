@@ -97,14 +97,14 @@ func (e Event) String() string {
 	case EventChargingProfileCleared:
 		return fmt.Sprintf("%s charging profile %d dropped: %s", profileTarget(e), e.ChargingProfileID, e.Detail)
 	case EventMeterValues:
-		return fmt.Sprintf("%s meter values: %s", e.EVSEUID, e.Detail)
+		return fmt.Sprintf("%s meter values: %s", profileTarget(e), e.Detail)
 	default:
 		return string(e.Kind)
 	}
 }
 
-// profileTarget names what a charging profile event is about: its EVSE, or
-// the station.
+// profileTarget names what a charging profile or meter event is about: its
+// EVSE, or the station.
 func profileTarget(e Event) string {
 	if e.EVSEUID == "" {
 		return e.ChargePointID + " station"

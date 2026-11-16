@@ -104,6 +104,10 @@ type chargePointState struct {
 	// never persisted, and dropped when the session on the EVSE stops or the
 	// station disconnects, so status never shows a stale draw.
 	readings map[string]MeterReading
+	// stationReading is the newest reading for connector 0, the station as
+	// a whole, such as clock-aligned Power.Offered (#64). Like readings, it
+	// is dropped when the station disconnects. Nil until there is one.
+	stationReading *MeterReading
 }
 
 // MeterReading is the newest meter reading for an EVSE, in units that do
@@ -421,6 +425,7 @@ func (s *Service) Disconnected(cpID, reason string) {
 	cp.online = false
 	cp.lastDisconnect = Disconnect{At: at, Reason: reason}
 	clear(cp.readings)
+	cp.stationReading = nil
 	events := append([]Event{{
 		Kind: EventChargePointDisconnected, At: at, ChargePointID: cpID, Detail: reason,
 	}}, cp.recompute(at)...)
@@ -522,6 +527,9 @@ func (s *Service) SetConnectorStatus(cpID string, connectorID int, status EVSESt
 // has stopped, and keeping it would show that session's draw again with
 // nothing left to clear it. A reading without a transaction is kept: that is
 // clock-aligned data, such as Power.Offered on an idle or Reserved connector.
+//
+// Connector 0 is the station as a whole, as in SetConnectorStatus: its
+// reading is the station's, never an EVSE's, and its event has no EVSEUID.
 func (s *Service) RecordMeterValues(cpID string, connectorID int, txID string, r MeterReading) {
 	at := s.now()
 	if r.At.IsZero() {
@@ -530,9 +538,21 @@ func (s *Service) RecordMeterValues(cpID string, connectorID int, txID string, r
 
 	s.mu.Lock()
 	cp := s.ensure(cpID)
+	cp.lastSeen = at
+	if connectorID == 0 {
+		var prev MeterReading
+		if cp.stationReading != nil {
+			prev = *cp.stationReading
+		}
+		next := prev.merge(r)
+		cp.stationReading = &next
+		s.mu.Unlock()
+
+		s.bus.publish(Event{Kind: EventMeterValues, At: at, ChargePointID: cpID, Detail: r.Summary})
+		return
+	}
 	uid := s.evseUID(cpID, connectorID)
 	cp.addEVSE(uid, connectorID, at)
-	cp.lastSeen = at
 	stale := false
 	if txID != "" {
 		tx, ok := cp.transactions[txID]
@@ -607,6 +627,9 @@ type ChargePointSnapshot struct {
 	// none since this process started.
 	LastDisconnect Disconnect
 	StationStatus  EVSEStatus
+	// StationReading is the newest meter reading for the station as a whole
+	// (OCPP 1.6 connector 0), or nil when there is none.
+	StationReading *MeterReading
 	EVSEs          []EVSESnapshot
 	// Transactions holds the active ones and those stopped since this process
 	// started, in the order they began. Only active ones survive a restart.
@@ -650,6 +673,9 @@ func (s *Service) Snapshot() Snapshot {
 			StationStatus:  cp.station,
 			EVSEs:          make([]EVSESnapshot, 0, len(cp.order)),
 			Transactions:   make([]Transaction, 0, len(cp.transactions)),
+		}
+		if r := cp.stationReading; r != nil {
+			snap.StationReading = r.clone()
 		}
 		for _, uid := range cp.order {
 			e := EVSESnapshot{
