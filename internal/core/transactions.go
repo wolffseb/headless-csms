@@ -172,9 +172,12 @@ func (s *Service) StopTransaction(cpID, txID string, meterStop int, reason strin
 	delete(cp.readings, tx.EVSEUID)
 	out := *tx
 	// The spec ends a TxProfile with its transaction; TxDefault and
-	// StationMax records stay.
+	// StationMax records stay. A TxProfile sent without a transaction id
+	// (--force with no session) bound, if the station kept it, to the next
+	// session on its EVSE, which is this one.
 	_, profileEvents := s.forgetLocked(func(p ChargingProfile) bool {
-		return p.ChargePointID == cpID && p.Purpose == PurposeTx && p.TransactionID == txID
+		return p.ChargePointID == cpID && p.Purpose == PurposeTx &&
+			(p.TransactionID == txID || p.TransactionID == "" && p.EVSEUID == tx.EVSEUID)
 	}, ProfileTransactionEnded)
 	s.mu.Unlock()
 

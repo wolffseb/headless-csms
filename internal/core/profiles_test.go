@@ -144,6 +144,30 @@ func TestStoppingATransactionDropsItsTxProfile(t *testing.T) {
 	}
 }
 
+// A TxProfile sent with --force while no session ran has no transaction id.
+// A station that kept it applies it to the next session on the EVSE and
+// drops it when that session ends, so the record goes at the next stop on
+// the same EVSE; without this it would be listed until a clear.
+func TestStoppingATransactionDropsAnUnboundTxProfileOnItsEVSE(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, clocktest.New(t0), statetest.New(t))
+
+	r.svc.RecordChargingProfile(profile(1, "EVSE-1", core.PurposeTx, 0, 15000))
+	r.svc.RecordChargingProfile(profile(2, "EVSE-2", core.PurposeTx, 0, 15000))
+	txID := r.startTx(1, "TAG", 0)
+	collect(t, r.events)
+
+	if _, ok := r.svc.StopTransaction(testCP, txID, 100, "Remote", time.Time{}); !ok {
+		t.Fatal("StopTransaction found nothing")
+	}
+	if got := ids(r.svc.ChargingProfiles("EVSE-1")); len(got) != 0 {
+		t.Errorf("EVSE-1 profiles after the stop = %v, want none", got)
+	}
+	if got := ids(r.svc.ChargingProfiles("EVSE-2")); !sameInts(got, []int{2}) {
+		t.Errorf("another EVSE's unbound TxProfile went too: EVSE-2 = %v", got)
+	}
+}
+
 func TestChargingProfilesAndTheirCounterSurviveARestart(t *testing.T) {
 	t.Parallel()
 	store := statetest.New(t)

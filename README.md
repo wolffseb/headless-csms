@@ -483,7 +483,8 @@ in cpms's records.
 **What cpms remembers.** A profile is recorded in `state.json` only once the station answers
 `Accepted`, and `cpms status` lists the records per EVSE and for the station, marked *as sent*:
 the station is the source of truth and may have dropped them, for instance on a reboot. `cpms
-limit show` asks it what it applies. A `tx` record goes when its session stops; a clear the
+limit show` asks it what it applies. A `tx` record goes when its session stops; one sent with `--force` and no
+session has no transaction id, and goes when the next session on its EVSE stops. A clear the
 station answers `Unknown` (it holds no such profile) drops the matching records too.
 `status --json` carries them as `charging_profiles`, on `charge_point` for the station and on
 each EVSE: `id`, `purpose`, `stack_level`, `unit`, `periods` (`start_s`, `limit`, `phases`),
@@ -548,9 +549,11 @@ configured (otherwise add `--evse`). Use the RFID card you will charge with as `
    - exit 11: no Smart Charging.
 4. **Ask what it applies.** `cpms limit show`: a period at `20.0 kW`. No period, or a higher
    one, means it accepted the profile but does not (yet) apply it to this connector.
-5. **Negative test.** `cpms limit set --purpose tx --kw 20 --force`: expected exit 4,
+5. **Negative test.** `cpms limit set --purpose tx --kw 15 --force`: expected exit 4,
    `Rejected` (no session to bind it to). `Accepted` is worth noting: the station then holds a
-   TxProfile without a session; clear it with `cpms limit clear --purpose tx`.
+   TxProfile without a session, which would cap the session in step 7 at 15 kW and hide
+   whether the TxDefault applies. **Clear it now, before step 6:** `cpms limit clear --purpose
+   tx`, then `cpms limit show` shows the 20.0 kW of step 3 again, not 15.0 kW.
 6. **A station cap leaves the reservation alone.** `cpms limit set --station --purpose
    station-max --kw 30`, then `cpms status`: still `RESERVED`, reservation unchanged.
 7. **Redeem.** Plug in the car and present the card (or `cpms start --tag <card>`).
