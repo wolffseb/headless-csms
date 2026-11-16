@@ -108,9 +108,9 @@ func newSimulateChargerCommand(opts *options) *cobra.Command {
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
-			cmd.Printf("simulating %s (%d connectors, scenario %s) against %s\n",
+			fmt.Fprintf(cmd.OutOrStdout(), "simulating %s (%d connectors, scenario %s) against %s\n",
 				id, connectors, scenario, csmsURL)
-			cmd.Println("press Ctrl-C to stop")
+			fmt.Fprintln(cmd.OutOrStdout(), "press Ctrl-C to stop")
 
 			return sim.Run(ctx)
 		},

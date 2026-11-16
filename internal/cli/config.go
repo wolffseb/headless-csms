@@ -32,7 +32,7 @@ func newConfigValidateCommand(opts *options) *cobra.Command {
 				return err
 			}
 
-			cmd.Printf("%s is valid.\n\n", opts.configPath)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s is valid.\n\n", opts.configPath)
 			printSummary(cmd, cfg, opts.resolvedStatePath())
 			return nil
 		},

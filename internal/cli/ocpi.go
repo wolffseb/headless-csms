@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -36,11 +37,11 @@ func newOCPICommand(opts *options) *cobra.Command {
 			if err := json.Unmarshal(raw, &res); err != nil {
 				return err
 			}
-			cmd.Printf("unregistered from %s\n", res.Party)
+			fmt.Fprintf(cmd.OutOrStdout(), "unregistered from %s\n", res.Party)
 			if res.NotifyError != "" {
-				cmd.PrintErrf("warning: %s was not told (%s); it finds out on its next call\n", res.Party, res.NotifyError)
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s was not told (%s); it finds out on its next call\n", res.Party, res.NotifyError)
 			}
-			cmd.Printf("to register again, the partner POSTs its credentials with TOKEN_A; versions URL %s\n",
+			fmt.Fprintf(cmd.OutOrStdout(), "to register again, the partner POSTs its credentials with TOKEN_A; versions URL %s\n",
 				env.cfg.OCPI.PublicBaseURL+"/versions")
 			return nil
 		},

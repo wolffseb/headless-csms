@@ -88,7 +88,7 @@ func newStationCommands(opts *options) []*cobra.Command {
 			if err := json.Unmarshal(raw, &r); err != nil {
 				return err
 			}
-			cmd.Printf("%s reserved for %s until %s (reservation %d)\n",
+			fmt.Fprintf(cmd.OutOrStdout(), "%s reserved for %s until %s (reservation %d)\n",
 				r.EVSE, r.IDTag, localTime(r.ExpiresAt), r.ReservationID)
 			return nil
 		},
@@ -158,7 +158,7 @@ func newStationCommands(opts *options) []*cobra.Command {
 				if err != nil {
 					return err
 				}
-				cmd.Println(string(out))
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
 				return nil
 			}
 			printStatus(cmd, st)
@@ -219,7 +219,7 @@ func simpleCommand(cmd *cobra.Command, opts *options, op socket.Op, tag, format 
 	if _, err := env.call(cmd, socket.Request{Op: op, EVSE: env.evse, IDTag: tag}); err != nil {
 		return err
 	}
-	cmd.Printf(format, env.evse)
+	fmt.Fprintf(cmd.OutOrStdout(), format, env.evse)
 	return nil
 }
 
@@ -267,8 +267,8 @@ func printStatus(cmd *cobra.Command, st socket.Status) {
 	} else {
 		line += "  never seen"
 	}
-	cmd.Println(line)
-	cmd.Println()
+	fmt.Fprintln(cmd.OutOrStdout(), line)
+	fmt.Fprintln(cmd.OutOrStdout())
 
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "EVSE\tSTATUS\tRESERVATION\tTRANSACTION")
@@ -290,8 +290,8 @@ func printStatus(cmd *cobra.Command, st socket.Status) {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", e.UID, status, reservation, transaction)
 	}
 	_ = w.Flush()
-	cmd.Println()
-	cmd.Println(ocpiLine(st.OCPI))
+	fmt.Fprintln(cmd.OutOrStdout())
+	fmt.Fprintln(cmd.OutOrStdout(), ocpiLine(st.OCPI))
 }
 
 // ocpiLine is the registration in one line: who, since when, and where

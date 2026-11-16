@@ -53,6 +53,7 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - Bound how long a fake peer can block, so a mutation fails instead of hanging.
 - Finish with the real binary on spare ports, paste the responses into the PR, and check that the ports are free after Ctrl-C. Stop it by PID (`kill -INT`), not `pkill -f`.
 - CLI tests capture output with `SetOut`, which hides that cobra's `cmd.Println` goes to stderr in the real binary (2026-11-16: `cpms probe --json | jq` gets nothing). Pipe stdout of the real binary when checking scriptable output.
+- Since #54 (2026-11-16): reports use `fmt.Fprint*(cmd.OutOrStdout(), ...)`, never `cmd.Print*` (`TestNoCobraPrint` fails on it). `TestReportsGoToStdout` in cli/binary_test.go builds the binary and checks both streams; add a line there for a new report command.
 - `bodyclose` flags test helpers that return `*http.Response`, even when they close the body. Return status, headers and the decoded body instead.
 
 ## Tooling
