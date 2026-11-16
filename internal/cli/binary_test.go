@@ -144,11 +144,12 @@ func TestReportsGoToStdout(t *testing.T) {
 	}
 }
 
-// TestNoCobraPrint keeps cmd.Print* out of the command code: it writes to
-// stderr in the real binary (see TestReportsGoToStdout), and the in-process
-// tests would not notice a new call. Report output goes through
-// fmt.Fprint*(cmd.OutOrStdout(), ...); messages meant for stderr use
-// cmd.ErrOrStderr() explicitly.
+// TestNoCobraPrint keeps cobra's Print* and OutOrStderr out of the command
+// code, whatever the receiver is called: both write to stderr in the real
+// binary (see TestReportsGoToStdout), and the in-process tests would not
+// notice. fmt.Print* is banned too, since it bypasses the writer the tests
+// capture. Report output goes through fmt.Fprint*(cmd.OutOrStdout(), ...);
+// messages meant for stderr use cmd.ErrOrStderr() explicitly.
 func TestNoCobraPrint(t *testing.T) {
 	t.Parallel()
 
@@ -156,7 +157,7 @@ func TestNoCobraPrint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cobraPrint := regexp.MustCompile(`\bcmd\.Print(ln|f)?\(`)
+	cobraPrint := regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*\.(Print(ln|f)?|OutOrStderr)\(`)
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue
