@@ -124,9 +124,12 @@ configuration keys (both rate units, stack level 8, 24 periods, 10 profiles), an
 one with the same id, or the same purpose and stack level. A `TxProfile` needs a running
 transaction (so a merely reserved connector refuses it) and ends with it; a
 `TxDefaultProfile` can be set while the connector is reserved. The limit at any moment is
-the highest stack level per purpose, `TxProfile` over `TxDefaultProfile`, capped by
-`ChargePointMaxProfile`; the streamed power (and current) is capped at it, with amperes
-taken at 400 V. The model is simplified: `Relative` schedules always start "now",
+the highest stack level per purpose, `TxProfile` over `TxDefaultProfile`, capped by the
+connector's share of `ChargePointMaxProfile`; the streamed power (and current) is capped at
+it, with amperes taken at 400 V. `ChargePointMaxProfile` limits the station's total, so the
+simulator splits it evenly between the connectors with a running transaction (a share one
+connector leaves unused is not handed to the others), and `GetCompositeSchedule` for
+connector 0 reports the station's total. The model is simplified: `Relative` schedules always start "now",
 `Recurring` ones are read in their current recurrence only, and `GetCompositeSchedule`
 does not convert units (asking in A for profiles in W is `Rejected`). Profiles survive a
 reconnect and a `Reset` (errata 3.37), but not a restart of the simulator.

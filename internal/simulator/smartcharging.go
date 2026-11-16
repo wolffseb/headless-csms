@@ -30,8 +30,17 @@ const (
 //     same id, if it names one); it ends with that transaction.
 //   - The limit at a moment is: within each purpose, the active profile with
 //     the highest stack level; TxProfile beats TxDefaultProfile; the result
-//     is the lower of that and ChargePointMaxProfile. Profiles on connector
-//     0 apply to every connector.
+//     is the lower of that and the connector's share of
+//     ChargePointMaxProfile. Profiles on connector 0 apply to every
+//     connector.
+//   - ChargePointMaxProfile caps the station's total (§3.13.3). The
+//     simulator splits it evenly between the connectors with a running
+//     transaction (all of it when there is none), and does not hand a
+//     share one connector leaves unused to the others. GetCompositeSchedule
+//     for connector 0 reports the station's total: the station's own
+//     TxDefaultProfile (or the per-connector maximum) times the running
+//     transactions, capped by ChargePointMaxProfile. Profiles set on
+//     connectors 1..n do not enter that figure.
 //   - Relative schedules, and Absolute ones without a startSchedule, start
 //     "now": the simulator does not keep a transaction's start time, so they
 //     are always in their first period. A Recurring schedule is evaluated in
@@ -183,6 +192,7 @@ func (s *Simulator) getCompositeSchedule(payload json.RawMessage) (any, *ocpp.RP
 
 	s.mu.Lock()
 	profiles := s.applicableLocked(req.ConnectorID)
+	sessions := s.sessionsLocked()
 	s.mu.Unlock()
 
 	unit := req.ChargingRateUnit
@@ -202,6 +212,10 @@ func (s *Simulator) getCompositeSchedule(payload json.RawMessage) (any, *ocpp.RP
 	if unit == v16.UnitA {
 		stationMax = float64(chargePower / chargeVoltage)
 	}
+	conv := shareOf(req.ConnectorID, sessions, func(_ v16.ChargingProfile, l float64) float64 { return l })
+	if req.ConnectorID == 0 {
+		stationMax *= float64(sessions)
+	}
 
 	now := s.opts.Now().UTC().Truncate(time.Second)
 	end := now.Add(time.Duration(req.Duration) * time.Second)
@@ -218,11 +232,13 @@ func (s *Simulator) getCompositeSchedule(payload json.RawMessage) (any, *ocpp.RP
 
 	var periods []v16.ChargingSchedulePeriod
 	for _, t := range moments {
-		limit, ok := compositeLimit(profiles, now, t, func(_ v16.ChargingProfile, l float64) float64 { return l })
+		limit, ok := compositeLimit(profiles, now, t, conv)
 		if !ok {
 			// No profile applies: the station's own maximum does.
 			limit = stationMax
 		}
+		// The schema allows one decimal place.
+		limit = math.Floor(limit*10) / 10
 		if n := len(periods); n > 0 && periods[n-1].Limit == limit {
 			continue
 		}
@@ -275,8 +291,38 @@ func (s *Simulator) limitWLocked(connectorID int, now time.Time) (int, bool) {
 		}
 		return l
 	}
-	limit, ok := compositeLimit(s.applicableLocked(connectorID), now, now, toW)
+	conv := shareOf(connectorID, s.sessionsLocked(), toW)
+	limit, ok := compositeLimit(s.applicableLocked(connectorID), now, now, conv)
 	return int(math.Floor(limit)), ok
+}
+
+// sessionsLocked counts the connectors with a running transaction, at least
+// one. The caller holds s.mu.
+func (s *Simulator) sessionsLocked() int {
+	n := 0
+	for id, c := range s.connectors {
+		if id != 0 && c.transactionID != 0 {
+			n++
+		}
+	}
+	return max(n, 1)
+}
+
+// shareOf wraps conv to turn station and connector limits into one
+// connector's (see the model above): on a connector, its share of
+// ChargePointMaxProfile; on connector 0, the station's total of the
+// per-connector limits.
+func shareOf(connectorID, sessions int, conv func(v16.ChargingProfile, float64) float64) func(v16.ChargingProfile, float64) float64 {
+	return func(p v16.ChargingProfile, l float64) float64 {
+		l = conv(p, l)
+		switch {
+		case connectorID != 0 && p.ChargingProfilePurpose == v16.PurposeChargePointMax:
+			return l / float64(sessions)
+		case connectorID == 0 && p.ChargingProfilePurpose != v16.PurposeChargePointMax:
+			return l * float64(sessions)
+		}
+		return l
+	}
 }
 
 // clearTxProfilesLocked removes a connector's TxProfiles when its

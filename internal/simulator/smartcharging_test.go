@@ -3,6 +3,7 @@ package simulator_test
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -297,4 +298,71 @@ func TestProfilesSurviveAReconnect(t *testing.T) {
 	if got := limits(conf); !equal(got, []string{"0:20000"}) {
 		t.Errorf("after the reconnect: %v, want 0:20000", got)
 	}
+}
+
+// TestChargePointMaxCapsTheStationTotal follows §3.13.3: the
+// ChargePointMaxProfile limits all connectors combined. The simulator shares
+// it evenly between the connectors with a running transaction.
+func TestChargePointMaxCapsTheStationTotal(t *testing.T) {
+	t.Parallel()
+
+	const interval = 10 * time.Second
+	clk := clocktest.New(time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC))
+	r := newRig(t, func(o *simulator.Options) {
+		o.MeterInterval = interval
+		o.Now = clk.Now
+		o.AfterFunc = func(d time.Duration, fn func()) simulator.Stopper { return clk.AfterFunc(d, fn) }
+	})
+	waitFor(t, "the station to come online", func() bool { return r.core.IsOnline(testCP) })
+
+	if got := setProfile(t, r.sim, 0, profile(1, 0, v16.PurposeChargePointMax, 20000)); got != v16.ProfileAccepted {
+		t.Fatalf("station max: %s", got)
+	}
+	events, unsubscribe := r.core.Subscribe("test")
+	defer unsubscribe()
+	for _, id := range []int{1, 2} {
+		if err := r.sim.StartTransaction(context.Background(), id); err != nil {
+			t.Fatalf("start %d: %v", id, err)
+		}
+	}
+
+	waitFor(t, "both meter timers", func() bool { return clk.Pending() == 2 })
+	clk.Advance(interval)
+	total := 0
+	for range 2 {
+		total += powerOf(t, nextMeterValues(t, events))
+	}
+	if total > 20000 {
+		t.Errorf("two sessions draw %d W together, want at most the station's 20000 W", total)
+	}
+
+	for _, tt := range []struct {
+		connector int
+		want      string
+	}{
+		{0, "0:20000"}, // the station's total
+		{1, "0:10000"},
+		{2, "0:10000"},
+	} {
+		if got := limits(composite(t, r.sim, tt.connector, 60, "")); !equal(got, []string{tt.want}) {
+			t.Errorf("connector %d with two sessions: %v, want %s", tt.connector, got, tt.want)
+		}
+	}
+}
+
+// powerOf pulls the power out of a MeterValues event's summary.
+func powerOf(t *testing.T, e core.Event) int {
+	t.Helper()
+
+	for _, part := range strings.Fields(e.Detail) {
+		if v, ok := strings.CutPrefix(part, "Power.Active.Import="); ok {
+			n, err := strconv.Atoi(strings.TrimSuffix(v, "W"))
+			if err != nil {
+				t.Fatalf("power in %q: %v", e.Detail, err)
+			}
+			return n
+		}
+	}
+	t.Fatalf("no power in %q", e.Detail)
+	return 0
 }
