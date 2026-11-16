@@ -36,6 +36,7 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
     - `offlineSession`/`transactionIDsOnTheWire` helpers in offline_test.go;
     - the cuttable TCP proxy in `internal/ocpptest/proxy.go`.
   - Capture logs with a mutex-guarded `strings.Builder` as `Options.Log`.
+- Probe (#10, #47, 2026-11-16): a new capability needs `ocpp.Cap*` + `AllCapabilities()` (append last), a `neededProfiles` grant, a `Capabilities` field, and maybe a `needs` entry in cli/probe.go (only if cpms uses it). New simulator config keys change the raw-key count in `TestProbeJSONAndRaw` and both probe goldens (`go test ./internal/cli -run 'TestProbeNormalStation|TestProbeJSONAndRaw' -update`).
 
 ## OCPI/OCPP traps
 
@@ -50,6 +51,7 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - Script the fail-without checks: apply one breaking change to production code, run the matching test, restore. List them in the PR as a table (#36 did 16, #40 did 33). Mutations that survive point at weak tests, so fix the tests.
 - Bound how long a fake peer can block, so a mutation fails instead of hanging.
 - Finish with the real binary on spare ports, paste the responses into the PR, and check that the ports are free after Ctrl-C. Stop it by PID (`kill -INT`), not `pkill -f`.
+- CLI tests capture output with `SetOut`, which hides that cobra's `cmd.Println` goes to stderr in the real binary (2026-11-16: `cpms probe --json | jq` gets nothing). Pipe stdout of the real binary when checking scriptable output.
 - `bodyclose` flags test helpers that return `*http.Response`, even when they close the body. Return status, headers and the decoded body instead.
 
 ## Tooling
