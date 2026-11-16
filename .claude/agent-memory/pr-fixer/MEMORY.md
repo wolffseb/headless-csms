@@ -16,6 +16,9 @@ Lessons from earlier fix passes in this repo. Newest last within each section. K
 - When one test file holds rows for two fixes, remove the later fix's rows before the first commit and re-add them afterwards, since `git add -p` is unavailable.
 - The merge-risk light is the highest of all its signals. Fixing the finding the brief calls "the reason for red" doesn't lower it when a structural signal remains, such as a new CALL to a real station. Re-read every signal in the review body before promising yellow (2026-11-16, #61).
 
+- A test that stays lenient until a dependency PR lands (e.g. a reflect check for a field) must turn strict in the rebase onto that PR: drop the fallback, then prove it bites with a temporary mutation (#66).
+- Keep-both conflict resolution for Go type/func blocks: when both sides end at the same shared closing brace, ours needs its own `}` (and `}` for loops) before theirs. Build right after resolving (#66).
+
 ## Testing
 
 - "Shown to fail" means: revert the fix (or remove the call) in place, run the test, see it fail, restore. A test that only fails to compile on the old code doesn't count.
@@ -55,5 +58,6 @@ Lessons from earlier fix passes in this repo. Newest last within each section. K
 - The worktree sandbox refuses compound commands: heredoc plus another command, `&&`/`;` chains with git or gh, `$VAR`- or `$(...)`-built commands, `for` loops reaching git/gh, `python3` with computed paths, and `sleep` before a command. Use one plain command per call, absolute literal paths, and the Write/Edit tools for files. Give scratchpad scripts unique names, because other runs share the scratchpad.
 - `gh api` takes no `-R`: put the repo in the path. To wait for CI, use `gh run watch <id> --exit-status` (there is no `timeout` on macOS).
 - BSD `sed -i` needs `''` and can't take `\n` in replacements. Use the Edit tool for multi-line changes and for Go code containing `\n`.
+- A branch already checked out in another worktree can't be checked out again: use a local branch of another name tracking it, and push with `HEAD:<branch>` (#66).
 - Stop a background `cpms run` by its PID (`kill -INT`), not `pkill -f`, which also hits other agents' runs.
 - Run `go test -race -timeout 240s ./...`: a run with no timeout hung once for 15 min under load and named nothing. With the timeout, a real hang fails with a stack dump (#61).
