@@ -298,6 +298,11 @@ on that EVSE (the stopped session's last values, arriving late or replayed from 
 station's offline queue) is logged but not kept. One without a transaction is kept: that is
 clock-aligned data, which a station also sends for an idle or Reserved connector.
 
+A `MeterValues` for connector 0 is the station as a whole, never an EVSE. `cpms status`
+shows it on the station's line, as in `ALP-HYC-001  online  …  meter offered 50.0 kW, 3s
+ago`, and `--json` as `charge_point.meter` with the same fields as an EVSE's reading. It is
+dropped when the station disconnects.
+
 A station only reports the measurands listed in its `MeterValuesSampledData` key, which
 `cpms probe --raw` shows. An Alpitronic HYC50 reports only
 `Energy.Active.Import.Register` out of the box, so turn the rest on once:
@@ -573,9 +578,10 @@ configured (otherwise add `--evse`). Use the RFID card you will charge with as `
    ```
 
    The sampled data shows the power drawn and offered during a session; the aligned pair
-   is the only reading on a `Reserved` connector (step 4), where no session runs. Known
-   caveat (#64): the HYC50 may send aligned values for connector 0 too, which shows up as a
-   stray `-0` EVSE row in `cpms status`; ignore it.
+   is the only reading on a `Reserved` connector (step 4), where no session runs. The HYC50
+   may send aligned values for connector 0 too: that is the station's own meter, shown on
+   the first line of `cpms status` after `meter` (`charge_point.meter` in `--json`), not as
+   an EVSE. Read the limit from the EVSE row.
 1. **Check the station.** `cpms probe`: the four keys above, and SmartCharging ✓ or `?`.
    `cpms limit show` should answer (exit 0). Exit 11 means only that the station does not
    answer `GetCompositeSchedule`: carry on with step 3, whose exit 11 is the real

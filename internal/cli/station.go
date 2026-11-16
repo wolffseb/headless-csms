@@ -274,6 +274,9 @@ func printStatus(cmd *cobra.Command, st socket.Status) {
 	} else {
 		line += "  never seen"
 	}
+	if cp.Meter != nil {
+		line += "  meter " + meterCell(*cp.Meter, time.Now())
+	}
 	fmt.Fprintln(cmd.OutOrStdout(), line)
 	fmt.Fprintln(cmd.OutOrStdout())
 
@@ -294,7 +297,7 @@ func printStatus(cmd *cobra.Command, st socket.Status) {
 		if tx := e.Transaction; tx != nil {
 			transaction = fmt.Sprintf("%s %s since %s", tx.ID, tx.IDTag, localTime(tx.StartedAt))
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", e.UID, status, reservation, transaction, meterCell(e, time.Now()))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", e.UID, status, reservation, transaction, meterCell(e.MeterStatus, time.Now()))
 	}
 	_ = w.Flush()
 	printProfiles(cmd.OutOrStdout(), st)
@@ -302,14 +305,14 @@ func printStatus(cmd *cobra.Command, st socket.Status) {
 	fmt.Fprintln(cmd.OutOrStdout(), ocpiLine(st.OCPI))
 }
 
-// meterCell is an EVSE's newest meter reading for the status table: what it
+// meterCell is a meter reading for status, an EVSE's or the station's: what it
 // draws, the limit the station offers, and how old the values are, such as
 // "50.0 kW 125.0 A, offered 150.0 kW, 3s ago". It is "-" without a reading.
 //
 // Values carried over from an older MeterValues (core merges per field) each
 // get their own age instead, as in "50.0 kW 3s ago, offered 22.0 kW 1m0s ago",
 // so an old limit is not passed off as fresh.
-func meterCell(e socket.EVSEStatus, now time.Time) string {
+func meterCell(e socket.MeterStatus, now time.Time) string {
 	if e.ReadingAt == nil {
 		return "-"
 	}

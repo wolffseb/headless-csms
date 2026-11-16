@@ -39,6 +39,10 @@ func BuildStatus(snap core.Snapshot, chargePointID string) Status {
 	if d := cp.LastDisconnect; !d.At.IsZero() {
 		out.ChargePoint.LastDisconnect = &DisconnectStatus{At: d.At.UTC(), Reason: d.Reason}
 	}
+	if m := cp.StationReading; m != nil {
+		meter := meterStatus(*m)
+		out.ChargePoint.Meter = &meter
+	}
 
 	reservations := make(map[string]core.Reservation, len(cp.Reservations))
 	for _, r := range cp.Reservations {
@@ -74,15 +78,22 @@ func BuildStatus(snap core.Snapshot, chargePointID string) Status {
 			row.Transaction = &TransactionStatus{ID: tx.ID, IDTag: tx.IDTag, StartedAt: tx.StartedAt.UTC()}
 		}
 		if m := e.Reading; m != nil {
-			row.PowerW, row.CurrentA = m.PowerW, m.CurrentA
-			row.PowerOfferedW, row.CurrentOfferedA = m.PowerOfferedW, m.CurrentOfferedA
-			row.ReadingAt = utcOrNil(m.At)
-			row.PowerAt, row.CurrentAt = utcOrNil(m.PowerAt), utcOrNil(m.CurrentAt)
-			row.PowerOfferedAt, row.CurrentOfferedAt = utcOrNil(m.PowerOfferedAt), utcOrNil(m.CurrentOfferedAt)
+			row.MeterStatus = meterStatus(*m)
 		}
 		out.EVSEs = append(out.EVSEs, row)
 	}
 	return out
+}
+
+// meterStatus renders a core meter reading, its times in UTC.
+func meterStatus(m core.MeterReading) MeterStatus {
+	return MeterStatus{
+		PowerW: m.PowerW, CurrentA: m.CurrentA,
+		PowerOfferedW: m.PowerOfferedW, CurrentOfferedA: m.CurrentOfferedA,
+		ReadingAt: utcOrNil(m.At),
+		PowerAt:   utcOrNil(m.PowerAt), CurrentAt: utcOrNil(m.CurrentAt),
+		PowerOfferedAt: utcOrNil(m.PowerOfferedAt), CurrentOfferedAt: utcOrNil(m.CurrentOfferedAt),
+	}
 }
 
 // BuildOCPIStatus renders the OCPI registration for status, without its

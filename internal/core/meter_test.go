@@ -162,3 +162,55 @@ func TestMeterReadingsMergePerField(t *testing.T) {
 		t.Errorf("reading = %+v, want 11 kW offered now and 50 kW from before", r)
 	}
 }
+
+// TestStationMeterIsNotAnEVSE: connector 0 is the station as a whole (#64).
+// Its MeterValues, such as clock-aligned Power.Offered, must not add an EVSE
+// that nothing configured.
+func TestStationMeterIsNotAnEVSE(t *testing.T) {
+	t.Parallel()
+
+	s := core.New(testConfig())
+	events, cancel := s.Subscribe("test")
+	defer cancel()
+	s.Connected(testCP)
+	s.RecordMeterValues(testCP, 0, "", core.MeterReading{PowerOfferedW: watts(50000), Summary: "station"})
+
+	cp, _ := s.Snapshot().ChargePoint(testCP)
+	var uids []string
+	for _, e := range cp.EVSEs {
+		uids = append(uids, e.UID)
+	}
+	if len(uids) != 2 || uids[0] != "EVSE-1" || uids[1] != "EVSE-2" {
+		t.Errorf("EVSEs after a connector-0 MeterValues = %v, want the configured EVSE-1 and EVSE-2", uids)
+	}
+	for _, e := range collect(t, events) {
+		if e.Kind != core.EventMeterValues {
+			continue
+		}
+		if e.EVSEUID != "" || e.String() != testCP+" station meter values: station" {
+			t.Errorf("station meter event: EVSE %q, %q; want none, about the station", e.EVSEUID, e.String())
+		}
+	}
+
+	// It is the station's reading, merged per field like an EVSE's.
+	s.RecordMeterValues(testCP, 0, "", core.MeterReading{PowerW: watts(7000)})
+	cp, _ = s.Snapshot().ChargePoint(testCP)
+	r := cp.StationReading
+	if r == nil || r.PowerW == nil || *r.PowerW != 7000 || r.PowerOfferedW == nil || *r.PowerOfferedW != 50000 {
+		t.Fatalf("station reading = %+v, want 7 kW drawn and 50 kW offered", r)
+	}
+	*r.PowerW = 1
+	if again, _ := s.Snapshot().ChargePoint(testCP); *again.StationReading.PowerW != 7000 {
+		t.Error("changing a snapshot changed core's station reading")
+	}
+	for _, e := range cp.EVSEs {
+		if e.Reading != nil {
+			t.Errorf("%s reading = %+v, want none: only the station reported", e.UID, e.Reading)
+		}
+	}
+
+	s.Disconnected(testCP, "socket closed")
+	if cp, _ := s.Snapshot().ChargePoint(testCP); cp.StationReading != nil {
+		t.Errorf("station reading after the station disconnected = %+v, want none", cp.StationReading)
+	}
+}
