@@ -5,7 +5,7 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 ## Conventions you'd otherwise rediscover
 
 - Issue comments override the body. Plan-update and decision comments live on #5, #11, #13, #14, #16, #34 and #39.
-- `gh` needs `-R wolffseb/headless-csms` in this checkout; `gh api` takes the repo in the path instead.
+- `gh` needs `-R wolffseb/headless-csms` in this checkout; `gh api` takes the repo in the path instead. `gh issue view` can print nothing at all even with `-R` (2026-11-16): read issues with `gh api repos/wolffseb/headless-csms/issues/<n>` and `/comments`.
 - Tests through `cpms run` use the issue's fixed port range, because config rejects port 0. `runConfigPorts` sets the OCPP and OCPI ports separately. `newStation` always puts OCPI on OCPP port + 1000 (20100–20399), so build `station{...}` by hand for a test that needs its own OCPI port.
 - `cpms run` takes an exclusive lock on `<state>.lock` (#27), so a test must never start two runs on one state file.
 - `state.json` schema changes bump `state.Version` and need a migration (decision on #8). Avoid them unless the issue requires one, and flag it as a 🔴 trigger.
@@ -36,7 +36,7 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
     - `offlineSession`/`transactionIDsOnTheWire` helpers in offline_test.go;
     - the cuttable TCP proxy in `internal/ocpptest/proxy.go`.
   - Capture logs with a mutex-guarded `strings.Builder` as `Options.Log`.
-- Probe (#10, #47, 2026-11-16): a new capability needs `ocpp.Cap*` + `AllCapabilities()` (append last), a `neededProfiles` grant, a `Capabilities` field, and maybe a `needs` entry in cli/probe.go (only if cpms uses it). New simulator config keys change the raw-key count in `TestProbeJSONAndRaw` and both probe goldens (`go test ./internal/cli -run 'TestProbeNormalStation|TestProbeJSONAndRaw' -update`).
+- Probe (#10, #47, 2026-11-16): a new capability needs `ocpp.Cap*` + `AllCapabilities()` (append last), a `neededProfiles` grant, a `Capabilities` field, and maybe a `needs` entry in cli/probe.go (only if cpms uses it). New simulator config keys change the raw-key count in `TestProbeJSONAndRaw` and both probe goldens (`go test ./internal/cli -run 'TestProbeNormalStation|TestProbeJSONAndRaw' -update`). Changing which keys `Capabilities()` asks for changes `testdata/golden/GetConfiguration.json` (`go test ./internal/ocpp/v16 -run Golden -update`).
 
 ## OCPI/OCPP traps
 
@@ -46,6 +46,7 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - OCPP idTags (IdToken) compare case-insensitively (§7.15). Use `strings.EqualFold`.
 - The CSMS gaps in handling replayed offline transactions are tracked in #44. Don't work around them in the simulator.
 - OCPI `string(n)` limits count characters: use `utf8.RuneCountInString`, and test the edge with umlauts (2026-11-16, #55). Validate derived values (e.g. `OCPIBusinessName()` falling back to `location.name`) and name the key the value came from.
+- OCPP 1.6 `SupportedFeatureProfiles` can be truncated at `SupportedFeatureProfilesMaxLength` (Alpitronic HYC50 drops Reservation). Since #52 a profile missing from a full list is unknown with an `ocpp.Feature.Note`; the simulator reports max length = its profile count, so a same-length `FeatureProfiles` override reproduces it (2026-11-16).
 
 ## Process that worked
 
