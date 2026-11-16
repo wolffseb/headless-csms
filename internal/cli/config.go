@@ -1,21 +1,63 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
 	"github.com/wolffseb/cli-cpms/internal/config"
+	"github.com/wolffseb/cli-cpms/internal/control/socket"
 )
 
 func newConfigCommand(opts *options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
-		Short: "Inspect the configuration file",
+		Short: "Check the configuration file, or change the station's own configuration",
 	}
-	cmd.AddCommand(newConfigValidateCommand(opts))
+	cmd.AddCommand(newConfigValidateCommand(opts), newConfigSetCommand(opts))
 	return cmd
+}
+
+func newConfigSetCommand(opts *options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "set <key> <value>",
+		Short: "Change a configuration key on the station (OCPP ChangeConfiguration)",
+		Long: "Sets one of the STATION's OCPP configuration keys through a running `cpms run`.\n" +
+			"It does not touch cpms's own config file, which cpms never writes.\n\n" +
+			"The station keeps the value; cpms does not set it again after a reboot.\n" +
+			"Exits 0 when the station accepts it, and also when it answers RebootRequired,\n" +
+			"which is printed as a warning: the value takes effect after the station restarts.\n" +
+			"Rejected and NotSupported (an unknown key) exit 4.\n\n" +
+			"Example, to have the station report power and current in MeterValues:\n\n" +
+			"  cpms config set MeterValuesSampledData \\\n" +
+			"    Energy.Active.Import.Register,Power.Active.Import,Power.Offered,Current.Import,Current.Offered",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			key, value := args[0], args[1]
+			if key == "" {
+				return &ExitStatus{Code: ExitError, Err: errors.New("the key must not be empty")}
+			}
+			env, err := newStationEnv(cmd, opts)
+			if err != nil {
+				return err
+			}
+			raw, err := env.call(cmd, socket.Request{Op: socket.OpConfigSet, Key: key, Value: value})
+			if err != nil {
+				return err
+			}
+			var r socket.ConfigSetResult
+			if err := json.Unmarshal(raw, &r); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s set to %q on the station (%s)\n", r.Key, r.Value, r.Status)
+			if r.Status == "RebootRequired" {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: the station needs a reboot before %s takes effect\n", r.Key)
+			}
+			return nil
+		},
+	}
 }
 
 func newConfigValidateCommand(opts *options) *cobra.Command {

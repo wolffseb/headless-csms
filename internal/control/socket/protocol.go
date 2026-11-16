@@ -34,6 +34,8 @@ const (
 	OpUnlock  Op = "unlock"
 	OpStatus  Op = "status"
 	OpProbe   Op = "probe"
+	// OpConfigSet changes one of the station's configuration keys.
+	OpConfigSet Op = "config_set"
 	// OpOCPIUnregister forgets the OCPI registration, so the counterparty
 	// can register again with TOKEN_A.
 	OpOCPIUnregister Op = "ocpi-unregister"
@@ -51,6 +53,10 @@ type Request struct {
 	// ExpiresIn is a Go duration ("15m") for reserve. Empty means the
 	// default reservation length.
 	ExpiresIn string `json:"expires_in,omitempty"`
+	// Key and Value are the station configuration key and its new value for
+	// config_set.
+	Key   string `json:"key,omitempty"`
+	Value string `json:"value,omitempty"`
 }
 
 // Response is the one line the socket answers with.
@@ -113,6 +119,15 @@ type ReserveResult struct {
 	ExpiresAt     time.Time `json:"expires_at"`
 }
 
+// ConfigSetResult is the result of OpConfigSet. Status is the station's
+// literal answer: Accepted, or RebootRequired when the value only applies
+// after a restart.
+type ConfigSetResult struct {
+	Key    string `json:"key"`
+	Value  string `json:"value"`
+	Status string `json:"status"`
+}
+
 // Status is the result of OpStatus. Its JSON is what `cpms status --json`
 // prints, so its field names are a public interface: other tools parse it.
 type Status struct {
@@ -172,6 +187,23 @@ type EVSEStatus struct {
 	ErrorCode   string             `json:"error_code"`
 	Reservation *ReservationStatus `json:"reservation"`
 	Transaction *TransactionStatus `json:"transaction"`
+	// The newest meter reading: what the station draws (power in W, the
+	// highest phase current in A) and the most it offers the car, which is
+	// the limit it applies. Each is omitted when the reading lacks it, and
+	// all of them, with ReadingAt, when there is no reading: none yet, or
+	// the session or the connection ended since.
+	PowerW          *float64   `json:"power_w,omitempty"`
+	CurrentA        *float64   `json:"current_a,omitempty"`
+	PowerOfferedW   *float64   `json:"power_offered_w,omitempty"`
+	CurrentOfferedA *float64   `json:"current_offered_a,omitempty"`
+	ReadingAt       *time.Time `json:"reading_at,omitempty"`
+	// PowerAt and the rest are when each value was taken. A MeterValues
+	// that lacks a value keeps the one before, so values can differ in age;
+	// ReadingAt is the newest message.
+	PowerAt          *time.Time `json:"power_at,omitempty"`
+	CurrentAt        *time.Time `json:"current_at,omitempty"`
+	PowerOfferedAt   *time.Time `json:"power_offered_at,omitempty"`
+	CurrentOfferedAt *time.Time `json:"current_offered_at,omitempty"`
 }
 
 // ReservationStatus is a reservation held on an EVSE.

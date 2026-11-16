@@ -14,6 +14,7 @@ Lessons from earlier fix passes in this repo. Newest last within each section. K
 - OCPP 1.6 errata text isn't in the repo. When a review quotes an erratum, a web search for the quoted sentence usually finds it cited by another station implementation; say in the reply what you checked it against (2026-11-16, #62).
 - Simulator ChargePointMaxProfile is a station total (§3.13.3): one `shareOf` converter divides it between running sessions for the meter and the per-connector composite, and multiplies per-connector limits up for connector 0. Change both paths together (#62).
 - When one test file holds rows for two fixes, remove the later fix's rows before the first commit and re-add them afterwards, since `git add -p` is unavailable.
+- The merge-risk light is the highest of all its signals. Fixing the finding the brief calls "the reason for red" doesn't lower it when a structural signal remains, such as a new CALL to a real station. Re-read every signal in the review body before promising yellow (2026-11-16, #61).
 
 ## Testing
 
@@ -34,6 +35,7 @@ Lessons from earlier fix passes in this repo. Newest last within each section. K
 - A message that is "queued" and a caller that has "returned" can disagree. Read the outcome while still holding the lock that serialises the queue, and mark it detached under the state mutex (#42).
 - HTTP servers: `httptest.NewServer(handler)` ignores `BaseContext`, so join the lifetime context in `ServeHTTP` too. Give each listener its own shutdown grace context, created after anything that may block before it (#36).
 - Unanchored `.gitignore` rules (e.g. `config.yaml`) also hide test fixtures, so CI fails while local runs pass on untracked files. After any ignore-rule change, run `git check-ignore -v` on the fixture paths (#40).
+- Per-field merges (MeterValues): test with two messages whose measurand sets don't overlap, and assert each value's own time as well as its value. A merge that loses the per-field time passes a values-only test (#61).
 
 ## Known flakes (rerun, don't fix in unrelated PRs)
 
@@ -54,3 +56,4 @@ Lessons from earlier fix passes in this repo. Newest last within each section. K
 - `gh api` takes no `-R`: put the repo in the path. To wait for CI, use `gh run watch <id> --exit-status` (there is no `timeout` on macOS).
 - BSD `sed -i` needs `''` and can't take `\n` in replacements. Use the Edit tool for multi-line changes and for Go code containing `\n`.
 - Stop a background `cpms run` by its PID (`kill -INT`), not `pkill -f`, which also hits other agents' runs.
+- Run `go test -race -timeout 240s ./...`: a run with no timeout hung once for 15 min under load and named nothing. With the timeout, a real hang fails with a stack dump (#61).

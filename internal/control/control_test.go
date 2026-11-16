@@ -1,10 +1,12 @@
 package control_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -151,6 +153,10 @@ func (f *fakeStation) Probe(context.Context) (ocpp.ProbeReport, error) {
 		return ocpp.ProbeReport{}, err
 	}
 	return ocpp.ProbeReport{Version: ocpp.Version16}, nil
+}
+
+func (f *fakeStation) ChangeConfiguration(_ context.Context, key, value string) (ocpp.Result, error) {
+	return f.respond("config " + key + "=" + value)
 }
 
 // commands is a control.Commander over the fake, or over nothing at all.
@@ -780,5 +786,80 @@ func TestReserveRacesClose(t *testing.T) {
 		if got := r.reservations(); len(got) != 0 {
 			t.Fatalf("reservations after Close = %+v, want none", got)
 		}
+	}
+}
+
+func TestChangeConfiguration(t *testing.T) {
+	t.Parallel()
+
+	const key, value = "MeterValuesSampledData", "Energy.Active.Import.Register,Power.Active.Import"
+	op := "config " + key + "=" + value
+
+	for _, tt := range []struct {
+		raw     string
+		status  ocpp.CommandStatus
+		refused bool
+	}{
+		{"Accepted", ocpp.CommandAccepted, false},
+		{"RebootRequired", ocpp.CommandRebootRequired, false},
+		{"Rejected", ocpp.CommandRejected, true},
+		{"NotSupported", ocpp.CommandNotSupported, true},
+		{"Maybe", ocpp.CommandUnknown, true},
+	} {
+		t.Run(tt.raw, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			r.station.answer[op] = ocpp.Result{Status: tt.status, Raw: tt.raw}
+
+			res, err := r.ctl.ChangeConfiguration(context.Background(), key, value)
+			if r.station.callCount() != 1 {
+				t.Fatalf("%d calls sent, want the one ChangeConfiguration", r.station.callCount())
+			}
+			if !tt.refused {
+				if err != nil || res.Raw != tt.raw {
+					t.Fatalf("= %+v, %v; want %s and no error", res, err, tt.raw)
+				}
+				return
+			}
+			var refused *control.RefusedError
+			if !errors.As(err, &refused) || refused.Op != control.OpConfigSet ||
+				refused.EVSEUID != key || refused.Raw != tt.raw {
+				t.Fatalf("error = %v, want a config set refusal naming %s and %s", err, key, tt.raw)
+			}
+		})
+	}
+}
+
+func TestChangeConfigurationNotConnected(t *testing.T) {
+	t.Parallel()
+
+	ctl := control.New(control.Options{Core: core.New(testConfig()), Commands: commands{}, Config: testConfig()})
+	if _, err := ctl.ChangeConfiguration(context.Background(), "HeartbeatInterval", "60"); !errors.Is(err, ocpp.ErrNotConnected) {
+		t.Fatalf("error = %v, want ErrNotConnected", err)
+	}
+}
+
+// TestChangeConfigurationDoesNotLogTheValue: a key such as AuthorizationKey
+// holds a credential, so the log has the key and the answer, never the value.
+func TestChangeConfigurationDoesNotLogTheValue(t *testing.T) {
+	t.Parallel()
+
+	const key, value = "AuthorizationKey", "s3cr3t-basic-auth-password"
+	station := newFakeStation()
+	station.answer["config "+key+"="+value] = ocpp.Result{Status: ocpp.CommandAccepted, Raw: "Accepted"}
+	var logged bytes.Buffer
+	ctl := control.New(control.Options{
+		Core: core.New(testConfig()), Commands: commands{station}, Config: testConfig(),
+		Log: slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug})),
+	})
+
+	if _, err := ctl.ChangeConfiguration(context.Background(), key, value); err != nil {
+		t.Fatalf("ChangeConfiguration: %v", err)
+	}
+	if !strings.Contains(logged.String(), key) || !strings.Contains(logged.String(), "Accepted") {
+		t.Errorf("log = %q, want the key and the status", logged.String())
+	}
+	if strings.Contains(logged.String(), value) {
+		t.Errorf("log = %q, has the value", logged.String())
 	}
 }

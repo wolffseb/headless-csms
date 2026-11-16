@@ -96,6 +96,82 @@ type chargePointState struct {
 	changedAt map[string]time.Time
 
 	transactions map[string]*Transaction
+	// readings is the newest meter reading per EVSE. It is live data only:
+	// never persisted, and dropped when the session on the EVSE stops or the
+	// station disconnects, so status never shows a stale draw.
+	readings map[string]MeterReading
+}
+
+// MeterReading is the newest meter reading for an EVSE, in units that do
+// not depend on how the station chose to send them. A nil field was not in
+// the reading, or could not be read.
+//
+// Core keeps one per EVSE and merges each MeterValues into it field by
+// field: stations interleave messages with different measurand sets, so a
+// value the newest message lacks keeps the one before, and its own time in
+// the matching ...At field says how old it is.
+type MeterReading struct {
+	// At is when the station took the newest reading merged in.
+	At     time.Time
+	PowerW *float64
+	// CurrentA is the highest phase current when the station reports only
+	// phases.
+	CurrentA *float64
+	// PowerOfferedW and CurrentOfferedA are the most the station offers the
+	// car: the limit it applies, which is what a charging profile changes.
+	PowerOfferedW   *float64
+	CurrentOfferedA *float64
+	EnergyWh        *int
+	// Summary is the newest reading as one line, for the log and the TUI.
+	Summary string
+
+	// PowerAt and the rest are when each value was taken, zero for a value
+	// never reported. Core sets them; a reading passed to RecordMeterValues
+	// leaves them out.
+	PowerAt          time.Time
+	CurrentAt        time.Time
+	PowerOfferedAt   time.Time
+	CurrentOfferedAt time.Time
+	EnergyAt         time.Time
+}
+
+// merge lays next over r: next's values replace their own fields, stamped
+// with next.At, and r's other values stay as they were.
+func (r MeterReading) merge(next MeterReading) MeterReading {
+	take := func(dst **float64, at *time.Time, v *float64) {
+		if v != nil {
+			*dst, *at = clonePtr(v), next.At
+		}
+	}
+	out := *r.clone()
+	take(&out.PowerW, &out.PowerAt, next.PowerW)
+	take(&out.CurrentA, &out.CurrentAt, next.CurrentA)
+	take(&out.PowerOfferedW, &out.PowerOfferedAt, next.PowerOfferedW)
+	take(&out.CurrentOfferedA, &out.CurrentOfferedAt, next.CurrentOfferedA)
+	if next.EnergyWh != nil {
+		out.EnergyWh, out.EnergyAt = clonePtr(next.EnergyWh), next.At
+	}
+	out.At, out.Summary = next.At, next.Summary
+	return out
+}
+
+// clone copies r so that a snapshot shares no pointers with core's state.
+func (r MeterReading) clone() *MeterReading {
+	c := r
+	c.PowerW = clonePtr(r.PowerW)
+	c.CurrentA = clonePtr(r.CurrentA)
+	c.PowerOfferedW = clonePtr(r.PowerOfferedW)
+	c.CurrentOfferedA = clonePtr(r.CurrentOfferedA)
+	c.EnergyWh = clonePtr(r.EnergyWh)
+	return &c
+}
+
+func clonePtr[T any](p *T) *T {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
 }
 
 // Service is the domain state and its event bus.
@@ -233,6 +309,7 @@ func (s *Service) newChargePoint(id string) *chargePointState {
 		effective:    make(map[string]EVSEStatus),
 		changedAt:    make(map[string]time.Time),
 		transactions: make(map[string]*Transaction),
+		readings:     make(map[string]MeterReading),
 	}
 }
 
@@ -333,6 +410,7 @@ func (s *Service) Disconnected(cpID, reason string) {
 	}
 	cp.online = false
 	cp.lastDisconnect = Disconnect{At: at, Reason: reason}
+	clear(cp.readings)
 	events := append([]Event{{
 		Kind: EventChargePointDisconnected, At: at, ChargePointID: cpID, Detail: reason,
 	}}, cp.recompute(at)...)
@@ -410,20 +488,45 @@ func (s *Service) SetConnectorStatus(cpID string, connectorID int, status EVSESt
 	s.publishAll(events)
 }
 
-// RecordMeterValues notes a meter reading. The values themselves are not
-// modelled yet; the summary is what the log and the TUI show.
-func (s *Service) RecordMeterValues(cpID string, connectorID int, summary string) {
+// RecordMeterValues merges r into the EVSE's reading, field by field (see
+// MeterReading). Only the newest value of each is kept, in memory: nothing in
+// cpms bills, and meter history is out of scope. r.Summary is what the log
+// and the TUI show.
+//
+// txID is the transaction the station says the values belong to, or "" for
+// none. A reading for a transaction that is not running on the EVSE is
+// published but not kept: it is a late or replayed message of a session that
+// has stopped, and keeping it would show that session's draw again with
+// nothing left to clear it. A reading without a transaction is kept: that is
+// clock-aligned data, such as Power.Offered on an idle or Reserved connector.
+func (s *Service) RecordMeterValues(cpID string, connectorID int, txID string, r MeterReading) {
 	at := s.now()
+	if r.At.IsZero() {
+		r.At = at
+	}
 
 	s.mu.Lock()
 	cp := s.ensure(cpID)
 	uid := s.evseUID(cpID, connectorID)
 	cp.addEVSE(uid, connectorID, at)
 	cp.lastSeen = at
+	stale := false
+	if txID != "" {
+		tx, ok := cp.transactions[txID]
+		stale = !ok || !tx.Active() || tx.EVSEUID != uid
+	}
+	if !stale {
+		cp.readings[uid] = cp.readings[uid].merge(r)
+	}
 	s.mu.Unlock()
 
+	if stale {
+		s.log.Info("not keeping a meter reading for a transaction that is not running on the EVSE",
+			"charge_point", cpID, "evse", uid, "transaction_id", txID)
+	}
+
 	s.bus.publish(Event{
-		Kind: EventMeterValues, At: at, ChargePointID: cpID, EVSEUID: uid, Detail: summary,
+		Kind: EventMeterValues, At: at, ChargePointID: cpID, EVSEUID: uid, Detail: r.Summary,
 	})
 }
 
@@ -466,6 +569,9 @@ type EVSESnapshot struct {
 	// started tracking the EVSE. A repeated StatusNotification that changes
 	// nothing leaves it alone, so OCPI's last_updated means what it says.
 	LastUpdated time.Time
+	// Reading is the newest meter reading, or nil when there is none: no
+	// MeterValues yet, or the session or the connection ended since.
+	Reading *MeterReading
 }
 
 // ChargePointSnapshot is one charge point as seen by a reader.
@@ -520,13 +626,17 @@ func (s *Service) Snapshot() Snapshot {
 			Transactions:   make([]Transaction, 0, len(cp.transactions)),
 		}
 		for _, uid := range cp.order {
-			snap.EVSEs = append(snap.EVSEs, EVSESnapshot{
+			e := EVSESnapshot{
 				UID:         uid,
 				ConnectorID: cp.connectorIDs[uid],
 				Status:      cp.effective[uid],
 				ErrorCode:   cp.errorCode[uid],
 				LastUpdated: cp.changedAt[uid],
-			})
+			}
+			if r, ok := cp.readings[uid]; ok {
+				e.Reading = r.clone()
+			}
+			snap.EVSEs = append(snap.EVSEs, e)
 		}
 		for _, tx := range cp.transactions {
 			snap.Transactions = append(snap.Transactions, *tx)

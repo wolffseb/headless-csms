@@ -28,6 +28,9 @@ var (
 	ErrShuttingDown = errors.New("shutting down")
 	// ErrNoActiveTransaction means there is no running session to stop.
 	ErrNoActiveTransaction = errors.New("no active transaction")
+	// ErrNoKeyValueConfig means the station's OCPP version has no flat
+	// key/value configuration to change.
+	ErrNoKeyValueConfig = errors.New("this OCPP version has no key/value configuration")
 )
 
 // Op names the action a RefusedError is about, in words a person would use.
@@ -41,13 +44,16 @@ const (
 	OpStop          Op = "stop"
 	OpUnlock        Op = "unlock"
 	OpTriggerStatus Op = "trigger status"
+	OpConfigSet     Op = "config set"
 )
 
 // RefusedError means the station answered the command and said no: Rejected,
 // Occupied, Faulted, Unavailable, UnlockFailed, NotSupported, or a status the
 // spec does not define.
 type RefusedError struct {
-	Op      Op
+	Op Op
+	// EVSEUID is what the command was about: the EVSE, or for OpConfigSet
+	// the configuration key.
 	EVSEUID string
 	// Status is the answer in version-agnostic terms.
 	Status ocpp.CommandStatus

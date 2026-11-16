@@ -204,7 +204,11 @@ func (e *stationEnv) call(cmd *cobra.Command, req socket.Request) (json.RawMessa
 	timeout := e.cfg.Charger.CallTimeout.Duration() + socketGrace
 	raw, err := socket.Call(cmd.Context(), e.socketPath, req, timeout)
 	if err != nil {
-		return nil, exitFor(req.Op, req.EVSE, err)
+		subject := req.EVSE
+		if req.Op == socket.OpConfigSet {
+			subject = req.Key
+		}
+		return nil, exitFor(req.Op, subject, err)
 	}
 	return raw, nil
 }
@@ -271,7 +275,7 @@ func printStatus(cmd *cobra.Command, st socket.Status) {
 	fmt.Fprintln(cmd.OutOrStdout())
 
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "EVSE\tSTATUS\tRESERVATION\tTRANSACTION")
+	fmt.Fprintln(w, "EVSE\tSTATUS\tRESERVATION\tTRANSACTION\tMETER")
 	for _, e := range st.EVSEs {
 		status := e.Status
 		if e.ErrorCode != "" && e.ErrorCode != "NoError" {
@@ -287,11 +291,90 @@ func printStatus(cmd *cobra.Command, st socket.Status) {
 		if tx := e.Transaction; tx != nil {
 			transaction = fmt.Sprintf("%s %s since %s", tx.ID, tx.IDTag, localTime(tx.StartedAt))
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", e.UID, status, reservation, transaction)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", e.UID, status, reservation, transaction, meterCell(e, time.Now()))
 	}
 	_ = w.Flush()
 	fmt.Fprintln(cmd.OutOrStdout())
 	fmt.Fprintln(cmd.OutOrStdout(), ocpiLine(st.OCPI))
+}
+
+// meterCell is an EVSE's newest meter reading for the status table: what it
+// draws, the limit the station offers, and how old the values are, such as
+// "50.0 kW 125.0 A, offered 150.0 kW, 3s ago". It is "-" without a reading.
+//
+// Values carried over from an older MeterValues (core merges per field) each
+// get their own age instead, as in "50.0 kW 3s ago, offered 22.0 kW 1m0s ago",
+// so an old limit is not passed off as fresh.
+func meterCell(e socket.EVSEStatus, now time.Time) string {
+	if e.ReadingAt == nil {
+		return "-"
+	}
+	type value struct {
+		text string
+		at   time.Time
+	}
+	// read is one value, or none when the reading lacks it. A value
+	// without its own time is as old as the reading.
+	read := func(v *float64, at *time.Time, kW bool) []value {
+		if v == nil {
+			return nil
+		}
+		when := *e.ReadingAt
+		if at != nil {
+			when = *at
+		}
+		if kW {
+			return []value{{fmt.Sprintf("%.1f kW", *v/1000), when}}
+		}
+		return []value{{fmt.Sprintf("%.1f A", *v), when}}
+	}
+	draw := append(read(e.PowerW, e.PowerAt, true), read(e.CurrentA, e.CurrentAt, false)...)
+	offered := append(read(e.PowerOfferedW, e.PowerOfferedAt, true), read(e.CurrentOfferedA, e.CurrentOfferedAt, false)...)
+
+	age := func(at time.Time) string { return max(now.Sub(at), 0).Round(time.Second).String() + " ago" }
+	all := append(append([]value(nil), draw...), offered...)
+	if len(all) == 0 {
+		// A reading with neither, such as energy only: say so, rather than
+		// look like no reading at all.
+		return "no power reported, " + age(*e.ReadingAt)
+	}
+	oneAge := true
+	for _, v := range all {
+		oneAge = oneAge && v.at.Equal(all[0].at)
+	}
+
+	// group renders a group's values, with their age unless all values in
+	// the cell share one, which then goes once at the end.
+	group := func(vs []value) string {
+		texts := make([]string, 0, len(vs))
+		sameAge := true
+		for _, v := range vs {
+			texts = append(texts, v.text)
+			sameAge = sameAge && v.at.Equal(vs[0].at)
+		}
+		switch {
+		case oneAge:
+			return strings.Join(texts, " ")
+		case sameAge:
+			return strings.Join(texts, " ") + " " + age(vs[0].at)
+		}
+		for i, v := range vs {
+			texts[i] = v.text + " " + age(v.at)
+		}
+		return strings.Join(texts, " ")
+	}
+	var parts []string
+	if len(draw) > 0 {
+		parts = append(parts, group(draw))
+	}
+	if len(offered) > 0 {
+		parts = append(parts, "offered "+group(offered))
+	}
+	cell := strings.Join(parts, ", ")
+	if oneAge {
+		cell += ", " + age(all[0].at)
+	}
+	return cell
 }
 
 // ocpiLine is the registration in one line: who, since when, and where

@@ -39,6 +39,7 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - Probe (#10, #47, 2026-11-16): a new capability needs `ocpp.Cap*` + `AllCapabilities()` (append last), a `neededProfiles` grant, a `Capabilities` field, and maybe a `needs` entry in cli/probe.go (only if cpms uses it). New simulator config keys change the raw-key count in `TestProbeJSONAndRaw` and both probe goldens (`go test ./internal/cli -run 'TestProbeNormalStation|TestProbeJSONAndRaw' -update`). Changing which keys `Capabilities()` asks for changes `testdata/golden/GetConfiguration.json` (`go test ./internal/ocpp/v16 -run Golden -update`).
 - Probe (#10, #47, 2026-11-16): a new capability needs `ocpp.Cap*` + `AllCapabilities()` (append last), a `neededProfiles` grant, a `Capabilities` field, and maybe a `needs` entry in cli/probe.go (only if cpms uses it). New simulator config keys change the raw-key count in `TestProbeJSONAndRaw` and both probe goldens (`go test ./internal/cli -run 'TestProbeNormalStation|TestProbeJSONAndRaw' -update`).
 - Smart charging C1 (#49, 2026-11-16): `ocpp.ChargePoint` has `SetChargingProfile`/`ClearChargingProfile`/`GetCompositeSchedule`. A new `ChargePoint` method needs stubs in the `fakeStation`s of `control/control_test.go` and `control/socket/server_test.go`. The v16 e2e `simRig.power` (a `powerLog` wrapping the handler) is how a test sees streamed W, since core records no power. Simulator tests can drive an unconnected sim with `offlineSim` + `handle[T]` (smartcharging_test.go). Meter cap: `meter.capW/capped`, refreshed in `sendMeterValues`.
+- Meter readings and station config (#48, 2026-11-16): `core.MeterReading` (power, current, offered, energy) is in `EVSESnapshot.Reading`, in memory only, and dropped on stop or disconnect. The v16 extraction is `meterReading` in `v16/meter.go`. `ocpp.ConfigurationChanger` is an optional interface beside `ocpp.ChargePoint` (1.6 only), behind `control.ChangeConfiguration` and socket op `config_set`.
 
 ## OCPI/OCPP traps
 
@@ -50,6 +51,7 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - OCPI `string(n)` limits count characters: use `utf8.RuneCountInString`, and test the edge with umlauts (2026-11-16, #55). Validate derived values (e.g. `OCPIBusinessName()` falling back to `location.name`) and name the key the value came from.
 - OCPP 1.6 `SupportedFeatureProfiles` can be truncated at `SupportedFeatureProfilesMaxLength` (Alpitronic HYC50 drops Reservation). Since #52 a profile missing from a full list is unknown with an `ocpp.Feature.Note`; the simulator reports max length = its profile count, so a same-length `FeatureProfiles` override reproduces it (2026-11-16).
 - OCPP 1.6 JSON schemas: the OCA zip is not on GitHub; mobilityhouse/ocpp vendors them at `ocpp/v16/schemas/<Action>.json` / `<Action>Response.json`. ClearChargingProfile's `Unknown` is a defined status, not "out of spec". `encoding/json` writes float64 without an exponent below 1e21, so a `limit` needs no custom marshaller.
+- The simulator reports `MeterValuesSampledData` as read-only and answers `Rejected` to it. Use `ConnectionTimeOut` or `HeartbeatInterval` when a test needs an `Accepted` ChangeConfiguration.
 
 ## Process that worked
 
@@ -58,6 +60,7 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - Finish with the real binary on spare ports, paste the responses into the PR, and check that the ports are free after Ctrl-C. Stop it by PID (`kill -INT`), not `pkill -f`.
 - CLI tests capture output with `SetOut`, which hides that cobra's `cmd.Println` goes to stderr in the real binary (2026-11-16: `cpms probe --json | jq` gets nothing). Pipe stdout of the real binary when checking scriptable output.
 - Since #54 (2026-11-16): reports use `fmt.Fprint*(cmd.OutOrStdout(), ...)`, never `cmd.Print*` (`TestNoCobraPrint` fails on it). `TestReportsGoToStdout` in cli/binary_test.go builds the binary and checks both streams; add a line there for a new report command.
+- For a CLI path the simulator cannot produce (such as a `RebootRequired` answer), a fake `cpms run` works: a unix listener in `shortDir` that reads one line and writes a canned `{"ok":true,"result":...}`. Pass it with `--socket`.
 - `bodyclose` flags test helpers that return `*http.Response`, even when they close the body. Return status, headers and the decoded body instead.
 - A Python mutation table (name, file, old, new, pkg, -run) applied one at a time with restore in `finally` makes the fail-without proof cheap; keep the script in the scratchpad.
 

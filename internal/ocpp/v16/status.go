@@ -116,6 +116,13 @@ var commandStatusMap = map[string]map[string]ocpp.CommandStatus{
 		CompositeAccepted: ocpp.CommandAccepted,
 		CompositeRejected: ocpp.CommandRejected,
 	},
+	// ConfigurationStatus.
+	ActionChangeConfiguration: {
+		ConfigAccepted:       ocpp.CommandAccepted,
+		ConfigRejected:       ocpp.CommandRejected,
+		ConfigRebootRequired: ocpp.CommandRebootRequired,
+		ConfigNotSupported:   ocpp.CommandNotSupported,
+	},
 }
 
 // MapCommandStatus converts the status in an action's .conf. Anything the

@@ -238,6 +238,7 @@ ALP-HYC-001-1 remote stop accepted
 | `cpms status [--json]` | The station, per EVSE its status, reservation and session, and the OCPI registration. `--json` is a stable format for scripts. |
 | `cpms ocpi unregister` | Forgets the OCPI registration so the partner can register again; see [Registering with an OCPI partner](#registering-with-an-ocpi-partner). |
 | `cpms probe [--json] [--raw]` | What the station supports and how it is set up; see [Probing the station](#probing-the-station). |
+| `cpms config set <key> <value>` | Sets one of the **station's** OCPP configuration keys (`ChangeConfiguration`); `config.yaml` is not touched. See [Power, current and the station's configuration](#power-current-and-the-stations-configuration). |
 
 `--evse` takes the EVSE `uid` from config, and may be left out when only one EVSE is
 configured. A typo is caught from config before anything is sent, and the error lists the
@@ -257,13 +258,82 @@ stdout too. Logs, validation problems and `cpms: …` errors go to stderr.
 | 1 | Usage, config, or unexpected error (including an unknown `--evse`) |
 | 2 | `cpms run` is not reachable |
 | 3 | The charge point is not connected to cpms |
-| 4 | The station rejected the command |
+| 4 | The station rejected the command (`cpms config set`: also `NotSupported`, an unknown key) |
 | 5 | The station is occupied |
 | 6 | The station is faulted or unavailable |
 | 7 | The station did not answer within `charger.call_timeout` |
 | 8 | Unlock failed, or the station does not support the command |
 | 9 | Refused by cpms before sending: already reserved (including while the cancel of a timed-out reservation is in flight), no reservation to cancel, nothing to stop, shutting down. `cpms ocpi unregister`: nothing is registered, or a registration is still in progress (nothing was changed; try again) |
 | 10 | `cpms probe`: the station reported that it lacks a capability cpms requires (one it merely did not report is not an error) |
+
+### Power, current and the station's configuration
+
+`cpms status` shows the newest meter reading per EVSE in a `METER` column: what the
+station draws, the most it offers the car (the limit it applies, which a charging profile
+changes), and how old the reading is.
+
+```
+EVSE           STATUS    RESERVATION  TRANSACTION                   METER
+ALP-HYC-001-1  CHARGING  -            1 04A1B2C3D4 since 14:28:32  50.0 kW 125.0 A, offered 150.0 kW, 3s ago
+```
+
+`cpms status --json` has the same as fields on each EVSE, all omitted when absent:
+`power_w` (W), `current_a` (A), `power_offered_w` (W), `current_offered_a` (A),
+`reading_at` (when the station took the newest `MeterValues`), and per value when it was
+taken: `power_at`, `current_at`, `power_offered_at`, `current_offered_at`. They come from
+the newest value of `MeterValues`: `Power.Active.Import`, `Current.Import`,
+`Power.Offered`, `Current.Offered`. Stations interleave messages with different
+measurands (clock-aligned energy between periodic samples, for instance), so a message
+without a value keeps the one before; when the values then differ in age, the `METER`
+column gives each its own, as in `50.0 kW 125.0 A 3s ago, offered 22.0 kW 1m0s ago`.
+When a station reports only phases, power is the sum of the phases and current the highest
+phase. `kW` is converted to W; a value cpms cannot read is logged and left out. The reading
+is kept in memory only: it is not in `state.json`, and it is dropped when the session on the
+EVSE stops or the station disconnects. A `MeterValues` for a transaction that is not running
+on that EVSE (the stopped session's last values, arriving late or replayed from the
+station's offline queue) is logged but not kept. One without a transaction is kept: that is
+clock-aligned data, which a station also sends for an idle or Reserved connector.
+
+A station only reports the measurands listed in its `MeterValuesSampledData` key, which
+`cpms probe --raw` shows. The office Alpitronic reports only
+`Energy.Active.Import.Register` out of the box, so turn the rest on once:
+
+```
+$ cpms config set MeterValuesSampledData \
+    Energy.Active.Import.Register,Power.Active.Import,Power.Offered,Current.Import,Current.Offered
+MeterValuesSampledData set to "Energy.Active.Import.Register,Power.Active.Import,..." on the station (Accepted)
+```
+
+Sampled data only flows during a session (OCPP 1.6 §9.1, `MeterValueSampleInterval`: from
+the start of the transaction). On a connector that is `Available` or `Reserved` the `METER`
+column therefore stays `-` however `MeterValuesSampledData` is set; that does not mean the
+station ignored a charging profile. Outside a session the offered limit only arrives as
+clock-aligned data: `MeterValuesAlignedData` lists the measurands, sent every
+`ClockAlignedDataInterval` seconds, where `0` (the HYC50's setting) means none at all. To
+see the limit on a Reserved HYC50 connector, for instance while testing a charging profile:
+
+```
+$ cpms config set MeterValuesAlignedData Power.Offered,Current.Offered
+$ cpms config set ClockAlignedDataInterval 60
+```
+
+The HYC50 takes up to 7 measurands there (`MeterValuesAlignedDataMaxLength`); add
+`Energy.Active.Import.Register` if you want energy too. Per the spec an aligned value is sent
+at the end of each interval, stamped with the interval's start time, and may be an average
+over it. With 60 s its age therefore reads between one and two minutes, and a changed limit
+can take an interval to show fully.
+Setting the interval back to `0` turns aligned data off. The other way to read the limit is
+to start a session: the `Transaction.Begin` and periodic samples carry `Power.Offered` once
+`MeterValuesSampledData` lists it.
+
+`cpms config set` changes the station, which keeps the value; it does not change
+`config.yaml`, and cpms does not set it again after a reboot. It exits 0 when the station
+answers `Accepted`, and also for `RebootRequired`, which is printed as a `warning:` on
+stderr because the value applies only after the station restarts. `Rejected` (a read-only
+key, or a value the station does not take) and `NotSupported` (a key the station does not
+know) exit 4. The other exit codes are as above. The simulator always streams power and
+current, and reports `MeterValuesSampledData` as read-only, so it answers `Rejected` there;
+try `HeartbeatInterval` or `ConnectionTimeOut` against it instead.
 
 `cpms ocpi unregister` exits 0 once the registration is forgotten, even if the partner could
 not be told: a failed `DELETE` to the partner is reported as a `warning:` line on stderr, not
@@ -640,7 +710,7 @@ internal/ocpp/csms       the WebSocket server a charge point dials into
 internal/ocpp/v16        OCPP 1.6-J payloads, the adapter that writes to core, and the command adapter
 internal/state           state.json: the persisted DTOs and the atomic-write store
 internal/simulator       a charge point: dials a CSMS and behaves like a station
-internal/cli             the command tree: run, simulate, the one-shot commands, config validate
+internal/cli             the command tree: run, simulate, the one-shot commands, config validate/set
 internal/ocpptest        a raw OCPP-J client used by the tests
 internal/statetest       a state store whose writes can be made to fail, for tests
 internal/clocktest       a manually advanced clock, for tests that wait on expiry

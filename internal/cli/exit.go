@@ -76,8 +76,13 @@ func exitFor(op socket.Op, evse string, err error) error {
 			"the charge point is not connected to cpms. Check that the station's CSMS URL points here (`cpms config validate` prints it)")}
 	case socket.CodeRejected:
 		hint := ""
-		if op == socket.OpReserve {
+		switch {
+		case op == socket.OpReserve:
 			hint = ". If it does not support the Reservation profile, `cpms probe` will say so"
+		case op == socket.OpConfigSet && se.Status == "NotSupported":
+			hint = ": it does not know this key. `cpms probe --raw` lists the keys it reports"
+		case op == socket.OpConfigSet:
+			hint = ". The key may be read-only, or the value not one it accepts"
 		}
 		return &ExitStatus{Code: ExitRejected, Err: msg("the station rejected the %s%s%s", noun(op), answer(se), hint)}
 	case socket.CodeOccupied:
@@ -124,6 +129,8 @@ func noun(op socket.Op) string {
 		return "remote start"
 	case socket.OpStop:
 		return "remote stop"
+	case socket.OpConfigSet:
+		return "configuration change"
 	default:
 		return string(op)
 	}

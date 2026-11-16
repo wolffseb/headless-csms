@@ -167,6 +167,9 @@ func (s *Service) StopTransaction(cpID, txID string, meterStop int, reason strin
 	tx.MeterStop = meterStop
 	tx.Reason = reason
 	cp.lastSeen = s.now()
+	// The draw belonged to the session; keeping it would show a car that
+	// has gone as still charging.
+	delete(cp.readings, tx.EVSEUID)
 	out := *tx
 	s.mu.Unlock()
 

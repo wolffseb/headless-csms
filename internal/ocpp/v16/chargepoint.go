@@ -29,7 +29,10 @@ type ChargePoint struct {
 	cfg *config.Config
 }
 
-var _ ocpp.ChargePoint = (*ChargePoint)(nil)
+var (
+	_ ocpp.ChargePoint          = (*ChargePoint)(nil)
+	_ ocpp.ConfigurationChanger = (*ChargePoint)(nil)
+)
 
 // NewChargePoint wraps a 1.6 connection. cfg supplies the mapping from EVSE
 // uid to connector id.
@@ -154,6 +157,13 @@ func (cp *ChargePoint) GetConfiguration(ctx context.Context, keys []string) (Get
 		return conf, fmt.Errorf("%s response: %w", ActionGetConfiguration, err)
 	}
 	return conf, nil
+}
+
+// ChangeConfiguration sets one configuration key with ChangeConfiguration.
+// RebootRequired comes back as ocpp.CommandRebootRequired: the station took
+// the value, and the caller decides whether that counts as done.
+func (cp *ChargePoint) ChangeConfiguration(ctx context.Context, key, value string) (ocpp.Result, error) {
+	return cp.command(ctx, ActionChangeConfiguration, ChangeConfigurationReq{Key: key, Value: value})
 }
 
 // connectorID maps an EVSE uid to its 1.6 connector id.
