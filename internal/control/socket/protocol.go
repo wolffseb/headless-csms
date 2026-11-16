@@ -162,6 +162,9 @@ type Error struct {
 	// station answered with a CALLERROR instead of a status. Status is empty
 	// then.
 	CallError string `json:"call_error,omitempty"`
+	// ProfileID is the id of a charging profile that was sent but not
+	// answered: the station may hold it although cpms records nothing.
+	ProfileID int    `json:"profile_id,omitempty"`
 	Message   string `json:"message"`
 }
 

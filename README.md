@@ -494,7 +494,10 @@ this profile (a `tx` one without a session, a unit it does not allow, a stack le
 count beyond its limits, too many profiles installed). `NotSupported`, or a `NotImplemented` /
 `NotSupported` CALLERROR, exits 11: the station does not do Smart Charging at all, or not this
 request. A clear answered `Unknown` exits 4 with "holds no matching charging profile". No
-answer within `charger.call_timeout` exits 7. Mistakes in the flags or the file exit 1 before
+answer within `charger.call_timeout` exits 7. When a profile went out but no answer came
+back (exit 7, or 3 if the connection dropped), the station may hold it although cpms records
+nothing; the message names the id it was sent with: check with `cpms limit show` and remove
+it with `cpms limit clear --id N`. Mistakes in the flags or the file exit 1 before
 anything is sent.
 
 **Profile file** for `cpms profile set -f`. The id is not part of it; cpms allocates one.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -240,5 +241,37 @@ func TestScheduleRefusedIsAnError(t *testing.T) {
 	}
 	if _, err := r.ctl.Schedule(context.Background(), "EVSE-1", 0, nil); !errors.Is(err, ocpp.ErrInvalidProfile) {
 		t.Errorf("zero duration: err = %v", err)
+	}
+}
+
+// A profile that went out but got no answer may be held by the station
+// although cpms records nothing. The error names the id it was sent with, so
+// the operator can check for it and clear exactly that one.
+func TestUnansweredProfileNamesItsID(t *testing.T) {
+	t.Parallel()
+
+	for _, sendErr := range []error{ocpp.ErrTimeout, ocpp.ErrNotConnected} {
+		t.Run(sendErr.Error(), func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			r.station.fail["set-profile"] = sendErr
+
+			_, err := r.ctl.SetLimit(context.Background(), control.LimitParams{EVSEUID: "EVSE-1", KW: f64(20)})
+			if !errors.Is(err, sendErr) {
+				t.Fatalf("err = %v, want it to wrap %v", err, sendErr)
+			}
+			var unconfirmed *control.UnconfirmedProfileError
+			if !errors.As(err, &unconfirmed) || unconfirmed.ID != 1 {
+				t.Fatalf("err = %v, want an UnconfirmedProfileError for profile 1", err)
+			}
+			for _, want := range []string{"#1", "cpms limit show", "cpms limit clear --id 1"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("err = %q, want it to mention %q", err, want)
+				}
+			}
+			if got := r.core.ChargingProfiles("EVSE-1"); len(got) != 0 {
+				t.Errorf("records = %+v, want none: the station never confirmed it", got)
+			}
+		})
 	}
 }

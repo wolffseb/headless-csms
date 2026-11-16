@@ -324,6 +324,10 @@ func done(err error) Response {
 // wrong" becomes "what the script calling cpms sees".
 func classify(err error) *Error {
 	e := &Error{Code: CodeInternal, Message: err.Error()}
+	var unconfirmed *control.UnconfirmedProfileError
+	if errors.As(err, &unconfirmed) {
+		e.ProfileID = unconfirmed.ID
+	}
 
 	var refused *control.RefusedError
 	var callErr *ocpp.RPCError

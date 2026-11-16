@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -131,6 +132,11 @@ func (s *Service) setProfile(ctx context.Context, p ocpp.ChargingProfile, source
 	p.ID = id
 
 	res, err := cp.SetChargingProfile(ctx, p)
+	if errors.Is(err, ocpp.ErrTimeout) || errors.Is(err, ocpp.ErrNotConnected) {
+		// It may have arrived: say which id to look for, since nothing is
+		// recorded for it.
+		return core.ChargingProfile{}, &UnconfirmedProfileError{ID: p.ID, Target: target(p.EVSEUID), Err: err}
+	}
 	if err != nil {
 		return core.ChargingProfile{}, err
 	}

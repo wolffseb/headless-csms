@@ -54,3 +54,29 @@ func TestNotSupportedHasItsOwnExitCode(t *testing.T) {
 		t.Errorf("not_supported exits %d, want 11", code)
 	}
 }
+
+// A profile that went out unanswered may be held by the station although
+// cpms records nothing: the message names its id and how to find and clear
+// it, and the exit code stays the timeout's or the connection's.
+func TestUnconfirmedProfileNamesItsID(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		code socket.Code
+		exit int
+	}{{socket.CodeTimeout, ExitTimeout}, {socket.CodeNotConnected, ExitNotConnected}} {
+		err := exitFor(socket.OpLimitSet, "EVSE-1", &socket.Error{Code: c.code, ProfileID: 7})
+		if code := ExitCode(err); code != c.exit {
+			t.Errorf("%s: exit %d, want %d", c.code, code, c.exit)
+		}
+		for _, want := range []string{"charging profile #7", "`cpms limit show`", "`cpms limit clear --id 7`"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: %q, want it to mention %q", c.code, err, want)
+			}
+		}
+	}
+	// Without an id (any other command) the message is as before.
+	if err := exitFor(socket.OpStart, "EVSE-1", &socket.Error{Code: socket.CodeTimeout}); strings.Contains(err.Error(), "limit") {
+		t.Errorf("a timed-out start mentions limits: %q", err)
+	}
+}

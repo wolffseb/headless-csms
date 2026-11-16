@@ -78,7 +78,7 @@ func exitFor(op socket.Op, evse string, err error) error {
 	switch se.Code {
 	case socket.CodeNotConnected:
 		return &ExitStatus{Code: ExitNotConnected, Err: msg(
-			"the charge point is not connected to cpms. Check that the station's CSMS URL points here (`cpms config validate` prints it)")}
+			"the charge point is not connected to cpms. Check that the station's CSMS URL points here (`cpms config validate` prints it)%s", unconfirmed(se))}
 	case socket.CodeRejected:
 		hint := ""
 		switch {
@@ -103,7 +103,7 @@ func exitFor(op socket.Op, evse string, err error) error {
 	case socket.CodeFaulted:
 		return &ExitStatus{Code: ExitFaulted, Err: msg("the station says it is faulted or unavailable%s", answer(se))}
 	case socket.CodeTimeout:
-		return &ExitStatus{Code: ExitTimeout, Err: msg("the station did not answer within charger.call_timeout")}
+		return &ExitStatus{Code: ExitTimeout, Err: msg("the station did not answer within charger.call_timeout%s", unconfirmed(se))}
 	case socket.CodeUnlockFailed:
 		if se.Status == "UnlockFailed" {
 			return &ExitStatus{Code: ExitUnlockFailed, Err: msg("the station could not release the cable lock%s", answer(se))}
@@ -118,6 +118,17 @@ func exitFor(op socket.Op, evse string, err error) error {
 	default:
 		return &ExitStatus{Code: ExitError, Err: errors.New(se.Message)}
 	}
+}
+
+// unconfirmed names a charging profile that went out unanswered, for the end
+// of a timeout or connection message: the station may hold it although cpms
+// records nothing. It is empty for every other request.
+func unconfirmed(se *socket.Error) string {
+	if se.ProfileID == 0 {
+		return ""
+	}
+	return fmt.Sprintf(". It was sent as charging profile #%d, which the station may hold: check with `cpms limit show`, "+
+		"remove it with `cpms limit clear --id %d`", se.ProfileID, se.ProfileID)
 }
 
 // answer is the station's own answer, for the end of a message: " (status
