@@ -81,6 +81,7 @@ type Result struct {
 type Capabilities struct {
 	Reservation   Support
 	RemoteTrigger Support
+	SmartCharging Support
 }
 
 // CommandStatus is a station's answer to a command, covering every outcome a

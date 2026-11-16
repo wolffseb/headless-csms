@@ -34,6 +34,14 @@
       "assumed": false
     },
     {
+      "name": "SmartCharging",
+      "support": "yes",
+      "grants": [
+        "smart_charging"
+      ],
+      "assumed": false
+    },
+    {
       "name": "FirmwareManagement",
       "support": "yes",
       "grants": [],
@@ -55,6 +63,10 @@
     },
     {
       "name": "trigger_status",
+      "support": "yes"
+    },
+    {
+      "name": "smart_charging",
       "support": "yes"
     }
   ],
@@ -112,6 +124,36 @@
       "value": "0",
       "reported": true,
       "meaning": "seconds between meter values during a session; 0 means none are sent"
+    },
+    {
+      "name": "MeterValuesSampledData",
+      "value": "Energy.Active.Import.Register,Power.Active.Import,Current.Import,SoC",
+      "reported": true,
+      "meaning": "measurands sent during a session; Power.Active.Import must be among them to see a charging limit take effect"
+    },
+    {
+      "name": "ChargingScheduleAllowedChargingRateUnit",
+      "value": "Current,Power",
+      "reported": true,
+      "meaning": "units a charging schedule may use (Current, Power or both); decides whether a limit can be set in kW or in A"
+    },
+    {
+      "name": "ChargeProfileMaxStackLevel",
+      "value": "8",
+      "reported": true,
+      "meaning": "highest stack level the station accepts for a charging profile"
+    },
+    {
+      "name": "ChargingScheduleMaxPeriods",
+      "value": "24",
+      "reported": true,
+      "meaning": "most periods the station accepts in one charging schedule"
+    },
+    {
+      "name": "MaxChargingProfilesInstalled",
+      "value": "10",
+      "reported": true,
+      "meaning": "how many charging profiles the station keeps installed at once"
     }
   ],
   "connectors": 1,
@@ -119,7 +161,7 @@
   "raw": [
     {
       "key": "SupportedFeatureProfiles",
-      "value": "Core,FirmwareManagement,RemoteTrigger,Reservation",
+      "value": "Core,FirmwareManagement,RemoteTrigger,Reservation,SmartCharging",
       "readonly": true
     },
     {
@@ -165,6 +207,31 @@
     {
       "key": "ReserveConnectorZeroSupported",
       "value": "false",
+      "readonly": true
+    },
+    {
+      "key": "MeterValuesSampledData",
+      "value": "Energy.Active.Import.Register,Power.Active.Import,Current.Import,SoC",
+      "readonly": true
+    },
+    {
+      "key": "ChargingScheduleAllowedChargingRateUnit",
+      "value": "Current,Power",
+      "readonly": true
+    },
+    {
+      "key": "ChargeProfileMaxStackLevel",
+      "value": "8",
+      "readonly": true
+    },
+    {
+      "key": "ChargingScheduleMaxPeriods",
+      "value": "24",
+      "readonly": true
+    },
+    {
+      "key": "MaxChargingProfilesInstalled",
+      "value": "10",
       "readonly": true
     }
   ],

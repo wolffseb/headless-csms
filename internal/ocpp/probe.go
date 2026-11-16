@@ -12,11 +12,13 @@ const (
 	CapUnlock          Capability = "unlock"
 	CapReservation     Capability = "reservation"
 	CapTriggerStatus   Capability = "trigger_status"
+	CapSmartCharging   Capability = "smart_charging"
 )
 
 // AllCapabilities lists every capability, in the order a report shows them.
+// New ones go last, so that the order of existing reports does not change.
 func AllCapabilities() []Capability {
-	return []Capability{CapRemoteStartStop, CapUnlock, CapReservation, CapTriggerStatus}
+	return []Capability{CapRemoteStartStop, CapUnlock, CapReservation, CapTriggerStatus, CapSmartCharging}
 }
 
 // Support is whether a station supports something.

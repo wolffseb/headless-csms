@@ -42,9 +42,12 @@ func (s *Simulator) configuration() []configEntry {
 	// The Reservation profile is advertised unless the scenario says the
 	// station refuses reservations, so that `cpms probe` reports the same
 	// capability the station then actually honours.
-	profiles := "Core,FirmwareManagement,RemoteTrigger,Reservation"
+	//
+	// SmartCharging is advertised before the simulator answers its messages
+	// (#47): nothing in cpms sends them yet.
+	profiles := "Core,FirmwareManagement,RemoteTrigger,Reservation,SmartCharging"
 	if s.opts.Scenario == ScenarioRejectReserve {
-		profiles = "Core,FirmwareManagement,RemoteTrigger"
+		profiles = "Core,FirmwareManagement,RemoteTrigger,SmartCharging"
 	}
 	if s.opts.FeatureProfiles != "" {
 		profiles = s.opts.FeatureProfiles
@@ -83,6 +86,12 @@ func (s *Simulator) configuration() []configEntry {
 		stored(v16.KeyLocalPreAuthorize, parseBool),
 		stored(v16.KeyLocalAuthorizeOffline, parseBool),
 		{key: v16.KeyReserveConnectorZeroSupported, readonly: true, value: "false"},
+		// Read-only, unlike on a real station: the stream does not follow it.
+		{key: v16.KeyMeterValuesSampledData, readonly: true, value: sampledMeasurands()},
+		{key: v16.KeyChargingScheduleAllowedChargingRateUnit, readonly: true, value: "Current,Power"},
+		{key: v16.KeyChargeProfileMaxStackLevel, readonly: true, value: "8"},
+		{key: v16.KeyChargingScheduleMaxPeriods, readonly: true, value: "24"},
+		{key: v16.KeyMaxChargingProfilesInstalled, readonly: true, value: "10"},
 	} {
 		if !slices.Contains(s.opts.UnreportedKeys, e.key) {
 			all = append(all, e)

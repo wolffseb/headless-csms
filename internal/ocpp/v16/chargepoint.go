@@ -114,6 +114,7 @@ const (
 	profileCore          = "Core"
 	profileReservation   = "Reservation"
 	profileRemoteTrigger = "RemoteTrigger"
+	profileSmartCharging = "SmartCharging"
 )
 
 // Capabilities reads SupportedFeatureProfiles. A station that does not report
@@ -135,6 +136,7 @@ func (cp *ChargePoint) Capabilities(ctx context.Context) (ocpp.Capabilities, err
 	return ocpp.Capabilities{
 		Reservation:   report.Support(ocpp.CapReservation),
 		RemoteTrigger: report.Support(ocpp.CapTriggerStatus),
+		SmartCharging: report.Support(ocpp.CapSmartCharging),
 	}, nil
 }
 

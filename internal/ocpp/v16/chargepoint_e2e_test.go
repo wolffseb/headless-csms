@@ -222,8 +222,9 @@ func TestChargePointAgainstSimulator(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Capabilities: %v", err)
 		}
-		if caps.Reservation != ocpp.SupportYes || caps.RemoteTrigger != ocpp.SupportYes {
-			t.Errorf("caps = %+v, want Reservation and RemoteTrigger", caps)
+		want := ocpp.Capabilities{Reservation: ocpp.SupportYes, RemoteTrigger: ocpp.SupportYes, SmartCharging: ocpp.SupportYes}
+		if caps != want {
+			t.Errorf("caps = %+v, want %+v", caps, want)
 		}
 	})
 

@@ -19,6 +19,7 @@ var neededProfiles = []struct {
 	{profileCore, []ocpp.Capability{ocpp.CapRemoteStartStop, ocpp.CapUnlock}},
 	{profileReservation, []ocpp.Capability{ocpp.CapReservation}},
 	{profileRemoteTrigger, []ocpp.Capability{ocpp.CapTriggerStatus}},
+	{profileSmartCharging, []ocpp.Capability{ocpp.CapSmartCharging}},
 }
 
 // probedSettings are the keys that change how the station behaves towards
@@ -45,6 +46,16 @@ var probedSettings = []struct {
 		"seconds the station waits for a cable after a remote start or a presented tag"},
 	{KeyMeterValueSampleInterval,
 		"seconds between meter values during a session; 0 means none are sent"},
+	{KeyMeterValuesSampledData,
+		"measurands sent during a session; Power.Active.Import must be among them to see a charging limit take effect"},
+	{KeyChargingScheduleAllowedChargingRateUnit,
+		"units a charging schedule may use (Current, Power or both); decides whether a limit can be set in kW or in A"},
+	{KeyChargeProfileMaxStackLevel,
+		"highest stack level the station accepts for a charging profile"},
+	{KeyChargingScheduleMaxPeriods,
+		"most periods the station accepts in one charging schedule"},
+	{KeyMaxChargingProfilesInstalled,
+		"how many charging profiles the station keeps installed at once"},
 }
 
 // Probe reads the station's whole configuration and turns it into a report.

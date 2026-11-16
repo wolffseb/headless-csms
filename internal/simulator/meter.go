@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
@@ -111,6 +112,16 @@ func (m *meter) sampledValues() []v16.SampledValue {
 		sample(power/chargeVoltage, "Current.Import", "A", "Outlet"),
 		sample(m.soc(), "SoC", "Percent", "EV"),
 	}
+}
+
+// sampledMeasurands is what MeterValuesSampledData reports: the measurands
+// of a sample, read off one so that the key cannot drift from the stream.
+func sampledMeasurands() string {
+	var names []string
+	for _, v := range (&meter{}).sampledValues() {
+		names = append(names, v.Measurand)
+	}
+	return strings.Join(names, ",")
 }
 
 // startMeterLocked begins streaming MeterValues for the transaction running
