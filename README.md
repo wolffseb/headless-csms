@@ -129,7 +129,7 @@ the highest stack level per purpose, `TxProfile` over `TxDefaultProfile`, capped
 taken at 400 V. The model is simplified: `Relative` schedules always start "now",
 `Recurring` ones are read in their current recurrence only, and `GetCompositeSchedule`
 does not convert units (asking in A for profiles in W is `Rejected`). Profiles survive a
-reconnect but not a `Reset`.
+reconnect and a `Reset` (errata 3.37), but not a restart of the simulator.
 
 By default the simulator exits when its connection drops. `--reconnect` makes it behave
 like a station instead: it redials with backoff (1 s, 2 s, 4 s … capped at 30 s, each wait

@@ -216,7 +216,10 @@ func TestRejectProfileScenario(t *testing.T) {
 	}
 }
 
-func TestResetForgetsProfiles(t *testing.T) {
+// TestProfilesSurviveAReset follows errata 3.37: profiles set by
+// SetChargingProfile persist across reboots, so a Reset is no way to drop a
+// limit.
+func TestProfilesSurviveAReset(t *testing.T) {
 	t.Parallel()
 
 	sim := offlineSim(t)
@@ -224,8 +227,8 @@ func TestResetForgetsProfiles(t *testing.T) {
 		t.Fatalf("set: %s", got)
 	}
 	handle[v16.ResetConf](t, sim, v16.ActionReset, v16.ResetReq{Type: v16.ResetSoft})
-	if got := limits(composite(t, sim, 1, 60, "")); !equal(got, []string{"0:50000"}) {
-		t.Errorf("after Reset: %v, want the station's own 0:50000", got)
+	if got := limits(composite(t, sim, 1, 60, "")); !equal(got, []string{"0:20000"}) {
+		t.Errorf("after Reset: %v, want the TxDefault's 0:20000", got)
 	}
 }
 

@@ -22,7 +22,8 @@ const (
 // that a test failing against it can be told from a spec question:
 //
 //   - Profiles are kept per connector, 0 being the station, in memory: they
-//     survive a reconnect but not a Reset or a restart.
+//     survive a reconnect and a Reset (errata 3.37), but not a restart of
+//     the simulator process.
 //   - A new profile replaces one with the same id anywhere on the station,
 //     and one with the same purpose and stack level on the same connector.
 //   - A TxProfile needs a running transaction on its connector (with the
@@ -286,12 +287,9 @@ func (s *Simulator) clearTxProfilesLocked(connectorID int) {
 	})
 }
 
-// reset answers Reset. It forgets every charging profile, as a reboot would;
-// nothing else is modelled.
+// reset answers Reset. Charging profiles persist across reboots (errata
+// 3.37 on §5.16), so it keeps them; nothing else is modelled.
 func (s *Simulator) reset() (any, *ocpp.RPCError) {
-	s.mu.Lock()
-	clear(s.profiles)
-	s.mu.Unlock()
 	return v16.ResetConf{Status: v16.CmdAccepted}, nil
 }
 
