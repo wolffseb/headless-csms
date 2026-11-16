@@ -90,12 +90,23 @@ type OCPI struct {
 // OCPIBusinessName is the name we register under: ocpi.business_name, else
 // location.name, else our party ("DE*FYT"), because OCPI requires a name.
 func (c *Config) OCPIBusinessName() string {
-	for _, name := range []string{c.OCPI.BusinessName, c.Location.Name} {
-		if n := strings.TrimSpace(name); n != "" {
-			return n
+	name, _ := c.businessName()
+	return name
+}
+
+// businessName is OCPIBusinessName plus the config key the name came from,
+// so validation can point at the field to shorten. The key is empty for the
+// party fallback, which no one wrote.
+func (c *Config) businessName() (name, key string) {
+	for _, src := range []struct{ key, value string }{
+		{"ocpi.business_name", c.OCPI.BusinessName},
+		{"location.name", c.Location.Name},
+	} {
+		if n := strings.TrimSpace(src.value); n != "" {
+			return n, src.key
 		}
 	}
-	return c.OCPI.CountryCode + "*" + c.OCPI.PartyID
+	return c.OCPI.CountryCode + "*" + c.OCPI.PartyID, ""
 }
 
 // Push tunes the outbound PATCH client that mirrors status changes to the

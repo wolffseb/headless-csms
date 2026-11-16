@@ -45,6 +45,7 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - OCPI `publish: false` means "only for tokens in `publish_allowed_to`". cpms defaults to true (#14 decision).
 - OCPP idTags (IdToken) compare case-insensitively (§7.15). Use `strings.EqualFold`.
 - The CSMS gaps in handling replayed offline transactions are tracked in #44. Don't work around them in the simulator.
+- OCPI `string(n)` limits count characters: use `utf8.RuneCountInString`, and test the edge with umlauts (2026-11-16, #55). Validate derived values (e.g. `OCPIBusinessName()` falling back to `location.name`) and name the key the value came from.
 
 ## Process that worked
 

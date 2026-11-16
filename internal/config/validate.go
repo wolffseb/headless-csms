@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 var (
@@ -42,6 +43,9 @@ const maxTokenLen = 64
 
 // maxBusinessNameLen is OCPI BusinessDetails.name, a string(100).
 const maxBusinessNameLen = 100
+
+// maxLocationNameLen is OCPI Location.name, a string(255).
+const maxLocationNameLen = 255
 
 // Validate checks the whole config and returns every problem it finds as
 // ValidationErrors, or nil if the config is usable.
@@ -186,8 +190,12 @@ func (c *Config) validateOCPI(v *validator) {
 		v.add("ocpi.token_c", "must differ from ocpi.token_a")
 	}
 
-	if n := len(o.BusinessName); n > maxBusinessNameLen {
-		v.add("ocpi.business_name", "must be at most %d characters (OCPI BusinessDetails.name), got %d", maxBusinessNameLen, n)
+	// Check the name we actually register under, which may be location.name.
+	// OCPI string lengths are characters, not bytes: "Müller" is 6.
+	if name, key := c.businessName(); key != "" {
+		if n := utf8.RuneCountInString(name); n > maxBusinessNameLen {
+			v.add(key, "must be at most %d characters to serve as the OCPI business name (BusinessDetails.name), got %d", maxBusinessNameLen, n)
+		}
 	}
 
 	if err := o.Push.Debounce.parse(); err != nil {
@@ -226,6 +234,10 @@ func (c *Config) validateLocation(v *validator) {
 
 	if v.required("location.id", l.ID) && len(l.ID) > 36 {
 		v.add("location.id", "must be at most 36 characters (OCPI CiString36), got %d", len(l.ID))
+	}
+	// Optional, but sent as-is in our Location, so it must fit there.
+	if n := utf8.RuneCountInString(l.Name); n > maxLocationNameLen {
+		v.add("location.name", "must be at most %d characters (OCPI Location.name), got %d", maxLocationNameLen, n)
 	}
 	v.required("location.address", l.Address)
 	v.required("location.city", l.City)
