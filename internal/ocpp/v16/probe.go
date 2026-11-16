@@ -111,8 +111,15 @@ func (cp *ChargePoint) Probe(ctx context.Context) (ocpp.ProbeReport, error) {
 // A list as long as SupportedFeatureProfilesMaxLength may have been cut
 // short: an Alpitronic HYC50 implements six profiles, can list five, and
 // leaves out Reservation, which it supports. A profile missing from a full
-// list is therefore unknown, not absent. Without a usable max length, a list
-// is taken at its word.
+// list is therefore unknown, not absent, except Core, which is mandatory and
+// so assumed present. Without a usable max length, a list is taken at its
+// word.
+//
+// This is a vendor workaround, not spec: OCPP 1.6 errata 3.81 withdraws
+// SupportedFeatureProfilesMaxLength ("should not have been part of OCPP
+// 1.6"). Its price: a station whose list is complete and exactly as long as
+// its max length, and which really lacks a profile, shows that profile as
+// unconfirmed (exit 0) instead of missing (exit 10).
 func features(values map[string]string) []ocpp.Feature {
 	advertised := parseProfiles(values[KeySupportedFeatureProfiles])
 	reported := len(advertised) > 0
@@ -129,7 +136,7 @@ func features(values map[string]string) []ocpp.Feature {
 		needed[n.name] = true
 		f := ocpp.Feature{Name: n.name, Support: ocpp.SupportUnknown, Grants: n.grants}
 		switch {
-		case !reported:
+		case !reported, full && n.name == profileCore && !has[n.name]:
 			if n.name == profileCore {
 				f.Support, f.Assumed = ocpp.SupportYes, true
 			}

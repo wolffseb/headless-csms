@@ -335,7 +335,11 @@ cpms: the station lacks 1 capability that cpms requires: reservation
   `SupportedFeatureProfilesMaxLength` profiles. When its list is that long, a profile
   missing from it may only have been cut off (the Alpitronic HYC50 lists five and leaves out
   Reservation, which it supports), so it is *unconfirmed*, not missing, and the probe says
-  why. A shorter list, or no usable max length, is taken at its word.
+  why. Core, which is mandatory, is still assumed present. A shorter list, or no usable
+  max length, is taken at its word. This is a workaround for real stations, not spec: OCPP
+  1.6 errata 3.81 withdraws `SupportedFeatureProfilesMaxLength`. The price is that a
+  station with a complete, exactly full list that really lacks a profile shows it as
+  unconfirmed instead of missing.
 - **Settings** are the keys that change how the station behaves towards cpms. A key the
   station does not report shows as `not reported`; that is not an error. The last five are
   for charging limits: `ChargingScheduleAllowedChargingRateUnit` says whether a limit can be

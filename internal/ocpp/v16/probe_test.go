@@ -343,6 +343,29 @@ func TestProbeFullProfileListLeavesMissingProfilesUnknown(t *testing.T) {
 	}
 }
 
+// Core is mandatory in 1.6, so a full list that leaves it out does not make
+// remote start/stop and unlock unconfirmed: Core is assumed present, as when
+// no list is reported at all.
+func TestProbeFullProfileListWithoutCoreAssumesCore(t *testing.T) {
+	t.Parallel()
+
+	five := "5"
+	cp, _ := newFakeChargePoint(profilesConfiguration(
+		"FirmwareManagement,LocalAuthListManagement,Reservation,SmartCharging,RemoteTrigger", &five))
+	report, err := cp.Probe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := report.Support(ocpp.CapRemoteStartStop); got != ocpp.SupportYes {
+		t.Errorf("remote start/stop = %s, want yes", got)
+	}
+	for _, f := range report.Features {
+		if f.Name == "Core" && (!f.Assumed || f.Note != "") {
+			t.Errorf("Core = %+v, want assumed and no note", f)
+		}
+	}
+}
+
 // Capabilities reads the same two keys as Probe and comes to the same answer.
 func TestCapabilitiesFullProfileListLeavesReservationUnknown(t *testing.T) {
 	t.Parallel()
