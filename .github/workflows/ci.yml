@@ -1,9 +1,17 @@
 name: CI
 
+# Branches are tested through their pull request; push runs only on main.
+# Running both for every PR push doubled the macOS jobs, which queue for a
+# runner and got cancelled before they started.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
+
+# A newer push to the same PR makes the older run pointless.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
