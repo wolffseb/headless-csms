@@ -5,7 +5,7 @@ Features
   Core                ✓  required  start, stop, unlock
   Reservation         ✓  required  reserve, cancel, OCPI RESERVE_NOW
   RemoteTrigger       ✓  optional  status refresh on demand
-  SmartCharging       ✓            not used by cpms
+  SmartCharging       ✓  optional  limit, profile
   FirmwareManagement  ✓            not used by cpms
 
 Settings

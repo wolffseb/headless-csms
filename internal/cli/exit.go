@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/wolffseb/cli-cpms/internal/control/socket"
 )
@@ -24,6 +25,10 @@ const (
 	// capability cpms requires. It is distinct so the on-site hardware
 	// check can script it.
 	ExitMissingCapability = 10
+	// ExitNotSupported means the station does not support a charging limit
+	// or profile: it answered NotSupported, or a NotImplemented or
+	// NotSupported CALLERROR.
+	ExitNotSupported = 11
 )
 
 // ExitStatus is an error that carries the process exit code. main exits with
@@ -73,7 +78,7 @@ func exitFor(op socket.Op, evse string, err error) error {
 	switch se.Code {
 	case socket.CodeNotConnected:
 		return &ExitStatus{Code: ExitNotConnected, Err: msg(
-			"the charge point is not connected to cpms. Check that the station's CSMS URL points here (`cpms config validate` prints it)")}
+			"the charge point is not connected to cpms. Check that the station's CSMS URL points here (`cpms config validate` prints it)%s", unconfirmed(se))}
 	case socket.CodeRejected:
 		hint := ""
 		switch {
@@ -83,6 +88,14 @@ func exitFor(op socket.Op, evse string, err error) error {
 			hint = ": it does not know this key. `cpms probe --raw` lists the keys it reports"
 		case op == socket.OpConfigSet:
 			hint = ". The key may be read-only, or the value not one it accepts"
+		case op == socket.OpLimitClear && se.Status == "Unknown":
+			dropped := ""
+			if strings.Contains(se.Message, "cpms dropped") {
+				dropped = "; cpms dropped its records of them"
+			}
+			return &ExitStatus{Code: ExitRejected, Err: msg("the station holds no matching charging profile (status Unknown)%s", dropped)}
+		case op == socket.OpLimitSet || op == socket.OpProfileSet:
+			hint = ". A tx profile needs a running session; otherwise check the unit, stack level and periods against `cpms probe`"
 		}
 		return &ExitStatus{Code: ExitRejected, Err: msg("the station rejected the %s%s%s", noun(op), answer(se), hint)}
 	case socket.CodeOccupied:
@@ -90,18 +103,32 @@ func exitFor(op socket.Op, evse string, err error) error {
 	case socket.CodeFaulted:
 		return &ExitStatus{Code: ExitFaulted, Err: msg("the station says it is faulted or unavailable%s", answer(se))}
 	case socket.CodeTimeout:
-		return &ExitStatus{Code: ExitTimeout, Err: msg("the station did not answer within charger.call_timeout")}
+		return &ExitStatus{Code: ExitTimeout, Err: msg("the station did not answer within charger.call_timeout%s", unconfirmed(se))}
 	case socket.CodeUnlockFailed:
 		if se.Status == "UnlockFailed" {
 			return &ExitStatus{Code: ExitUnlockFailed, Err: msg("the station could not release the cable lock%s", answer(se))}
 		}
 		return &ExitStatus{Code: ExitUnlockFailed, Err: msg("the station does not support this%s", answer(se))}
+	case socket.CodeNotSupported:
+		return &ExitStatus{Code: ExitNotSupported, Err: msg(
+			"the station does not support this %s%s. `cpms probe` shows its SmartCharging support, allowed units and limits", noun(op), answer(se))}
 	case socket.CodeRefused:
 		// control's message already names the EVSE.
 		return &ExitStatus{Code: ExitRefused, Err: errors.New(se.Message)}
 	default:
 		return &ExitStatus{Code: ExitError, Err: errors.New(se.Message)}
 	}
+}
+
+// unconfirmed names a charging profile that went out unanswered, for the end
+// of a timeout or connection message: the station may hold it although cpms
+// records nothing. It is empty for every other request.
+func unconfirmed(se *socket.Error) string {
+	if se.ProfileID == 0 {
+		return ""
+	}
+	return fmt.Sprintf(". It was sent as charging profile #%d, which the station may hold: check with `cpms limit show`, "+
+		"remove it with `cpms limit clear --id %d`", se.ProfileID, se.ProfileID)
 }
 
 // answer is the station's own answer, for the end of a message: " (status
@@ -131,6 +158,12 @@ func noun(op socket.Op) string {
 		return "remote stop"
 	case socket.OpConfigSet:
 		return "configuration change"
+	case socket.OpLimitSet, socket.OpProfileSet:
+		return "charging profile"
+	case socket.OpLimitClear:
+		return "clearing of charging profiles"
+	case socket.OpLimitShow:
+		return "composite schedule request"
 	default:
 		return string(op)
 	}

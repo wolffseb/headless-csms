@@ -98,7 +98,7 @@ func TestEmptyListsAreWrittenAsArrays(t *testing.T) {
 	}
 
 	data := readFile(t, path)
-	for _, want := range []string{`"reservations": []`, `"transactions": []`, `"version": 1`} {
+	for _, want := range []string{`"reservations": []`, `"transactions": []`, `"charging_profiles": []`, `"version": 2`} {
 		if !strings.Contains(data, want) {
 			t.Errorf("file does not contain %s:\n%s", want, data)
 		}
@@ -257,7 +257,7 @@ func TestOpenRefusesANewerVersion(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "state.json")
-	const newer = `{"version": 2}`
+	const newer = `{"version": 3}`
 	writeFile(t, path, newer)
 
 	_, err := Open(path)
@@ -350,6 +350,8 @@ func TestConcurrentUpdates(t *testing.T) {
 
 // full is a state with every field set, so a round trip exercises them all.
 func full(at time.Time) State {
+	phases := 3
+	validFrom, validTo := at, at.Add(time.Hour)
 	return State{
 		Version: Version,
 		OCPI: &OCPIRegistration{
@@ -383,6 +385,21 @@ func full(at time.Time) State {
 			MeterStart:    12345,
 			StartedAt:     at.Add(time.Minute),
 			ReservationID: 42,
+		}},
+		NextChargingProfileID: 8,
+		ChargingProfiles: []ChargingProfile{{
+			ID:            7,
+			ChargePointID: "ALP-HYC-001",
+			EVSEUID:       "EVSE-1",
+			Purpose:       "Tx",
+			StackLevel:    2,
+			Unit:          "W",
+			Periods:       []ChargingPeriod{{StartSeconds: 60, Limit: 20000.5, Phases: &phases}},
+			ValidFrom:     &validFrom,
+			ValidTo:       &validTo,
+			TransactionID: "1000",
+			SetAt:         at.Add(2 * time.Minute),
+			Source:        "cli",
 		}},
 	}
 }
@@ -463,5 +480,58 @@ func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A file written before charging profiles were recorded (version 1) loads
+// with no profiles and a zero counter, and the next write migrates it.
+func TestOpenMigratesVersion1(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "state.json")
+	writeFile(t, path, `{
+  "version": 1,
+  "next_reservation_id": 4,
+  "next_transaction_id": 9,
+  "next_remote_start_id": 2,
+  "reservations": [],
+  "transactions": []
+}
+`)
+	s := mustOpen(t, path)
+	st := s.Get()
+	if st.Version != Version || st.NextReservationID != 4 || st.NextTransactionID != 9 {
+		t.Errorf("version 1 file read as %+v", st)
+	}
+	if st.NextChargingProfileID != 0 || st.ChargingProfiles == nil || len(st.ChargingProfiles) != 0 {
+		t.Errorf("profiles = %#v, counter %d; want an empty list and 0", st.ChargingProfiles, st.NextChargingProfileID)
+	}
+
+	if err := s.Update(func(st *State) error { st.NextChargingProfileID = 3; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	data := readFile(t, path)
+	for _, want := range []string{`"version": 2`, `"charging_profiles": []`, `"next_charging_profile_id": 3`, `"next_reservation_id": 4`} {
+		if !strings.Contains(data, want) {
+			t.Errorf("migrated file lacks %s:\n%s", want, data)
+		}
+	}
+}
+
+// Get deep-copies the profiles: changing a period does not reach the store.
+func TestGetDeepCopiesChargingProfiles(t *testing.T) {
+	t.Parallel()
+
+	s := mustOpen(t, filepath.Join(t.TempDir(), "state.json"))
+	if err := s.Update(func(st *State) error { *st = full(time.Now()); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	got := s.Get().ChargingProfiles
+	*got[0].Periods[0].Phases = 1
+	got[0].Periods[0].Limit = 1
+	*got[0].ValidTo = time.Time{}
+	again := s.Get().ChargingProfiles[0]
+	if again.Periods[0].Limit != 20000.5 || *again.Periods[0].Phases != 3 || again.ValidTo.IsZero() {
+		t.Errorf("Get leaked the store's profile: %+v", again)
 	}
 }

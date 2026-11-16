@@ -65,7 +65,7 @@ func TestProbeNormalStation(t *testing.T) {
 		`Core +✓ +required`,
 		`Reservation +✓ +required`,
 		`RemoteTrigger +✓ +optional`,
-		`SmartCharging +✓ +not used by cpms`,
+		`SmartCharging +✓ +optional +limit, profile`,
 		`MeterValuesSampledData +Energy\.Active\.Import\.Register,Power\.Active\.Import,Current\.Import,SoC +measurands`,
 		`ChargingScheduleAllowedChargingRateUnit +Current,Power +units`,
 		`ChargeProfileMaxStackLevel +8 +highest stack level`,
@@ -187,7 +187,7 @@ func TestProbeWithoutSmartCharging(t *testing.T) {
 	})
 
 	stdout := s.mustCPMS("probe")
-	patterns := []string{`SmartCharging +✗ +not used by cpms`, `Every capability cpms requires is present\.`}
+	patterns := []string{`SmartCharging +✗ +optional +limit, profile`, `Every capability cpms requires is present\.`}
 	for _, k := range smartChargingKeys {
 		patterns = append(patterns, k+` +not reported`)
 	}

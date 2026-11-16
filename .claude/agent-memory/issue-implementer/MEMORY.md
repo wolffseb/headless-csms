@@ -43,6 +43,9 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - Meter readings and station config (#48, 2026-11-16): `core.MeterReading` (power, current, offered, energy) is in `EVSESnapshot.Reading`, in memory only, and dropped on stop or disconnect. The v16 extraction is `meterReading` in `v16/meter.go`. `ocpp.ConfigurationChanger` is an optional interface beside `ocpp.ChargePoint` (1.6 only), behind `control.ChangeConfiguration` and socket op `config_set`.
 - Connect hook (#53, 2026-11-16): `csms.Options.OnConnect(ctx, cp)` runs per connection under `s.wg`, cp bound to that connection, ctx ends with it. `core.BootedSinceConnect` tells a resumed station from a booting one. `control.Options.AfterFunc`/`BootGrace` put the grace on a `clocktest` clock; `simRig.grace` and `simRig.hooksDone()` in control/e2e_test.go. Simulator `ResumeWithoutBoot` redials without boot or status round.
 
+- Smart charging C2 (#50, 2026-11-16): core keeps profile records (`RecordChargingProfile`/`ForgetChargingProfiles`/`ChargingProfiles`, Tx dropped on StopTransaction); control has `SetLimit`/`SetProfile`/`ClearProfiles`/`Schedule`; socket `classifyProfile` maps "cannot do that" to `not_supported` (exit 11) only for limit/profile ops, keeping unlock's mapping. Purposes are kebab-case (`tx-default`) in CLI and JSON via `socket.ParsePurpose`/`PurposeName`. state.json is version 2; `parse` accepts 1..Version.
+- A test that needs a field from an unmerged sibling PR can gate on `reflect.TypeOf(T{}).FieldByName(...)` and decode the raw JSON itself: it compiles on both bases and turns strict by itself after the rebase. Prove the gated part in a scratch worktree with the sibling merged (never pushed).
+
 ## OCPI/OCPP traps
 
 - OCPI auth header: strict standard padded Base64. The spec's own example decodes with a trailing newline, and GNU `base64` wraps at 76 columns. Use `printf '%s' tok | base64 | tr -d '\n'` in docs.

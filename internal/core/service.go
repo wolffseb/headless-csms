@@ -196,13 +196,16 @@ type Service struct {
 	mu           sync.RWMutex
 	cps          map[string]*chargePointState
 	reservations map[int]*reservation
-	txSeq        uint64
+	// profiles are the charging profiles the station accepted, as sent.
+	profiles []ChargingProfile
+	txSeq    uint64
 
 	// The next id to hand out. Ids start at 1: OCPP 1.6 uses transaction id 0
 	// to mean "refused", and a zero reservation id reads as "none".
-	nextReservationID int
-	nextTransactionID int
-	nextRemoteStartID int
+	nextReservationID     int
+	nextTransactionID     int
+	nextRemoteStartID     int
+	nextChargingProfileID int
 }
 
 // Store persists what core must not forget across a restart. *state.Store
@@ -267,6 +270,8 @@ func New(cfg *config.Config, opts ...Option) *Service {
 		nextReservationID: 1,
 		nextTransactionID: 1,
 		nextRemoteStartID: 1,
+
+		nextChargingProfileID: 1,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -608,6 +613,9 @@ type ChargePointSnapshot struct {
 	Transactions []Transaction
 	// Reservations holds pending, active and cancelling reservations, by id.
 	Reservations []Reservation
+	// ChargingProfiles are the profiles the station accepted, as sent, by
+	// id: the station's own and every EVSE's.
+	ChargingProfiles []ChargingProfile
 }
 
 // Snapshot is a consistent, immutable view of the whole domain state.
@@ -663,6 +671,7 @@ func (s *Service) Snapshot() Snapshot {
 			return snap.Transactions[i].seq < snap.Transactions[j].seq
 		})
 		snap.Reservations = s.reservationsLocked(cp.id)
+		snap.ChargingProfiles = s.profilesLocked(cp.id)
 		out.ChargePoints = append(out.ChargePoints, snap)
 	}
 	sort.Slice(out.ChargePoints, func(i, j int) bool {

@@ -24,7 +24,9 @@ type ChargingProfile struct {
 	// ValidFrom and ValidTo bound when the profile applies; nil is open.
 	ValidFrom, ValidTo *time.Time
 	// TransactionID is the running transaction a Tx profile is for, as core
-	// knows it. It is set for PurposeTx only.
+	// knows it. Only PurposeTx takes one, and even there it is optional in
+	// 1.6: a station then applies the profile to whatever runs on the EVSE,
+	// or refuses it when nothing does.
 	TransactionID string
 	Schedule      ChargingSchedule
 	// EVSEUID is the EVSE the profile is for. Empty means the whole station,
@@ -166,9 +168,6 @@ func (p ChargingProfile) Validate() error {
 		}
 	default:
 		return invalid("unknown purpose %q", p.Purpose)
-	}
-	if p.Purpose == PurposeTx && p.TransactionID == "" {
-		return invalid("a %s profile needs a transaction id", p.Purpose)
 	}
 	if p.Purpose != PurposeTx && p.TransactionID != "" {
 		return invalid("only a %s profile takes a transaction id", PurposeTx)

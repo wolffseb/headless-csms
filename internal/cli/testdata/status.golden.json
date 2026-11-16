@@ -7,7 +7,8 @@
     "model": "HYC300",
     "firmware": "simulator",
     "station_status": "AVAILABLE",
-    "last_disconnect": null
+    "last_disconnect": null,
+    "charging_profiles": []
   },
   "evses": [
     {
@@ -20,7 +21,8 @@
         "expires_at": "<timestamp>",
         "state": "active"
       },
-      "transaction": null
+      "transaction": null,
+      "charging_profiles": []
     }
   ],
   "ocpi": {

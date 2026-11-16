@@ -8,7 +8,8 @@ import (
 )
 
 // persist writes the parts of the domain state that must survive a restart:
-// active reservations, active transactions and the id counters. Everything
+// active reservations, active transactions, the charging profile records and
+// the id counters. Everything
 // else in the store (the OCPI registration) is left as it is.
 //
 // It writes the whole of those parts each time rather than patching them.
@@ -26,7 +27,13 @@ func (s *Service) persist() error {
 	s.mu.RLock()
 	reservations, transactions := s.persistableLocked()
 	nextReservation, nextTransaction, nextRemoteStart := s.nextReservationID, s.nextTransactionID, s.nextRemoteStartID
+	nextProfile := s.nextChargingProfileID
+	profiles := make([]state.ChargingProfile, 0, len(s.profiles))
+	for _, p := range s.profiles {
+		profiles = append(profiles, profileToState(p))
+	}
 	s.mu.RUnlock()
+	sort.Slice(profiles, func(i, j int) bool { return profiles[i].ID < profiles[j].ID })
 
 	return s.store.Update(func(st *state.State) error {
 		st.NextReservationID = nextReservation
@@ -34,6 +41,8 @@ func (s *Service) persist() error {
 		st.NextRemoteStartID = nextRemoteStart
 		st.Reservations = reservations
 		st.Transactions = transactions
+		st.NextChargingProfileID = nextProfile
+		st.ChargingProfiles = profiles
 		return nil
 	})
 }
@@ -112,13 +121,14 @@ func (s *Service) load() {
 }
 
 // loadLocked fills the in-memory state from st and reports whether it dropped
-// any reservation.
+// any reservation or charging profile record.
 func (s *Service) loadLocked(st state.State) (dropped bool) {
 
 	// A fresh file has zero counters; ids start at 1.
 	s.nextReservationID = max(st.NextReservationID, 1)
 	s.nextTransactionID = max(st.NextTransactionID, 1)
 	s.nextRemoteStartID = max(st.NextRemoteStartID, 1)
+	s.nextChargingProfileID = max(st.NextChargingProfileID, 1)
 
 	for _, t := range st.Transactions {
 		cp := s.ensure(t.ChargePointID)
@@ -162,6 +172,23 @@ func (s *Service) loadLocked(st state.State) (dropped bool) {
 		// A file edited by hand, or from before a counter existed, must not
 		// lead to an id being handed out twice.
 		s.nextReservationID = max(s.nextReservationID, r.ID+1)
+	}
+
+	active := make(map[string]bool)
+	for _, t := range st.Transactions {
+		active[t.ChargePointID+"/"+t.ID] = true
+	}
+	for _, sp := range st.ChargingProfiles {
+		s.nextChargingProfileID = max(s.nextChargingProfileID, sp.ID+1)
+		// A Tx profile ends with its transaction. If that is no longer
+		// active, the record would claim a limit nothing applies.
+		if sp.Purpose == PurposeTx && !active[sp.ChargePointID+"/"+sp.TransactionID] {
+			s.log.Info("dropping the record of a Tx charging profile whose transaction has ended",
+				"profile_id", sp.ID, "transaction_id", sp.TransactionID)
+			dropped = true
+			continue
+		}
+		s.profiles = append(s.profiles, profileFromState(sp))
 	}
 	return dropped
 }

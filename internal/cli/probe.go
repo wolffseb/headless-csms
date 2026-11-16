@@ -35,6 +35,8 @@ var needs = []need{
 		"OCPI RESERVE_NOW cannot be passed on to the station, so cpms would have to hold reservations itself."},
 	{ocpp.CapTriggerStatus, false, "status refresh on demand",
 		"cpms learns about status changes only when the station reports them by itself."},
+	{ocpp.CapSmartCharging, false, "limit, profile",
+		"cpms cannot set charging limits: `cpms limit` and `cpms profile` will be refused."},
 }
 
 func needOf(name string) (need, bool) {

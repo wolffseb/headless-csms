@@ -67,10 +67,13 @@ func parse(data []byte) (State, error) {
 	case *header.Version > Version:
 		return State{}, fmt.Errorf("has version %d and was written by a newer cpms (this one reads version %d)",
 			*header.Version, Version)
-	case *header.Version != Version:
-		return State{}, fmt.Errorf("has unsupported version %d (this cpms reads version %d)",
+	case *header.Version < 1:
+		return State{}, fmt.Errorf("has unsupported version %d (this cpms reads versions 1 to %d)",
 			*header.Version, Version)
 	}
+	// Version 1 lacks only fields that decode as their zero value (see
+	// Version), and normalize stamps the current version, so the next write
+	// migrates the file.
 
 	var st State
 	if err := json.Unmarshal(data, &st); err != nil {

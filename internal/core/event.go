@@ -23,6 +23,8 @@ const (
 	EventMeterValues             EventKind = "meter_values"
 	EventReservationCreated      EventKind = "reservation_created"
 	EventReservationEnded        EventKind = "reservation_ended"
+	EventChargingProfileSet      EventKind = "charging_profile_set"
+	EventChargingProfileCleared  EventKind = "charging_profile_cleared"
 )
 
 // Event is one thing that happened, in a shape a log line, a TUI row and the
@@ -49,6 +51,8 @@ type Event struct {
 	ReservationID int
 	// IDTag is the RFID tag involved, when there is one.
 	IDTag string
+	// ChargingProfileID is set for charging profile events.
+	ChargingProfileID int
 
 	// Detail is a short extra: a disconnect reason, why a reservation ended,
 	// or, on EventReservationCreated, its expiry in RFC 3339.
@@ -88,11 +92,24 @@ func (e Event) String() string {
 			e.EVSEUID, e.IDTag, e.Detail, e.ReservationID)
 	case EventReservationEnded:
 		return fmt.Sprintf("%s reservation %d ended: %s", e.EVSEUID, e.ReservationID, e.Detail)
+	case EventChargingProfileSet:
+		return fmt.Sprintf("%s charging profile %d set: %s", profileTarget(e), e.ChargingProfileID, e.Detail)
+	case EventChargingProfileCleared:
+		return fmt.Sprintf("%s charging profile %d dropped: %s", profileTarget(e), e.ChargingProfileID, e.Detail)
 	case EventMeterValues:
 		return fmt.Sprintf("%s meter values: %s", e.EVSEUID, e.Detail)
 	default:
 		return string(e.Kind)
 	}
+}
+
+// profileTarget names what a charging profile event is about: its EVSE, or
+// the station.
+func profileTarget(e Event) string {
+	if e.EVSEUID == "" {
+		return e.ChargePointID + " station"
+	}
+	return e.EVSEUID
 }
 
 // subscriberBuffer is how many events a slow consumer may fall behind before

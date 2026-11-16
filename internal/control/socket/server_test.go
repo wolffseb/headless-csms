@@ -404,3 +404,70 @@ func TestConfigSetPassesTheStationsAnswerOn(t *testing.T) {
 		}
 	}
 }
+
+// The smart-charging operations have their own code for "the station cannot
+// do that", and a profile that cannot be sent is a usage error.
+func TestProfileErrorCodes(t *testing.T) {
+	t.Parallel()
+
+	kw := 20.0
+	limit := &socket.LimitRequest{KW: &kw}
+	cases := []struct {
+		name string
+		req  socket.Request
+		st   ocpp.ChargePoint
+		want socket.Code
+	}{
+		{"not supported", socket.Request{Op: socket.OpLimitSet, Limit: limit},
+			fakeStation{res: ocpp.Result{Status: ocpp.CommandNotSupported, Raw: "NotSupported"}}, socket.CodeNotSupported},
+		{"call error not implemented", socket.Request{Op: socket.OpLimitShow},
+			fakeStation{err: ocpp.Errorf(ocpp.ErrNotImplemented, "no")}, socket.CodeNotSupported},
+		{"rejected", socket.Request{Op: socket.OpLimitSet, Limit: limit},
+			fakeStation{res: ocpp.Result{Status: ocpp.CommandRejected, Raw: "Rejected"}}, socket.CodeRejected},
+		{"clear unknown", socket.Request{Op: socket.OpLimitClear},
+			fakeStation{res: ocpp.Result{Status: ocpp.CommandUnknownProfile, Raw: "Unknown"}}, socket.CodeRejected},
+		{"timeout", socket.Request{Op: socket.OpProfileSet, Profile: &socket.Profile{Purpose: "tx-default",
+			Schedule: socket.ProfileSchedule{Unit: "A", Periods: []socket.ProfilePeriod{{Limit: 16}}}}},
+			fakeStation{err: ocpp.ErrTimeout}, socket.CodeTimeout},
+		{"tx without a session", socket.Request{Op: socket.OpLimitSet, Limit: &socket.LimitRequest{KW: &kw, Purpose: "tx"}},
+			fakeStation{}, socket.CodeRefused},
+		{"both units", socket.Request{Op: socket.OpLimitSet, Limit: &socket.LimitRequest{KW: &kw, Amps: &kw}},
+			fakeStation{}, socket.CodeUsage},
+		{"tx-default on the station", socket.Request{Op: socket.OpLimitSet, Station: true, Limit: limit},
+			fakeStation{}, socket.CodeUsage},
+		{"unknown purpose", socket.Request{Op: socket.OpLimitSet, Limit: &socket.LimitRequest{KW: &kw, Purpose: "max"}},
+			fakeStation{}, socket.CodeUsage},
+		{"bad unit", socket.Request{Op: socket.OpLimitShow, Schedule: &socket.ScheduleRequest{Unit: "kW"}},
+			fakeStation{}, socket.CodeUsage},
+		{"no limit", socket.Request{Op: socket.OpLimitSet}, fakeStation{}, socket.CodeUsage},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := serve(t, tc.st)
+
+			tc.req.EVSE = "EVSE-1"
+			_, err := call(t, path, tc.req)
+			var se *socket.Error
+			if !errors.As(err, &se) {
+				t.Fatalf("err = %v, want a *socket.Error", err)
+			}
+			if se.Code != tc.want {
+				t.Errorf("code = %s, want %s (message %q)", se.Code, tc.want, se.Message)
+			}
+		})
+	}
+}
+
+// An unanswered profile carries its id to the CLI, which names it.
+func TestUnansweredProfileCarriesItsID(t *testing.T) {
+	t.Parallel()
+	path := serve(t, fakeStation{err: ocpp.ErrTimeout})
+
+	kw := 20.0
+	_, err := call(t, path, socket.Request{Op: socket.OpLimitSet, EVSE: "EVSE-1", Limit: &socket.LimitRequest{KW: &kw}})
+	var se *socket.Error
+	if !errors.As(err, &se) || se.Code != socket.CodeTimeout || se.ProfileID == 0 {
+		t.Fatalf("err = %#v, want a timeout naming the profile id", err)
+	}
+}

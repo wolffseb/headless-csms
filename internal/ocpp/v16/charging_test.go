@@ -85,7 +85,6 @@ func TestProfileValidationRefusesBeforeSending(t *testing.T) {
 			p.Schedule.Duration = ptr(90 * time.Millisecond)
 			return p
 		},
-		"tx without transaction": func() ocpp.ChargingProfile { p := tx(); p.TransactionID = ""; return p },
 		"transaction on txdefault": func() ocpp.ChargingProfile {
 			p := base()
 			p.TransactionID = "1001"
@@ -121,7 +120,12 @@ func TestProfileValidationRefusesBeforeSending(t *testing.T) {
 
 	// The fixtures themselves are fine; otherwise every case above passes
 	// for the wrong reason.
-	for name, ok := range map[string]func() ocpp.ChargingProfile{"txdefault": base, "tx": tx, "station max": stationMax} {
+	// 1.6 makes a TxProfile's transactionId optional, and `cpms limit set
+	// --purpose tx --force` relies on sending one without it.
+	txWithoutTransaction := func() ocpp.ChargingProfile { p := tx(); p.TransactionID = ""; return p }
+	for name, ok := range map[string]func() ocpp.ChargingProfile{
+		"txdefault": base, "tx": tx, "station max": stationMax, "tx without transaction": txWithoutTransaction,
+	} {
 		cp, fake := newFakeChargePoint(`{"status":"Accepted"}`)
 		if _, err := cp.SetChargingProfile(context.Background(), ok()); err != nil {
 			t.Fatalf("valid %s profile refused: %v", name, err)

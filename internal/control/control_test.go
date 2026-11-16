@@ -50,6 +50,9 @@ type fakeStation struct {
 	cancels []int
 	// triggers are the EVSEs TriggerStatus was asked for, in order.
 	triggers []string
+	// profiles and clears are the smart-charging requests received.
+	profiles []ocpp.ChargingProfile
+	clears   []ocpp.ClearProfileRequest
 	answer   map[string]ocpp.Result
 	fail     map[string]error
 
@@ -138,13 +141,17 @@ func (f *fakeStation) Capabilities(context.Context) (ocpp.Capabilities, error) {
 	return ocpp.Capabilities{Reservation: ocpp.SupportYes}, nil
 }
 
-// The smart-charging commands are not used by control yet (#50).
-
-func (f *fakeStation) SetChargingProfile(context.Context, ocpp.ChargingProfile) (ocpp.Result, error) {
+func (f *fakeStation) SetChargingProfile(_ context.Context, p ocpp.ChargingProfile) (ocpp.Result, error) {
+	f.mu.Lock()
+	f.profiles = append(f.profiles, p)
+	f.mu.Unlock()
 	return f.respond("set-profile")
 }
 
-func (f *fakeStation) ClearChargingProfile(context.Context, ocpp.ClearProfileRequest) (ocpp.Result, error) {
+func (f *fakeStation) ClearChargingProfile(_ context.Context, r ocpp.ClearProfileRequest) (ocpp.Result, error) {
+	f.mu.Lock()
+	f.clears = append(f.clears, r)
+	f.mu.Unlock()
 	return f.respond("clear-profile")
 }
 
