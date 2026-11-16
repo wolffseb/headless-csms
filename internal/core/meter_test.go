@@ -37,9 +37,9 @@ func TestMeterReadingIsTheNewestUntilTheSessionStops(t *testing.T) {
 	}
 
 	at := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
-	s.RecordMeterValues(testCP, 1, core.MeterReading{At: at, PowerW: watts(11000), Summary: "first"})
-	s.RecordMeterValues(testCP, 1, core.MeterReading{At: at.Add(10 * time.Second), PowerW: watts(22000), Summary: "second"})
-	s.RecordMeterValues(testCP, 2, core.MeterReading{At: at, PowerW: watts(7000)})
+	s.RecordMeterValues(testCP, 1, "", core.MeterReading{At: at, PowerW: watts(11000), Summary: "first"})
+	s.RecordMeterValues(testCP, 1, "", core.MeterReading{At: at.Add(10 * time.Second), PowerW: watts(22000), Summary: "second"})
+	s.RecordMeterValues(testCP, 2, "", core.MeterReading{At: at, PowerW: watts(7000)})
 
 	r := reading(t, s, "EVSE-1")
 	if r == nil || r.PowerW == nil || *r.PowerW != 22000 || !r.At.Equal(at.Add(10*time.Second)) {
@@ -67,7 +67,7 @@ func TestMeterReadingsGoWithTheConnection(t *testing.T) {
 
 	s := core.New(testConfig())
 	s.Connected(testCP)
-	s.RecordMeterValues(testCP, 1, core.MeterReading{PowerW: watts(11000)})
+	s.RecordMeterValues(testCP, 1, "", core.MeterReading{PowerW: watts(11000)})
 	if r := reading(t, s, "EVSE-1"); r == nil || r.At.IsZero() {
 		t.Fatalf("reading = %+v, want one stamped with the time it arrived", r)
 	}
@@ -75,5 +75,45 @@ func TestMeterReadingsGoWithTheConnection(t *testing.T) {
 	s.Disconnected(testCP, "socket closed")
 	if r := reading(t, s, "EVSE-1"); r != nil {
 		t.Errorf("reading after the station disconnected = %+v, want none", r)
+	}
+}
+
+// TestMeterValuesForAStoppedSessionAreDropped: a station may deliver a
+// session's last MeterValues after its StopTransaction (an offline queue
+// replayed out of order, or right at the boundary). That must not bring the
+// draw back on an EVSE with no session.
+func TestMeterValuesForAStoppedSessionAreDropped(t *testing.T) {
+	t.Parallel()
+
+	s := core.New(testConfig())
+	s.Connected(testCP)
+	s.StartTransaction(testCP, core.TransactionStart{ID: "1", ConnectorID: 1, IDTag: "TAG", At: time.Now()})
+	s.StartTransaction(testCP, core.TransactionStart{ID: "2", ConnectorID: 2, IDTag: "TAG", At: time.Now()})
+
+	s.RecordMeterValues(testCP, 1, "1", core.MeterReading{PowerW: watts(50000)})
+	if r := reading(t, s, "EVSE-1"); r == nil || *r.PowerW != 50000 {
+		t.Fatalf("reading during the session = %+v, want 50 kW", r)
+	}
+	if _, ok := s.StopTransaction(testCP, "1", 0, "Local", time.Now()); !ok {
+		t.Fatal("StopTransaction did not find the session")
+	}
+
+	s.RecordMeterValues(testCP, 1, "1", core.MeterReading{PowerW: watts(50000)})
+	if r := reading(t, s, "EVSE-1"); r != nil {
+		t.Errorf("reading after a late MeterValues of the stopped session = %+v, want none", r)
+	}
+	// Unknown ids, and a session running on another EVSE, are not this
+	// EVSE's session either.
+	s.RecordMeterValues(testCP, 1, "99", core.MeterReading{PowerW: watts(1)})
+	s.RecordMeterValues(testCP, 1, "2", core.MeterReading{PowerW: watts(2)})
+	if r := reading(t, s, "EVSE-1"); r != nil {
+		t.Errorf("reading for a transaction not active on EVSE-1 = %+v, want none", r)
+	}
+
+	// Without a transaction id the reading is the connector's own, such as
+	// clock-aligned Power.Offered on an idle or Reserved connector: kept.
+	s.RecordMeterValues(testCP, 1, "", core.MeterReading{PowerOfferedW: watts(150000)})
+	if r := reading(t, s, "EVSE-1"); r == nil || r.PowerOfferedW == nil || *r.PowerOfferedW != 150000 {
+		t.Errorf("reading without a transaction id = %+v, want 150 kW offered", r)
 	}
 }

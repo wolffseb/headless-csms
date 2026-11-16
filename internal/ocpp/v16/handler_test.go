@@ -400,6 +400,68 @@ func TestMeterValuesReachCore(t *testing.T) {
 	}
 }
 
+// TestLateMeterValuesOfAStoppedSessionAreNotKept checks the transactionId
+// reaches core: the session's last MeterValues arriving after its
+// StopTransaction must not show its draw again.
+func TestLateMeterValuesOfAStoppedSessionAreNotKept(t *testing.T) {
+	t.Parallel()
+
+	h, svc := newHandler(t)
+	svc.Connected(testCP)
+	start := call[v16.StartTransactionConf](t, h, v16.ActionStartTransaction, v16.StartTransactionReq{
+		ConnectorID: 1, IDTag: testTag, MeterStart: 1000, Timestamp: "2026-08-14T12:00:00Z",
+	})
+	call[v16.StopTransactionConf](t, h, v16.ActionStopTransaction, v16.StopTransactionReq{
+		TransactionID: start.TransactionID, MeterStop: 4200, Reason: "Local",
+	})
+	call[struct{}](t, h, v16.ActionMeterValues, v16.MeterValuesReq{
+		ConnectorID: 1, TransactionID: &start.TransactionID,
+		MeterValue: []v16.MeterValue{{
+			Timestamp:    "2026-08-14T12:05:00Z",
+			SampledValue: []v16.SampledValue{{Value: "50", Measurand: "Power.Active.Import", Unit: "kW"}},
+		}},
+	})
+
+	cp, _ := svc.Snapshot().ChargePoint(testCP)
+	if r := cp.EVSEs[0].Reading; r != nil {
+		t.Errorf("EVSE-1 reading = %+v, want none: its session has stopped", r)
+	}
+}
+
+// TestAlignedMeterValuesOnAReservedConnectorAreKept: outside a session, the
+// limit a station offers only arrives as clock-aligned data (MeterValuesAlignedData
+// every ClockAlignedDataInterval), without a transactionId. That is how the
+// effect of a profile on a Reserved connector is seen, so it is kept.
+func TestAlignedMeterValuesOnAReservedConnectorAreKept(t *testing.T) {
+	t.Parallel()
+
+	h, svc := newHandler(t)
+	svc.Connected(testCP)
+	call[struct{}](t, h, v16.ActionStatusNotification, v16.StatusNotificationReq{
+		ConnectorID: 1, ErrorCode: "NoError", Status: v16.StatusReserved,
+	})
+	call[struct{}](t, h, v16.ActionMeterValues, v16.MeterValuesReq{
+		ConnectorID: 1,
+		MeterValue: []v16.MeterValue{{
+			Timestamp: "2026-08-14T12:00:00Z",
+			SampledValue: []v16.SampledValue{
+				{Value: "22", Measurand: "Power.Offered", Unit: "kW", Context: "Sample.Clock"},
+				{Value: "32", Measurand: "Current.Offered", Unit: "A", Context: "Sample.Clock"},
+			},
+		}},
+	})
+
+	cp, _ := svc.Snapshot().ChargePoint(testCP)
+	e := cp.EVSEs[0]
+	if e.Status != core.StatusReserved {
+		t.Fatalf("EVSE-1 status = %s, want RESERVED", e.Status)
+	}
+	if r := e.Reading; r == nil || r.PowerOfferedW == nil || *r.PowerOfferedW != 22000 ||
+		r.CurrentOfferedA == nil || *r.CurrentOfferedA != 32 {
+		t.Fatalf("EVSE-1 reading = %+v, want 22 kW and 32 A offered", r)
+	}
+}
+
 func TestDataTransferIsRejected(t *testing.T) {
 	t.Parallel()
 

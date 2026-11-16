@@ -457,7 +457,14 @@ func (s *Service) SetConnectorStatus(cpID string, connectorID int, status EVSESt
 // RecordMeterValues keeps r as the EVSE's newest reading. Only the newest is
 // kept, in memory: nothing in cpms bills, and meter history is out of scope.
 // r.Summary is what the log and the TUI show.
-func (s *Service) RecordMeterValues(cpID string, connectorID int, r MeterReading) {
+//
+// txID is the transaction the station says the values belong to, or "" for
+// none. A reading for a transaction that is not running on the EVSE is
+// published but not kept: it is a late or replayed message of a session that
+// has stopped, and keeping it would show that session's draw again with
+// nothing left to clear it. A reading without a transaction is kept: that is
+// clock-aligned data, such as Power.Offered on an idle or Reserved connector.
+func (s *Service) RecordMeterValues(cpID string, connectorID int, txID string, r MeterReading) {
 	at := s.now()
 	if r.At.IsZero() {
 		r.At = at
@@ -468,8 +475,20 @@ func (s *Service) RecordMeterValues(cpID string, connectorID int, r MeterReading
 	uid := s.evseUID(cpID, connectorID)
 	cp.addEVSE(uid, connectorID, at)
 	cp.lastSeen = at
-	cp.readings[uid] = *r.clone()
+	stale := false
+	if txID != "" {
+		tx, ok := cp.transactions[txID]
+		stale = !ok || !tx.Active() || tx.EVSEUID != uid
+	}
+	if !stale {
+		cp.readings[uid] = *r.clone()
+	}
 	s.mu.Unlock()
+
+	if stale {
+		s.log.Info("not keeping a meter reading for a transaction that is not running on the EVSE",
+			"charge_point", cpID, "evse", uid, "transaction_id", txID)
+	}
 
 	s.bus.publish(Event{
 		Kind: EventMeterValues, At: at, ChargePointID: cpID, EVSEUID: uid, Detail: r.Summary,
