@@ -196,6 +196,23 @@ func TestInvalidConfigsNameTheOffendingField(t *testing.T) {
 		mutate:    rep("  token_c:", "  business_name: "+strings.Repeat("x", 101)+"\n  token_c:", 1),
 		wantPaths: []string{"ocpi.business_name"},
 	}, {
+		name:      "business name of 101 characters with umlauts",
+		mutate:    rep("  token_c:", "  business_name: "+strings.Repeat("ü", 101)+"\n  token_c:", 1),
+		wantPaths: []string{"ocpi.business_name"},
+	}, {
+		// Without ocpi.business_name, location.name is what we register
+		// under, so it has to fit BusinessDetails.name too.
+		name:      "location name too long to stand in for the business name",
+		mutate:    rep("name: Fryte HQ", "name: "+strings.Repeat("x", 150), 1),
+		wantPaths: []string{"location.name"},
+	}, {
+		name: "location name longer than OCPI Location.name allows",
+		mutate: func(s string) string {
+			s = rep("  token_c:", "  business_name: Fryte GmbH\n  token_c:", 1)(s)
+			return rep("name: Fryte HQ", "name: "+strings.Repeat("ö", 256), 1)(s)
+		},
+		wantPaths: []string{"location.name"},
+	}, {
 		name:      "negative push retries",
 		mutate:    rep("max_retries: 5", "max_retries: -1", 1),
 		wantPaths: []string{"ocpi.push.max_retries"},
@@ -466,6 +483,35 @@ func TestOCPIBusinessNameFallsBack(t *testing.T) {
 	}
 	if got, want := cfg.OCPIBusinessName(), cfg.OCPI.CountryCode+"*"+cfg.OCPI.PartyID; got != want {
 		t.Errorf("OCPIBusinessName() without names = %q, want %q", got, want)
+	}
+}
+
+// TestNameLimitsCountCharacters pins the upper edge of each OCPI name limit
+// with multi-byte characters: OCPI string lengths are characters, and a
+// byte count would reject these names well before they reach the limit.
+func TestNameLimitsCountCharacters(t *testing.T) {
+	t.Parallel()
+
+	withBusinessName := func(name string) func(string) string {
+		return rep("  token_c:", "  business_name: "+name+"\n  token_c:", 1)
+	}
+	withLocationName := func(name string) func(string) string {
+		return rep("name: Fryte HQ", "name: "+name, 1)
+	}
+
+	for _, tt := range []struct {
+		name   string
+		mutate func(string) string
+	}{
+		{"business_name of 100 umlauts", withBusinessName(strings.Repeat("ä", 100))},
+		{"location.name of 100 umlauts as the business name", withLocationName(strings.Repeat("ä", 100))},
+		{"location.name of 255 umlauts beside a business_name", func(s string) string {
+			return withLocationName(strings.Repeat("ä", 255))(withBusinessName("Fryte GmbH")(s))
+		}},
+	} {
+		if _, err := config.Parse(strings.NewReader(tt.mutate(baseYAML))); err != nil {
+			t.Errorf("%s: want valid, got: %v", tt.name, err)
+		}
 	}
 }
 

@@ -447,6 +447,7 @@ the **Receiver** of it: the partner starts it, cpms answers.
    Nothing is stored unless both calls succeed. Each call gives up after 10 s.
 4. cpms answers with its own credentials: `ocpi.token_c`, our versions URL, and one `CPO` role
    with `ocpi.country_code`, `ocpi.party_id` and `ocpi.business_name` (or `location.name`).
+   Config validation holds whichever of the two is used to OCPI's 100 characters.
 5. From then on the partner uses `TOKEN_C`, and `TOKEN_A` gets HTTP 401. The registration
    survives a restart.
 
