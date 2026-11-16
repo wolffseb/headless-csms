@@ -131,6 +131,11 @@ func TestCompositeScheduleCombinesPurposes(t *testing.T) {
 	if got := limits(composite(t, sim, 1, 7200, v16.UnitW)); !equal(got, []string{"0:20000", "3600:11000"}) {
 		t.Errorf("TxDefault: %v, want 0:20000, 3600:11000", got)
 	}
+	// Errata 3.57: the start goes in scheduleStart only.
+	if conf := composite(t, sim, 1, 60, v16.UnitW); conf.ScheduleStart == "" || conf.ChargingSchedule.StartSchedule != "" {
+		t.Errorf("scheduleStart %q, chargingSchedule.startSchedule %q: want only the first",
+			conf.ScheduleStart, conf.ChargingSchedule.StartSchedule)
+	}
 	// Within the duration only.
 	if got := limits(composite(t, sim, 1, 3600, v16.UnitW)); !equal(got, []string{"0:20000"}) {
 		t.Errorf("one hour: %v, want 0:20000", got)

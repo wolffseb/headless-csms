@@ -253,9 +253,9 @@ func (s *Simulator) getCompositeSchedule(payload json.RawMessage) (any, *ocpp.RP
 		Status:        v16.CompositeAccepted,
 		ConnectorID:   &connectorID,
 		ScheduleStart: now.Format(time.RFC3339),
+		// Errata 3.57: startSchedule is omitted here, scheduleStart says it.
 		ChargingSchedule: &v16.ChargingSchedule{
 			Duration:               &duration,
-			StartSchedule:          now.Format(time.RFC3339),
 			ChargingRateUnit:       unit,
 			ChargingSchedulePeriod: periods,
 		},

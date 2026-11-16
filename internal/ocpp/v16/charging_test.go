@@ -322,9 +322,8 @@ func TestChargingResponses(t *testing.T) {
 	want := ocpp.CompositeSchedule{
 		Status: ocpp.CommandAccepted, Raw: "Accepted", EVSEUID: "EVSE-2", Start: start,
 		Schedule: &ocpp.ChargingSchedule{
-			Duration:      &hour,
-			StartSchedule: &start,
-			Unit:          ocpp.UnitW,
+			Duration: &hour,
+			Unit:     ocpp.UnitW,
 			Periods: []ocpp.SchedulePeriod{
 				{Start: 0, Limit: 20000},
 				{Start: 30 * time.Minute, Limit: 16.5, Phases: ptr(3)},
