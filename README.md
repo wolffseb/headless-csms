@@ -115,6 +115,10 @@ until it is stopped. `StopTransaction`'s `meterStop` is the last streamed regist
 then moves the meter by a flat 1000 Wh as before. The simulator also answers
 `ChangeConfiguration`, so a CSMS can move `MeterValueSampleInterval` (and
 `HeartbeatInterval`) at run time and read it back with `GetConfiguration`.
+`MeterValuesSampledData` reports the four measurands above and is read-only, since the stream
+does not follow it. The simulator advertises the SmartCharging profile and reports its
+configuration keys (both rate units, stack level 8, 24 periods, 10 profiles), but does not
+answer the charging-profile messages yet.
 
 By default the simulator exits when its connection drops. `--reconnect` makes it behave
 like a station instead: it redials with backoff (1 s, 2 s, 4 s … capped at 30 s, each wait
@@ -265,18 +269,24 @@ Features
   Core                ✓  required  start, stop, unlock
   Reservation         ✓  required  reserve, cancel, OCPI RESERVE_NOW
   RemoteTrigger       ✓  optional  status refresh on demand
+  SmartCharging       ✓            not used by cpms
   FirmwareManagement  ✓            not used by cpms
 
 Settings
-  ReserveConnectorZeroSupported  false  whether the whole station can be reserved at once; cpms always reserves one EVSE, so this is informational
-  AuthorizeRemoteTxRequests      false  if true, the station asks cpms to Authorize the tag of a remote start; cpms accepts only auth.default_id_tag
-  LocalAuthListEnabled           false  if true, a whitelist held on the station can let tags charge without asking cpms
-  LocalPreAuthorize              false  if true, the station starts at once for tags it knows locally, before cpms answers
-  LocalAuthorizeOffline          false  if true, the station lets tags it knows locally charge while cpms is unreachable
-  NumberOfConnectors             2      how many connectors the station has; checked against the EVSEs in config
-  HeartbeatInterval              60     seconds between heartbeats; cpms sets it at boot from charger.heartbeat_interval
-  ConnectionTimeOut              60     seconds the station waits for a cable after a remote start or a presented tag
-  MeterValueSampleInterval       0      seconds between meter values during a session; 0 means none are sent
+  ReserveConnectorZeroSupported            false                                                                 whether the whole station can be reserved at once; cpms always reserves one EVSE, so this is informational
+  AuthorizeRemoteTxRequests                false                                                                 if true, the station asks cpms to Authorize the tag of a remote start; cpms accepts only auth.default_id_tag
+  LocalAuthListEnabled                     false                                                                 if true, a whitelist held on the station can let tags charge without asking cpms
+  LocalPreAuthorize                        false                                                                 if true, the station starts at once for tags it knows locally, before cpms answers
+  LocalAuthorizeOffline                    false                                                                 if true, the station lets tags it knows locally charge while cpms is unreachable
+  NumberOfConnectors                       2                                                                     how many connectors the station has; checked against the EVSEs in config
+  HeartbeatInterval                        60                                                                    seconds between heartbeats; cpms sets it at boot from charger.heartbeat_interval
+  ConnectionTimeOut                        60                                                                    seconds the station waits for a cable after a remote start or a presented tag
+  MeterValueSampleInterval                 0                                                                     seconds between meter values during a session; 0 means none are sent
+  MeterValuesSampledData                   Energy.Active.Import.Register,Power.Active.Import,Current.Import,SoC  measurands sent during a session; Power.Active.Import must be among them to see a charging limit take effect
+  ChargingScheduleAllowedChargingRateUnit  Current,Power                                                         units a charging schedule may use (Current, Power or both); decides whether a limit can be set in kW or in A
+  ChargeProfileMaxStackLevel               8                                                                     highest stack level the station accepts for a charging profile
+  ChargingScheduleMaxPeriods               24                                                                    most periods the station accepts in one charging schedule
+  MaxChargingProfilesInstalled             10                                                                    how many charging profiles the station keeps installed at once
 
 Checks
   ok  2 connectors, matching the 2 EVSEs in config
@@ -300,14 +310,19 @@ cpms: the station lacks 1 capability that cpms requires: reservation
 
 - **Features** are named as the station names them (1.6 feature profiles). Core and
   Reservation are required; without RemoteTrigger cpms only learns about status changes when
-  the station reports them by itself.
+  the station reports them by itself. SmartCharging is reported so that you know, before
+  cpms can set charging limits, whether the station takes OCPP charging profiles; nothing in
+  cpms needs it yet, so its absence never fails the probe.
 - **Missing is not the same as not reported.** A capability the station reports as absent
   is *missing*, and makes the command exit 10. A required capability the station says
   nothing about (`?`) is *unconfirmed*: a warning that suggests trying it, such as
   `cpms reserve`, with exit 0. Some stations list no `SupportedFeatureProfiles` at all;
   Core is mandatory in OCPP 1.6, so it is then assumed present, and the probe says so.
 - **Settings** are the keys that change how the station behaves towards cpms. A key the
-  station does not report shows as `not reported`; that is not an error.
+  station does not report shows as `not reported`; that is not an error. The last five are
+  for charging limits: `ChargingScheduleAllowedChargingRateUnit` says whether a limit can be
+  given in power (`Power`), in current (`Current`) or both, and `MeterValuesSampledData` has
+  to include `Power.Active.Import` for a limit to be visible in the meter values.
 - **Checks** compare the station with config. A connector count that differs from the EVSEs
   in config, or a heartbeat interval other than `charger.heartbeat_interval`, is a warning
   (`!`); it does not change the exit code.
