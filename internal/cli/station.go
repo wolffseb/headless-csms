@@ -290,8 +290,8 @@ func printStatus(cmd *cobra.Command, st socket.Status) {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", e.UID, status, reservation, transaction)
 	}
 	_ = w.Flush()
-	cmd.Println()
-	cmd.Println(ocpiLine(st.OCPI))
+	fmt.Fprintln(cmd.OutOrStdout())
+	fmt.Fprintln(cmd.OutOrStdout(), ocpiLine(st.OCPI))
 }
 
 // ocpiLine is the registration in one line: who, since when, and where
