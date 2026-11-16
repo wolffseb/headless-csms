@@ -11,6 +11,8 @@ Lessons from earlier fix passes in this repo. Newest last within each section. K
 - Don't invent spec exemptions. OCPP 1.6 §3.7.1 lets a station give up on a transaction message only after repeated failures, with no exception for FormationViolation and similar codes (#42).
 - Validating a name against the host (`time.LoadLocation`) gives host-dependent answers (macOS is case-insensitive). A shape regex is leaky too (`Europe/BerLin`); match against an embedded canonical list and test it against the toolchain data, using `go env GOROOT` (`runtime.GOROOT` trips SA1019) (2026-11-13, #40).
 - When a mapping changes a core status (e.g. Finishing → BLOCKED), grep consumers for comparisons with the old value; core itself only passes status through, so the audit mostly lands in the simulator's fake station (2026-11-13, #40).
+- OCPP 1.6 errata text isn't in the repo. When a review quotes an erratum, a web search for the quoted sentence usually finds it cited by another station implementation; say in the reply what you checked it against (2026-11-16, #62).
+- Simulator ChargePointMaxProfile is a station total (§3.13.3): one `shareOf` converter divides it between running sessions for the meter and the per-connector composite, and multiplies per-connector limits up for connector 0. Change both paths together (#62).
 - When one test file holds rows for two fixes, remove the later fix's rows before the first commit and re-add them afterwards, since `git add -p` is unavailable.
 
 ## Testing
