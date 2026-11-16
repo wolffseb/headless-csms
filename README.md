@@ -44,14 +44,14 @@ config.yaml is valid.
   Heartbeat timeout   90s
   OCPI listener       0.0.0.0:8080
   OCPI advertised as  http://192.168.1.10:8080/ocpi
-  OCPI party          DE*FYT
+  OCPI party          DE*EXA
   Default RFID tag    04A1B2C3D4
-  Location            OFFICE-01 "Fryte HQ", München (DEU) — 2 EVSEs, 2 connectors
+  Location            SITE-01 "Example Site", Berlin (DEU) — 2 EVSEs, 2 connectors
   State file          state.json
 
   EVSE           EVSE ID        OCPP CONNECTOR  CONNECTORS
-  ALP-HYC-001-1  DE*FYT*E001*1  1               IEC_62196_T2_COMBO/CABLE/DC 920V 500A
-  ALP-HYC-001-2  DE*FYT*E001*2  2               IEC_62196_T2_COMBO/CABLE/DC 920V 500A
+  ALP-HYC-001-1  DE*EXA*E001*1  1               IEC_62196_T2_COMBO/CABLE/DC 920V 500A
+  ALP-HYC-001-2  DE*EXA*E001*2  2               IEC_62196_T2_COMBO/CABLE/DC 920V 500A
 ```
 
 Then start the CSMS and point the station at the URL it prints:
@@ -204,7 +204,7 @@ config.yaml is not valid:
 
 While `cpms run` is serving, one-shot commands in another terminal act on the station
 through it. With the simulator from the previous section in a second terminal, a third one
-gives you the whole flow this tool exists for: reserve, redeem with the office tag, stop.
+gives you the whole flow this tool exists for: reserve, redeem with the RFID tag, stop.
 
 ```
 $ cpms reserve --evse ALP-HYC-001-1
@@ -679,9 +679,9 @@ counterparty has registered. Before that every token gets HTTP 401.
 TOKEN_C=change-me-token-c   # ocpi.token_c from your config
 auth="Authorization: Token $(printf '%s' "$TOKEN_C" | base64 | tr -d '\n')"
 curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations                    # the list
-curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations/OFFICE-01          # one Location
-curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations/OFFICE-01/ALP-HYC-001-1    # one EVSE
-curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations/OFFICE-01/ALP-HYC-001-1/1  # one Connector
+curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations/SITE-01            # one Location
+curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations/SITE-01/ALP-HYC-001-1      # one EVSE
+curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations/SITE-01/ALP-HYC-001-1/1    # one Connector
 ```
 
 - **Status** is the station's own, as core holds it: `UNKNOWN` while the station is
@@ -830,7 +830,7 @@ be pointed at a randomly chosen port).
 ```mermaid
 flowchart LR
     cli["One-shot commands<br/>cpms reserve / start / stop<br/>unlock / status"]
-    fryte["Fryte backend<br/>(OCPI client)"]
+    partner["OCPI partner<br/>(eMSP backend, OCPI client)"]
     station["Charging station<br/>(Alpitronic, or<br/>cpms simulate charger)"]
 
     subgraph run ["cpms run (one process)"]
@@ -844,7 +844,7 @@ flowchart LR
     end
 
     cli -- "Unix socket" --> sock
-    fryte <-. "OCPI 2.3.0<br/>(commands in, PATCHes out)" .-> ocpi
+    partner <-. "OCPI 2.3.0<br/>(commands in, PATCHes out)" .-> ocpi
     sock --> ctrl
     ocpi -.-> ctrl
     ctrl -- "commands" --> csms
@@ -863,9 +863,9 @@ Three things talk to `cpms run`, and each one has exactly one way in:
 - **One-shot commands go through the control socket.** They cannot talk to the station
   themselves, because the station's only connection is to `cpms run`. They send one request
   to the socket and get one answer back, then exit.
-- **Fryte will come in over OCPI** (roadmap steps 5–8). It ends up in the same `control`
-  layer as the terminal, so a reservation from Fryte and one from the terminal are the same
-  thing to the rest of cpms.
+- **The OCPI partner will come in over OCPI** (roadmap steps 5–8). It ends up in the same
+  `control` layer as the terminal, so a reservation from the partner and one from the
+  terminal are the same thing to the rest of cpms.
 
 ### Inside `cpms run`
 
@@ -1096,26 +1096,26 @@ Each request is bounded by `charger.call_timeout` and nothing is retried. A stat
 without the RemoteTrigger profile (`Rejected`, `NotImplemented`, or a CALLERROR) gets one
 INFO line in the log and stays connected; its EVSEs then wait for its next status change.
 
-#### Planned: Fryte reserves over OCPI
+#### Planned: an OCPI partner reserves
 
 Roadmap steps 5–8. The OCPI side ends in the same `control.Reserve` as the terminal.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant F as Fryte
+    participant P as OCPI partner
     participant O as OCPI server
     participant Ctl as control
     participant St as Station
 
-    F->>O: POST /ocpi/2.3.0/commands/RESERVE_NOW {token, expiry_date, evse_uid, response_url}
-    O-->>F: CommandResponse ACCEPTED (immediately)
+    P->>O: POST /ocpi/2.3.0/commands/RESERVE_NOW {token, expiry_date, evse_uid, response_url}
+    O-->>P: CommandResponse ACCEPTED (immediately)
     O->>Ctl: Reserve (same path as the terminal)
     Ctl->>St: ReserveNow
     St-->>Ctl: Accepted
-    O->>F: POST response_url: CommandResult ACCEPTED
+    O->>P: POST response_url: CommandResult ACCEPTED
     St->>Ctl: StatusNotification Reserved
-    O->>F: PATCH /locations/.../{evse_uid} {status: RESERVED}
+    O->>P: PATCH /locations/.../{evse_uid} {status: RESERVED}
 ```
 
 ### Design notes

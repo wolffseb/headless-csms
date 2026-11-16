@@ -263,7 +263,7 @@ func TestProbeUnreportedProfilesAreUnconfirmedNotMissing(t *testing.T) {
 }
 
 // A station whose profile list is as long as SupportedFeatureProfilesMaxLength
-// may have left a profile out, like the office Alpitronic HYC50 does with
+// may have left a profile out, like an Alpitronic HYC50 does with
 // Reservation: that is unconfirmed, with the reason, and the probe exits 0. A
 // list with room left still means what it says (TestProbeWithoutReservationExits10).
 func TestProbeFullProfileListIsUnconfirmedNotMissing(t *testing.T) {

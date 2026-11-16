@@ -31,8 +31,8 @@ charger actually does*. #17 shows state. This would show traffic and history:
 - **OCPP frame inspector:** every CALL, CALLRESULT and CALLERROR in both directions, with
   filtering by action, pretty-printed payloads, and timing. This is the view that answers
   "why did the Alpitronic do that?" on site.
-- **OCPI traffic log:** every request Fryte sends us and every PATCH or CommandResult we
-  send them, with status codes.
+- **OCPI traffic log:** every request the OCPI partner sends us and every PATCH or
+  CommandResult we send them, with status codes.
 - **Meter values** as a sparkline per active session.
 - **Prompts for custom input:** reserve with a different tag or expiry, start with any tag.
 - **Simulator control from the UI:** switch scenarios, flip connector states, pull the
@@ -46,7 +46,7 @@ everything it would show except raw frames. Raw frames would need a tap in
 **Open questions.**
 - Does it stay in-process in `cpms run`, or become a **client of the API from idea 2**,
   the way k9s is a client of the Kubernetes API? The client model is cleaner: the daemon
-  runs headless on the office machine, and the UI attaches from any laptop. It also means
+  runs headless on the host machine, and the UI attaches from any laptop. It also means
   idea 2 comes first.
 - How much frame history is kept, and where: in memory with a ring buffer, or in the store
   from idea 3?
@@ -67,8 +67,8 @@ REST for commands and queries, plus an event stream (SSE or WebSocket) for live 
 The CLI, the TUI and any script all become clients of it.
 
 **Why.**
-- **Test automation for the Fryte backend:** a CI job starts cpms plus the simulator,
-  drives scenarios through the API, and asserts on what Fryte's backend did. That turns
+- **Test automation for the eMSP backend:** a CI job starts cpms plus the simulator,
+  drives scenarios through the API, and asserts on what the eMSP backend did. That turns
   this from a manual test environment into an automated one.
 - It separates "the thing that talks to chargers" from "the thing a human looks at", which
   is the architecture most real CSMSs end up with.
@@ -118,7 +118,7 @@ request boundaries.
 and meter values and produce **CDRs** (charge detail records). Eventually serve them over
 OCPI's `sessions` and `cdrs` modules, which are out of scope today.
 
-**Why.** A CSMS that can't tell you what was charged is only half a CSMS. For the Fryte test
+**Why.** A CSMS that can't tell you what was charged is only half a CSMS. For an eMSP's test
 environment, it means the backend's CDR ingestion could be tested against a real station's
 numbers, not hand-written fixtures.
 
@@ -183,7 +183,7 @@ where it was decided.
   its follow-ups, see the review on #29.
 - **Soft reservations.** Only for stations without the Reservation profile, such as the
   third-party rey: OCPI `RESERVE_NOW` would need a reservation held in cpms that refuses
-  other tags at start. The office Alpitronic is known to support ReserveNow (tested with
+  other tags at start. An Alpitronic HYC50 is known to support ReserveNow (tested with
   another CSMS, chargecloud), so it does not need this; the hardware check, #11, confirms
   it against cpms.
 - **Set the station's HeartbeatInterval after boot.** Send `ChangeConfiguration
@@ -195,8 +195,8 @@ where it was decided.
   on #31 (https://github.com/wolffseb/headless-csms/pull/31#pullrequestreview-5605519636).
   Since #48, `cpms config set HeartbeatInterval <seconds>` does this by hand; what is left
   of the idea is sending it automatically after boot.
-- **OCPI Sessions module**, minimal, so Fryte can learn the `session_id` it needs for
-  `STOP_SESSION`. See the decision in #16. It overlaps with idea 3.
+- **OCPI Sessions module**, minimal, so the OCPI partner can learn the `session_id` it
+  needs for `STOP_SESSION`. See the decision in #16. It overlaps with idea 3.
 - **Recording and replaying OCPP traffic.** Record a real Alpitronic session to a file, and
   replay it through the simulator later: a regression test built from real hardware
   behaviour. It shares the frame tap with idea 1.

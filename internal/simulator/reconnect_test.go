@@ -298,7 +298,7 @@ func evsesAre(r *rig, want core.EVSEStatus) bool {
 }
 
 // TestResumeWithoutBootSkipsTheBootAndTheStatusRound: with ResumeWithoutBoot
-// a redial is a station that kept running, as the office Alpitronic does
+// a redial is a station that kept running, as an Alpitronic HYC50 does
 // (#53). It sends what it queued offline, but no BootNotification and no
 // status round, so the CSMS learns nothing new about its connectors until it
 // asks. The first Connect still boots. Not parallel, for goleak.

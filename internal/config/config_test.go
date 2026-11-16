@@ -31,7 +31,7 @@ auth:
   default_id_tag: "04A1B2C3D4"
 ocpi:
   country_code: DE
-  party_id: FRY
+  party_id: EXA
   public_base_url: http://192.168.1.10:8080/ocpi
   token_a: "token-a-secret"
   token_c: "token-c-secret"
@@ -39,8 +39,8 @@ ocpi:
     debounce: 500ms
     max_retries: 5
 location:
-  id: OFFICE-01
-  name: Fryte HQ
+  id: SITE-01
+  name: Example Site
   address: Musterstrasse 1
   city: Berlin
   postal_code: "10115"
@@ -51,7 +51,7 @@ location:
   time_zone: Europe/Berlin
   evses:
     - uid: ALP-HYC-001-1
-      evse_id: DE*FRY*E001*1
+      evse_id: DE*EXA*E001*1
       ocpp_connector_id: 1
       connectors:
         - id: "1"
@@ -62,7 +62,7 @@ location:
           max_amperage: 500
           max_electric_power: 400000
     - uid: ALP-HYC-001-2
-      evse_id: DE*FRY*E001*2
+      evse_id: DE*EXA*E001*2
       ocpp_connector_id: 2
       connectors:
         - id: "1"
@@ -164,7 +164,7 @@ func TestInvalidConfigsNameTheOffendingField(t *testing.T) {
 		wantPaths: []string{"ocpi.country_code"},
 	}, {
 		name:      "party id of the wrong length",
-		mutate:    rep("party_id: FRY", "party_id: FRYT", 1),
+		mutate:    rep("party_id: EXA", "party_id: EXAT", 1),
 		wantPaths: []string{"ocpi.party_id"},
 	}, {
 		name:      "public base url with a non-http scheme",
@@ -203,13 +203,13 @@ func TestInvalidConfigsNameTheOffendingField(t *testing.T) {
 		// Without ocpi.business_name, location.name is what we register
 		// under, so it has to fit BusinessDetails.name too.
 		name:      "location name too long to stand in for the business name",
-		mutate:    rep("name: Fryte HQ", "name: "+strings.Repeat("x", 150), 1),
+		mutate:    rep("name: Example Site", "name: "+strings.Repeat("x", 150), 1),
 		wantPaths: []string{"location.name"},
 	}, {
 		name: "location name longer than OCPI Location.name allows",
 		mutate: func(s string) string {
-			s = rep("  token_c:", "  business_name: Fryte GmbH\n  token_c:", 1)(s)
-			return rep("name: Fryte HQ", "name: "+strings.Repeat("ö", 256), 1)(s)
+			s = rep("  token_c:", "  business_name: Example CPO GmbH\n  token_c:", 1)(s)
+			return rep("name: Example Site", "name: "+strings.Repeat("ö", 256), 1)(s)
 		},
 		wantPaths: []string{"location.name"},
 	}, {
@@ -269,7 +269,7 @@ func TestInvalidConfigsNameTheOffendingField(t *testing.T) {
 		wantPaths: []string{"location.evses[1].uid"},
 	}, {
 		name:      "evse id differs only in case",
-		mutate:    rep("evse_id: DE*FRY*E001*2", "evse_id: de*fry*e001*1", 1),
+		mutate:    rep("evse_id: DE*EXA*E001*2", "evse_id: de*exa*e001*1", 1),
 		wantPaths: []string{"location.evses[1].evse_id"},
 	}, {
 		name: "connector id differs only in case",
@@ -293,7 +293,7 @@ func TestInvalidConfigsNameTheOffendingField(t *testing.T) {
 		wantPaths: []string{"location.evses[1].uid"},
 	}, {
 		name:      "evse id is not eMI3 shaped",
-		mutate:    rep("evse_id: DE*FRY*E001*1", "evse_id: 12345", 1),
+		mutate:    rep("evse_id: DE*EXA*E001*1", "evse_id: 12345", 1),
 		wantPaths: []string{"location.evses[0].evse_id"},
 	}, {
 		name:      "unknown connector standard",
@@ -328,7 +328,7 @@ func TestInvalidConfigsNameTheOffendingField(t *testing.T) {
 		mutate: func(s string) string {
 			s = rep("  id: ALP-HYC-001\n", "", 1)(s)
 			s = rep("country_code: DE", "country_code: de", 1)(s)
-			s = rep("party_id: FRY", "party_id: F", 1)(s)
+			s = rep("party_id: EXA", "party_id: F", 1)(s)
 			return s
 		},
 		wantPaths: []string{"charger.id", "ocpi.country_code", "ocpi.party_id"},
@@ -464,8 +464,8 @@ func TestOCPIBusinessNameFallsBack(t *testing.T) {
 	for _, tt := range []struct {
 		name, mutate, want string
 	}{
-		{"business_name wins", "  business_name: Fryte GmbH\n", "Fryte GmbH"},
-		{"else location.name", "", "Fryte HQ"},
+		{"business_name wins", "  business_name: Example CPO GmbH\n", "Example CPO GmbH"},
+		{"else location.name", "", "Example Site"},
 	} {
 		cfg, err := config.Parse(strings.NewReader(rep("  token_a:", tt.mutate+"  token_a:", 1)(baseYAML)))
 		if err != nil {
@@ -477,7 +477,7 @@ func TestOCPIBusinessNameFallsBack(t *testing.T) {
 	}
 
 	// OCPI requires a name, so with neither set it is our party.
-	cfg, err := config.Parse(strings.NewReader(rep("  name: Fryte HQ\n", "", 1)(baseYAML)))
+	cfg, err := config.Parse(strings.NewReader(rep("  name: Example Site\n", "", 1)(baseYAML)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,7 +496,7 @@ func TestNameLimitsCountCharacters(t *testing.T) {
 		return rep("  token_c:", "  business_name: "+name+"\n  token_c:", 1)
 	}
 	withLocationName := func(name string) func(string) string {
-		return rep("name: Fryte HQ", "name: "+name, 1)
+		return rep("name: Example Site", "name: "+name, 1)
 	}
 
 	for _, tt := range []struct {
@@ -506,7 +506,7 @@ func TestNameLimitsCountCharacters(t *testing.T) {
 		{"business_name of 100 umlauts", withBusinessName(strings.Repeat("ä", 100))},
 		{"location.name of 100 umlauts as the business name", withLocationName(strings.Repeat("ä", 100))},
 		{"location.name of 255 umlauts beside a business_name", func(s string) string {
-			return withLocationName(strings.Repeat("ä", 255))(withBusinessName("Fryte GmbH")(s))
+			return withLocationName(strings.Repeat("ä", 255))(withBusinessName("Example CPO GmbH")(s))
 		}},
 	} {
 		if _, err := config.Parse(strings.NewReader(tt.mutate(baseYAML))); err != nil {

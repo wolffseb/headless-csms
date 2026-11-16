@@ -1,7 +1,7 @@
 // Package config loads and validates cpms's single configuration file.
 //
 // The tool never writes this file. Everything cpms discovers at runtime —
-// the OCPI credentials token the Fryte backend hands us, active reservations,
+// the OCPI credentials token the eMSP backend hands us, active reservations,
 // last known EVSE status — belongs in state.json instead. Keeping the split
 // strict means the operator can hand-edit config.yaml (comments and all)
 // without the tool ever clobbering it.
@@ -58,7 +58,7 @@ type Server struct {
 // Auth holds local authorisation defaults.
 type Auth struct {
 	// DefaultIDTag is the RFID tag used when a command does not name one —
-	// the office tag that redeems reservations.
+	// the RFID tag that redeems reservations.
 	DefaultIDTag string `yaml:"default_id_tag"`
 }
 
@@ -82,13 +82,13 @@ type OCPI struct {
 	TokenC string `yaml:"token_c"`
 	// BusinessName is the business_details.name in our credentials. It is
 	// optional because location.name usually serves, but a location name
-	// ("Fryte HQ") is not always the company's name.
+	// ("Example Site") is not always the company's name.
 	BusinessName string `yaml:"business_name"`
 	Push         Push   `yaml:"push"`
 }
 
 // OCPIBusinessName is the name we register under: ocpi.business_name, else
-// location.name, else our party ("DE*FYT"), because OCPI requires a name.
+// location.name, else our party ("DE*EXA"), because OCPI requires a name.
 func (c *Config) OCPIBusinessName() string {
 	name, _ := c.businessName()
 	return name
