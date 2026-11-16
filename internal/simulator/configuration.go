@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
@@ -35,6 +36,9 @@ func defaultSettings() map[string]string {
 	}
 }
 
+// allProfiles are the feature profiles the simulator implements.
+const allProfiles = "Core,FirmwareManagement,RemoteTrigger,Reservation,SmartCharging"
+
 // configuration lists every key the simulator knows, in the order
 // GetConfiguration reports them, with the keys the options leave unreported
 // already removed.
@@ -47,7 +51,12 @@ func (s *Simulator) configuration() []configEntry {
 	// (#47): nothing in cpms sends them yet. Its messages (SetChargingProfile,
 	// ClearChargingProfile, GetCompositeSchedule) answer NotImplemented until
 	// stack C1 of #47 lands.
-	profiles := "Core,FirmwareManagement,RemoteTrigger,Reservation,SmartCharging"
+	//
+	// SupportedFeatureProfilesMaxLength is how many profiles the simulator
+	// implements. A FeatureProfiles override that long but without one of
+	// them then looks cut short, as on a station with more profiles than it
+	// can list (#52).
+	profiles := allProfiles
 	if s.opts.Scenario == ScenarioRejectReserve {
 		profiles = "Core,FirmwareManagement,RemoteTrigger,SmartCharging"
 	}
@@ -79,6 +88,7 @@ func (s *Simulator) configuration() []configEntry {
 	var all []configEntry
 	for _, e := range []configEntry{
 		{key: v16.KeySupportedFeatureProfiles, readonly: true, value: profiles},
+		{key: v16.KeySupportedFeatureProfilesMaxLength, readonly: true, value: strconv.Itoa(strings.Count(allProfiles, ",") + 1)},
 		{key: v16.KeyNumberOfConnectors, readonly: true, value: strconv.Itoa(s.opts.Connectors)},
 		{key: v16.KeyHeartbeatInterval, value: seconds(heartbeat), set: s.setHeartbeatInterval},
 		stored(v16.KeyConnectionTimeOut, func(v string) error { _, err := parseSeconds(v); return err }),

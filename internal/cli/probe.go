@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -80,7 +81,8 @@ func newProbeCommand(opts *options) *cobra.Command {
 			"exits 10. One it does not report either way is unconfirmed: that is\n" +
 			"a warning, not a failure, and the command exits 0. Core is mandatory in\n" +
 			"OCPP 1.6, so it is assumed present when the station lists no feature\n" +
-			"profiles at all.",
+			"profiles at all. A profile left out of a list as long as the station\n" +
+			"can make it (SupportedFeatureProfilesMaxLength) is unconfirmed too.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			env, err := newStationEnv(cmd, opts)
@@ -298,6 +300,9 @@ func printProbe(cmd *cobra.Command, out probeOutput, raw bool) {
 		if f.Assumed {
 			fmt.Fprintf(stdout, "%s was not reported, but it is mandatory in OCPP %s: assumed present.\n", f.Name, r.ChargePoint.OCPPVersion)
 		}
+		if f.Note != "" {
+			fmt.Fprintf(stdout, "%s.\n", f.Note)
+		}
 	}
 	for _, name := range out.Missing {
 		n, _ := needOf(name)
@@ -305,8 +310,13 @@ func printProbe(cmd *cobra.Command, out probeOutput, raw bool) {
 	}
 	for _, name := range out.Unconfirmed {
 		n, _ := needOf(name)
-		fmt.Fprintf(stdout, "%s was not reported, so cpms cannot be sure of it. Try it (%s); if the station refuses, this is what stops working: %s\n",
-			grantedBy(r, name), tryIt(name), n.without)
+		// A note above already says why; otherwise the station said nothing.
+		why := "was not reported, so cpms cannot be sure of it"
+		if noted(r, name) {
+			why = "is unconfirmed"
+		}
+		fmt.Fprintf(stdout, "%s %s. Try it (%s); if the station refuses, this is what stops working: %s\n",
+			grantedBy(r, name), why, tryIt(name), n.without)
 	}
 	if len(out.Missing) == 0 && len(out.Unconfirmed) == 0 {
 		fmt.Fprintln(stdout, "Every capability cpms requires is present.")
@@ -343,6 +353,16 @@ func grantedBy(r socket.ProbeResult, capability string) string {
 		return capability
 	}
 	return strings.Join(names, " or ")
+}
+
+// noted reports whether a feature granting the capability carries a note.
+func noted(r socket.ProbeResult, capability string) bool {
+	for _, f := range r.Features {
+		if f.Note != "" && slices.Contains(f.Grants, capability) {
+			return true
+		}
+	}
+	return false
 }
 
 func supportMark(support string) string {

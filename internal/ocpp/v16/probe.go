@@ -2,6 +2,7 @@ package v16
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -80,7 +81,7 @@ func (cp *ChargePoint) Probe(ctx context.Context) (ocpp.ProbeReport, error) {
 		report.Raw = append(report.Raw, ocpp.RawSetting{Key: k.Key, Value: k.Value, Readonly: k.Readonly})
 	}
 
-	report.Features = features(values[KeySupportedFeatureProfiles])
+	report.Features = features(values)
 
 	for _, s := range probedSettings {
 		value, ok := values[s.key]
@@ -100,32 +101,47 @@ func (cp *ChargePoint) Probe(ctx context.Context) (ocpp.ProbeReport, error) {
 }
 
 // features lists the profiles cpms needs, present or not, then every other
-// profile the station advertises, in its order. Without the key, or with an
-// empty value (it is optional in 1.6), nothing is known about any of them
-// except Core, which every 1.6 station must implement: it is assumed present.
-func features(value string) []ocpp.Feature {
-	advertised := parseProfiles(value)
+// profile the station advertises, in its order. It reads
+// SupportedFeatureProfiles and SupportedFeatureProfilesMaxLength from values.
+//
+// Without the profile list, or with an empty one (the value is optional in
+// 1.6), nothing is known about any profile except Core, which every 1.6
+// station must implement: it is assumed present.
+//
+// A list as long as SupportedFeatureProfilesMaxLength may have been cut
+// short: an Alpitronic HYC50 implements six profiles, can list five, and
+// leaves out Reservation, which it supports. A profile missing from a full
+// list is therefore unknown, not absent. Without a usable max length, a list
+// is taken at its word.
+func features(values map[string]string) []ocpp.Feature {
+	advertised := parseProfiles(values[KeySupportedFeatureProfiles])
 	reported := len(advertised) > 0
 	has := make(map[string]bool, len(advertised))
 	for _, p := range advertised {
 		has[p] = true
 	}
+	maxLength, ok := intValue(values, KeySupportedFeatureProfilesMaxLength)
+	full := ok && maxLength > 0 && len(advertised) >= maxLength
 
 	out := make([]ocpp.Feature, 0, len(neededProfiles)+len(advertised))
 	needed := make(map[string]bool, len(neededProfiles))
 	for _, n := range neededProfiles {
 		needed[n.name] = true
-		support, assumed := ocpp.SupportUnknown, false
-		if !reported && n.name == profileCore {
-			support, assumed = ocpp.SupportYes, true
-		}
-		if reported {
-			support = ocpp.SupportNo
-			if has[n.name] {
-				support = ocpp.SupportYes
+		f := ocpp.Feature{Name: n.name, Support: ocpp.SupportUnknown, Grants: n.grants}
+		switch {
+		case !reported:
+			if n.name == profileCore {
+				f.Support, f.Assumed = ocpp.SupportYes, true
 			}
+		case has[n.name]:
+			f.Support = ocpp.SupportYes
+		case full:
+			f.Note = fmt.Sprintf("%s is not in the station's profile list, but the list is full (%s = %d), "+
+				"so a profile missing from it may still be supported", n.name, KeySupportedFeatureProfilesMaxLength, maxLength)
+		default:
+			f.Support = ocpp.SupportNo
 		}
-		out = append(out, ocpp.Feature{Name: n.name, Support: support, Grants: n.grants, Assumed: assumed})
+		out = append(out, f)
 	}
 	for _, p := range advertised {
 		if !needed[p] {

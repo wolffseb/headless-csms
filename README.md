@@ -331,6 +331,11 @@ cpms: the station lacks 1 capability that cpms requires: reservation
   nothing about (`?`) is *unconfirmed*: a warning that suggests trying it, such as
   `cpms reserve`, with exit 0. Some stations list no `SupportedFeatureProfiles` at all;
   Core is mandatory in OCPP 1.6, so it is then assumed present, and the probe says so.
+- **A full profile list is not the whole story.** A station can list at most
+  `SupportedFeatureProfilesMaxLength` profiles. When its list is that long, a profile
+  missing from it may only have been cut off (the Alpitronic HYC50 lists five and leaves out
+  Reservation, which it supports), so it is *unconfirmed*, not missing, and the probe says
+  why. A shorter list, or no usable max length, is taken at its word.
 - **Settings** are the keys that change how the station behaves towards cpms. A key the
   station does not report shows as `not reported`; that is not an error. The last five are
   for charging limits: `ChargingScheduleAllowedChargingRateUnit` says whether a limit can be
@@ -346,7 +351,9 @@ cpms: the station lacks 1 capability that cpms requires: reservation
   for scripts. `ok` is false only when `missing` is not empty. A feature's `grants` lists the
   capabilities it provides, whether or not cpms uses them (SmartCharging grants
   `smart_charging`, which no command needs yet); what cpms requires is what `missing` and
-  `unconfirmed` are computed from.
+  `unconfirmed` are computed from. A feature's `note` says why its support is what it is
+  when the station's answer alone would mislead, such as a full profile list; it is empty
+  otherwise.
 If the station is not connected, `cpms probe` exits 3 and prints the CSMS URL to configure on
 the station, the same one `cpms config validate` prints, plus when and why it last
 disconnected.

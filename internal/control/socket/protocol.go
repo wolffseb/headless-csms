@@ -229,6 +229,10 @@ type ProbeFeature struct {
 	// OCPP 1.6 makes Core mandatory, so it is assumed when the station
 	// does not list its profiles.
 	Assumed bool `json:"assumed"`
+	// Note explains the support when the station's answer alone would
+	// mislead, such as a profile left out of a list that is full. It is
+	// empty otherwise.
+	Note string `json:"note"`
 }
 
 // ProbeCapability is whether the station supports one capability.

@@ -75,6 +75,10 @@ type Feature struct {
 	// inferred: Core is mandatory in OCPP 1.6, so a station that does not
 	// list its profiles at all is taken to implement it.
 	Assumed bool
+	// Note explains Support when the station's answer alone would mislead,
+	// in the station's own terms: a profile left out of a list that is
+	// full may still be implemented. It is empty otherwise.
+	Note string
 }
 
 // Setting is one behaviour-relevant setting.
