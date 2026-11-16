@@ -276,6 +276,16 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 		}
 		return ok(ReserveResult{ReservationID: r.ID, EVSE: r.EVSEUID, IDTag: r.IDTag, ExpiresAt: r.ExpiresAt.UTC()})
 
+	case OpConfigSet:
+		if req.Key == "" {
+			return fail(&Error{Code: CodeUsage, Message: "config_set needs a key"})
+		}
+		res, err := s.opts.Control.ChangeConfiguration(ctx, req.Key, req.Value)
+		if err != nil {
+			return fail(classify(err))
+		}
+		return ok(ConfigSetResult{Key: req.Key, Value: req.Value, Status: res.Raw})
+
 	case OpCancel:
 		return done(s.opts.Control.Cancel(ctx, req.EVSE))
 	case OpStart:
@@ -323,7 +333,15 @@ func classify(err error) *Error {
 			e.Code = CodeOccupied
 		case ocpp.CommandFaulted, ocpp.CommandUnavailable:
 			e.Code = CodeFaulted
-		case ocpp.CommandUnlockFailed, ocpp.CommandNotSupported, ocpp.CommandNotImplemented:
+		case ocpp.CommandNotSupported:
+			// An unknown configuration key is a refusal like Rejected, not
+			// a command the station lacks; Status says which.
+			if refused.Op == control.OpConfigSet {
+				e.Code = CodeRejected
+			} else {
+				e.Code = CodeUnlockFailed
+			}
+		case ocpp.CommandUnlockFailed, ocpp.CommandNotImplemented:
 			e.Code = CodeUnlockFailed
 		default:
 			// Rejected, and any status the spec does not define.

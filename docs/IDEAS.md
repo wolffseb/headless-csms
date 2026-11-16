@@ -193,6 +193,8 @@ where it was decided.
   answers it (#34). Some stations, such as rey, report a stale setting while heartbeating at
   the BootNotification interval, which is what made `cpms probe` overclaim; see the review
   on #31 (https://github.com/wolffseb/headless-csms/pull/31#pullrequestreview-5605519636).
+  Since #48, `cpms config set HeartbeatInterval <seconds>` does this by hand; what is left
+  of the idea is sending it automatically after boot.
 - **OCPI Sessions module**, minimal, so Fryte can learn the `session_id` it needs for
   `STOP_SESSION`. See the decision in #16. It overlaps with idea 3.
 - **Recording and replaying OCPP traffic.** Record a real Alpitronic session to a file, and

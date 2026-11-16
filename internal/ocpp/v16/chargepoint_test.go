@@ -148,6 +148,11 @@ func TestGoldenPayloads(t *testing.T) {
 			_, err := cp.GetCompositeSchedule(ctx, "EVSE-2", time.Hour, &unit)
 			return err
 		}},
+		{action: v16.ActionChangeConfiguration, send: func(ctx context.Context, cp *v16.ChargePoint) error {
+			_, err := cp.ChangeConfiguration(ctx, v16.KeyMeterValuesSampledData,
+				"Energy.Active.Import.Register,Power.Active.Import,Power.Offered,Current.Import,Current.Offered")
+			return err
+		}},
 	}
 
 	for _, tt := range tests {
@@ -212,6 +217,9 @@ func TestCommandStatusMapping(t *testing.T) {
 		v16.ActionTriggerMessage: func(ctx context.Context, cp *v16.ChargePoint) (ocpp.Result, error) {
 			return cp.TriggerStatus(ctx, "EVSE-1")
 		},
+		v16.ActionChangeConfiguration: func(ctx context.Context, cp *v16.ChargePoint) (ocpp.Result, error) {
+			return cp.ChangeConfiguration(ctx, v16.KeyHeartbeatInterval, "300")
+		},
 	}
 
 	tests := []struct {
@@ -247,6 +255,12 @@ func TestCommandStatusMapping(t *testing.T) {
 		{v16.ActionTriggerMessage, "Rejected", ocpp.CommandRejected},
 		{v16.ActionTriggerMessage, "NotImplemented", ocpp.CommandNotImplemented},
 		{v16.ActionTriggerMessage, "Maybe", ocpp.CommandUnknown},
+		// ConfigurationStatus
+		{v16.ActionChangeConfiguration, "Accepted", ocpp.CommandAccepted},
+		{v16.ActionChangeConfiguration, "Rejected", ocpp.CommandRejected},
+		{v16.ActionChangeConfiguration, "RebootRequired", ocpp.CommandRebootRequired},
+		{v16.ActionChangeConfiguration, "NotSupported", ocpp.CommandNotSupported},
+		{v16.ActionChangeConfiguration, "Unlocked", ocpp.CommandUnknown},
 	}
 
 	for _, tt := range tests {

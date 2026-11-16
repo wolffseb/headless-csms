@@ -204,7 +204,11 @@ func (e *stationEnv) call(cmd *cobra.Command, req socket.Request) (json.RawMessa
 	timeout := e.cfg.Charger.CallTimeout.Duration() + socketGrace
 	raw, err := socket.Call(cmd.Context(), e.socketPath, req, timeout)
 	if err != nil {
-		return nil, exitFor(req.Op, req.EVSE, err)
+		subject := req.EVSE
+		if req.Op == socket.OpConfigSet {
+			subject = req.Key
+		}
+		return nil, exitFor(req.Op, subject, err)
 	}
 	return raw, nil
 }
@@ -271,7 +275,7 @@ func printStatus(cmd *cobra.Command, st socket.Status) {
 	fmt.Fprintln(cmd.OutOrStdout())
 
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "EVSE\tSTATUS\tRESERVATION\tTRANSACTION")
+	fmt.Fprintln(w, "EVSE\tSTATUS\tRESERVATION\tTRANSACTION\tMETER")
 	for _, e := range st.EVSEs {
 		status := e.Status
 		if e.ErrorCode != "" && e.ErrorCode != "NoError" {
@@ -287,11 +291,48 @@ func printStatus(cmd *cobra.Command, st socket.Status) {
 		if tx := e.Transaction; tx != nil {
 			transaction = fmt.Sprintf("%s %s since %s", tx.ID, tx.IDTag, localTime(tx.StartedAt))
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", e.UID, status, reservation, transaction)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", e.UID, status, reservation, transaction, meterCell(e))
 	}
 	_ = w.Flush()
 	fmt.Fprintln(cmd.OutOrStdout())
 	fmt.Fprintln(cmd.OutOrStdout(), ocpiLine(st.OCPI))
+}
+
+// meterCell is an EVSE's newest meter reading for the status table: what it
+// draws, the limit the station offers, and how old the reading is, such as
+// "50.0 kW 125.0 A, offered 150.0 kW, 3s ago". It is "-" without a reading.
+func meterCell(e socket.EVSEStatus) string {
+	if e.ReadingAt == nil {
+		return "-"
+	}
+	var parts []string
+	if e.PowerW != nil {
+		parts = append(parts, fmt.Sprintf("%.1f kW", *e.PowerW/1000))
+	}
+	if e.CurrentA != nil {
+		parts = append(parts, fmt.Sprintf("%.1f A", *e.CurrentA))
+	}
+	cell := strings.Join(parts, " ")
+	var offered []string
+	if e.PowerOfferedW != nil {
+		offered = append(offered, fmt.Sprintf("%.1f kW", *e.PowerOfferedW/1000))
+	}
+	if e.CurrentOfferedA != nil {
+		offered = append(offered, fmt.Sprintf("%.1f A", *e.CurrentOfferedA))
+	}
+	if len(offered) > 0 {
+		if cell != "" {
+			cell += ", "
+		}
+		cell += "offered " + strings.Join(offered, " ")
+	}
+	if cell == "" {
+		// A reading with neither, such as energy only: say so, rather than
+		// look like no reading at all.
+		cell = "no power reported"
+	}
+	age := max(time.Since(*e.ReadingAt), 0).Round(time.Second)
+	return cell + ", " + age.String() + " ago"
 }
 
 // ocpiLine is the registration in one line: who, since when, and where

@@ -59,6 +59,11 @@ func BuildStatus(snap core.Snapshot, chargePointID string) Status {
 		if tx, ok := transactions[e.UID]; ok {
 			row.Transaction = &TransactionStatus{ID: tx.ID, IDTag: tx.IDTag, StartedAt: tx.StartedAt.UTC()}
 		}
+		if m := e.Reading; m != nil {
+			row.PowerW, row.CurrentA = m.PowerW, m.CurrentA
+			row.PowerOfferedW, row.CurrentOfferedA = m.PowerOfferedW, m.CurrentOfferedA
+			row.ReadingAt = utcOrNil(m.At)
+		}
 		out.EVSEs = append(out.EVSEs, row)
 	}
 	return out

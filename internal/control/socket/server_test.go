@@ -102,6 +102,9 @@ func (f fakeStation) GetCompositeSchedule(context.Context, string, time.Duration
 func (f fakeStation) Probe(context.Context) (ocpp.ProbeReport, error) {
 	return ocpp.ProbeReport{Version: ocpp.Version16}, f.err
 }
+func (f fakeStation) ChangeConfiguration(context.Context, string, string) (ocpp.Result, error) {
+	return f.res, f.err
+}
 
 type commands struct{ station ocpp.ChargePoint }
 
@@ -185,13 +188,17 @@ func TestErrorCodes(t *testing.T) {
 		{"probe not connected", socket.OpProbe, nil, socket.CodeNotConnected},
 		{"call error not implemented", socket.OpReserve, fakeStation{err: ocpp.Errorf(ocpp.ErrNotImplemented, "no")}, socket.CodeUnlockFailed},
 		{"call error not supported", socket.OpUnlock, fakeStation{err: fmt.Errorf("UnlockConnector: %w", ocpp.Errorf(ocpp.ErrNotSupported, "no"))}, socket.CodeUnlockFailed},
+		// An unknown configuration key is a refusal, not a missing command.
+		{"config key not supported", socket.OpConfigSet, fakeStation{res: ocpp.Result{Status: ocpp.CommandNotSupported, Raw: "NotSupported"}}, socket.CodeRejected},
+		{"config rejected", socket.OpConfigSet, fakeStation{res: ocpp.Result{Status: ocpp.CommandRejected, Raw: "Rejected"}}, socket.CodeRejected},
+		{"config not connected", socket.OpConfigSet, nil, socket.CodeNotConnected},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			path := serve(t, tc.st)
 
-			_, err := call(t, path, socket.Request{Op: tc.op, EVSE: "EVSE-1"})
+			_, err := call(t, path, socket.Request{Op: tc.op, EVSE: "EVSE-1", Key: "HeartbeatInterval", Value: "60"})
 			var se *socket.Error
 			if !errors.As(err, &se) {
 				t.Fatalf("err = %v, want a *socket.Error", err)
@@ -274,6 +281,7 @@ func TestBadRequestsAreUsageErrors(t *testing.T) {
 		"unknown op":   {Op: "explode"},
 		"bad duration": {Op: socket.OpReserve, EVSE: "EVSE-1", ExpiresIn: "soon"},
 		"unknown EVSE": {Op: socket.OpUnlock, EVSE: "NOPE"},
+		"no key":       {Op: socket.OpConfigSet, Value: "60"},
 	} {
 		_, err := call(t, path, req)
 		var se *socket.Error
@@ -369,5 +377,30 @@ func TestCallWithoutServerIsNotRunning(t *testing.T) {
 		socket.Request{Op: socket.OpStatus}, time.Second)
 	if !errors.Is(err, socket.ErrNotRunning) {
 		t.Errorf("err = %v, want ErrNotRunning", err)
+	}
+}
+
+// RebootRequired is a success: the station took the value. The CLI words it
+// as a warning, so the literal status has to reach it.
+func TestConfigSetPassesTheStationsAnswerOn(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{"Accepted", "RebootRequired"} {
+		status := ocpp.CommandAccepted
+		if raw == "RebootRequired" {
+			status = ocpp.CommandRebootRequired
+		}
+		path := serve(t, fakeStation{res: ocpp.Result{Status: status, Raw: raw}})
+		out, err := call(t, path, socket.Request{Op: socket.OpConfigSet, Key: "MeterValuesSampledData", Value: "Power.Active.Import"})
+		if err != nil {
+			t.Fatalf("%s: %v", raw, err)
+		}
+		var r socket.ConfigSetResult
+		if err := json.Unmarshal(out, &r); err != nil {
+			t.Fatal(err)
+		}
+		if r != (socket.ConfigSetResult{Key: "MeterValuesSampledData", Value: "Power.Active.Import", Status: raw}) {
+			t.Errorf("%s: result = %+v", raw, r)
+		}
 	}
 }

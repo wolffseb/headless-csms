@@ -211,7 +211,12 @@ func (h *Handler) meterValues(cpID string, payload json.RawMessage) (any, *ocpp.
 		return nil, rpcErr
 	}
 
-	h.core.RecordMeterValues(cpID, req.ConnectorID, summariseMeterValues(req.MeterValue))
+	reading, skipped := meterReading(req.MeterValue, h.now())
+	for _, why := range skipped {
+		h.log.Warn("skipping a meter value cpms cannot read",
+			"charge_point", cpID, "connector_id", req.ConnectorID, "value", why)
+	}
+	h.core.RecordMeterValues(cpID, req.ConnectorID, reading)
 	return emptyConf{}, nil
 }
 

@@ -380,6 +380,33 @@ func (s *Service) Probe(ctx context.Context) (ocpp.ProbeReport, error) {
 	return cp.Probe(ctx)
 }
 
+// ChangeConfiguration sets one of the station's own configuration keys; it
+// does not touch config.yaml. Accepted and RebootRequired both mean the
+// station took the value, so both come back as a Result for the caller to
+// word; anything else is a *RefusedError.
+func (s *Service) ChangeConfiguration(ctx context.Context, key, value string) (ocpp.Result, error) {
+	cp, err := s.chargePoint()
+	if err != nil {
+		return ocpp.Result{}, err
+	}
+	cc, ok := cp.(ocpp.ConfigurationChanger)
+	if !ok {
+		return ocpp.Result{}, fmt.Errorf("OCPP %s: %w", cp.Version(), ErrNoKeyValueConfig)
+	}
+
+	res, err := cc.ChangeConfiguration(ctx, key, value)
+	if err != nil {
+		return ocpp.Result{}, err
+	}
+	switch res.Status {
+	case ocpp.CommandAccepted, ocpp.CommandRebootRequired:
+		s.log.Info("station configuration changed", "key", key, "value", value, "status", res.Raw)
+		return res, nil
+	default:
+		return ocpp.Result{}, refused(OpConfigSet, key, res)
+	}
+}
+
 // checkEVSE refuses an EVSE that is not in config before anything else
 // happens: no id is allocated and nothing is sent.
 func (s *Service) checkEVSE(evseUID string) error {

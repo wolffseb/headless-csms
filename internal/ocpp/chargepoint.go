@@ -59,6 +59,16 @@ type ChargePoint interface {
 	GetCompositeSchedule(ctx context.Context, evseUID string, d time.Duration, unit *RateUnit) (CompositeSchedule, error)
 }
 
+// ConfigurationChanger is a ChargePoint whose OCPP version has a flat
+// key/value configuration, which 1.6 has and 2.0.1 does not. It is separate
+// from ChargePoint so that a 2.0.1 adapter does not have to pretend: callers
+// check for it.
+type ConfigurationChanger interface {
+	// ChangeConfiguration sets one of the station's configuration keys. A
+	// station saying no is in Result, as for every command.
+	ChangeConfiguration(ctx context.Context, key, value string) (Result, error)
+}
+
 // ReserveRequest asks for an EVSE to be held for a token.
 type ReserveRequest struct {
 	// ReservationID is allocated by the caller, not by the adapter.
@@ -116,6 +126,9 @@ const (
 	// CommandUnknown, and the two must not be confused even though 1.6 spells
 	// this one "Unknown" on the wire.
 	CommandUnknownProfile CommandStatus = "UnknownProfile"
+	// CommandRebootRequired means a configuration change was accepted but
+	// takes effect only after the station restarts.
+	CommandRebootRequired CommandStatus = "RebootRequired"
 	// CommandUnknown is a status the station sent that the spec does not
 	// define for that command (not ClearChargingProfile's defined "Unknown",
 	// which is CommandUnknownProfile). Result.Raw holds what it was; it is never

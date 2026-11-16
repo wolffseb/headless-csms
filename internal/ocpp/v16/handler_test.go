@@ -376,6 +376,30 @@ func TestMeterValues(t *testing.T) {
 	}
 }
 
+// TestMeterValuesReachCore checks the reading lands in core, and that a value
+// cpms cannot read costs the station nothing: no CALLERROR, the rest kept.
+func TestMeterValuesReachCore(t *testing.T) {
+	t.Parallel()
+
+	h, svc := newHandler(t)
+	call[struct{}](t, h, v16.ActionMeterValues, v16.MeterValuesReq{
+		ConnectorID: 1,
+		MeterValue: []v16.MeterValue{{
+			Timestamp: "2026-08-14T12:00:00Z",
+			SampledValue: []v16.SampledValue{
+				{Value: "50", Measurand: "Power.Active.Import", Unit: "kW"},
+				{Value: "?", Measurand: "Current.Import", Unit: "A"},
+			},
+		}},
+	})
+
+	cp, _ := svc.Snapshot().ChargePoint(testCP)
+	r := cp.EVSEs[0].Reading
+	if r == nil || r.PowerW == nil || *r.PowerW != 50000 || r.CurrentA != nil {
+		t.Fatalf("EVSE-1 reading = %+v, want 50 kW and no current", r)
+	}
+}
+
 func TestDataTransferIsRejected(t *testing.T) {
 	t.Parallel()
 
