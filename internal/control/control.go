@@ -426,6 +426,11 @@ func (s *Service) TriggerStatus(ctx context.Context, evseUID string) error {
 // is logged once at INFO, and the EVSEs keep their status until the station
 // reports a change. Each call is bounded by the call timeout of the
 // connection.
+//
+// The requests go out one at a time, but nothing serialises them against
+// other callers: a command sent over the socket in the seconds after a
+// reconnect can overlap a TriggerMessage, against OCPP-J's one-call-in-flight
+// rule. That was already true of any two concurrent commands (#63).
 func (s *Service) RefreshStatusOnConnect(ctx context.Context, cp ocpp.ChargePoint) {
 	if cp.ID() != s.cfg.Charger.ID {
 		return

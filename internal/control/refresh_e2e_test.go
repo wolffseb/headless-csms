@@ -98,8 +98,12 @@ func TestNoStatusRequestAfterAReconnectWithBoot(t *testing.T) {
 	rclk := clocktest.New(t0)
 	r := newSimRig(t, 5*time.Second, behindProxy(t, &p, rclk))
 	reconnect(t, r, p, rclk, nil)
-	r.waitFor(t, "the boot's own status round", func() bool {
-		return r.status("EVSE-1") == core.StatusAvailable && r.status("EVSE-2") == core.StatusAvailable
+	// Core restores the last known statuses as soon as the redial connects,
+	// so AVAILABLE alone does not prove the boot was handled: wait for the
+	// boot itself, or the grace can fire before it.
+	r.waitFor(t, "the redial's boot and its status round", func() bool {
+		return r.core.BootedSinceConnect(testCP) &&
+			r.status("EVSE-1") == core.StatusAvailable && r.status("EVSE-2") == core.StatusAvailable
 	})
 
 	r.grace.Advance(control.DefaultBootGrace)
