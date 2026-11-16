@@ -138,7 +138,7 @@ By default the simulator exits when its connection drops. `--reconnect` makes it
 like a station instead: it redials with backoff (1 s, 2 s, 4 s … capped at 30 s, each wait
 shortened by up to a fifth at random), then sends `BootNotification` again and reports the
 station and every connector again. (`simulator.Options.ResumeWithoutBoot`, for tests, makes a
-redial skip the boot and the status round instead, like the office Alpitronic.) A
+redial skip the boot and the status round instead, like the Alpitronic HYC50.) A
 `BootNotification` the CSMS rejects after a reconnect still makes it exit non-zero. The
 first dial is not retried: a CSMS that cannot be reached at start-up is more likely a
 wrong `--csms` than an outage.
@@ -299,7 +299,7 @@ station's offline queue) is logged but not kept. One without a transaction is ke
 clock-aligned data, which a station also sends for an idle or Reserved connector.
 
 A station only reports the measurands listed in its `MeterValuesSampledData` key, which
-`cpms probe --raw` shows. The office Alpitronic reports only
+`cpms probe --raw` shows. An Alpitronic HYC50 reports only
 `Energy.Active.Import.Register` out of the box, so turn the rest on once:
 
 ```
@@ -449,10 +449,28 @@ If the station is not connected, `cpms probe` exits 3 and prints the CSMS URL to
 the station, the same one `cpms config validate` prints, plus when and why it last
 disconnected.
 
+### Tested hardware
+
+Alpitronic HYC50, firmware `hyc_v3.0.1`, OCPP 1.6-J. What it does that cpms has to
+expect:
+
+| Topic | Seen on the station | What cpms does |
+|---|---|---|
+| Feature profiles | `SupportedFeatureProfiles` lists 5 of its 6 profiles (`SupportedFeatureProfilesMaxLength` = 5) and leaves out Reservation | A missing profile on a full list is *unconfirmed*, not missing. `ReserveNow` and `CancelReservation` work. |
+| Reconnect | After a reconnect without a reboot, it sends no StatusNotification | Asks for every EVSE's status with TriggerMessage after a short grace |
+| Status timing | Reports a change only after `MinimumStatusDuration` (10 s) | Nothing; expect the delay |
+| Meter values | `MeterValuesSampledData` is energy only, and `ClockAlignedDataInterval` is 0 (no aligned data) | Turn power and offered values on with `cpms config set`; see [Power, current and the station's configuration](#power-current-and-the-stations-configuration) |
+| Smart Charging | Rate units `Power,Current`, stack levels up to 9, 10 periods, 100 profiles installed | `cpms limit` stays within these |
+| Heartbeat | Takes the interval cpms sends at boot | Nothing |
+
+Not yet checked on the station: the start, stop and unlock flow with a car, RFID without
+a remote command, timestamps, the offline watchdog, and charging profiles while a
+connector is Reserved. Results go in #11.
+
 ## Smart charging
 
 `cpms limit` and `cpms profile` set OCPP 1.6 charging profiles: limits on how much power or
-current an EVSE, or the whole station, may draw. The motivating case is the office Alpitronic
+current an EVSE, or the whole station, may draw. The motivating case is an Alpitronic
 HYC50: can a limit be set while a connector is **reserved**, and does it hold once the
 reservation is redeemed?
 
@@ -529,7 +547,7 @@ anything is sent.
 required. Periods start at 0 and increase; limits take at most one decimal place. Unknown
 fields are refused.
 
-### Runbook: a limit while reserved, on the office Alpitronic
+### Runbook: a limit while reserved, on an Alpitronic HYC50
 
 The HYC50 reports `ChargingScheduleAllowedChargingRateUnit=Power,Current`,
 `ChargeProfileMaxStackLevel=9`, `ChargingScheduleMaxPeriods=10` and
@@ -1041,7 +1059,7 @@ sequenceDiagram
 #### The station reconnects
 
 OCPP 1.6 asks for `StatusNotification`s only after a `BootNotification`. A station that
-reconnects without rebooting (the office Alpitronic does) may send nothing but heartbeats,
+reconnects without rebooting (the Alpitronic HYC50 does) may send nothing but heartbeats,
 and until a connector changes state every EVSE would read `UNKNOWN` after a restart of
 cpms, or keep the status from before the outage, in `cpms status` and over OCPI. So every
 new connection gets a `TriggerMessage(StatusNotification)` per configured EVSE, unless the
