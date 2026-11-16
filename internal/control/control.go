@@ -400,7 +400,8 @@ func (s *Service) ChangeConfiguration(ctx context.Context, key, value string) (o
 	}
 	switch res.Status {
 	case ocpp.CommandAccepted, ocpp.CommandRebootRequired:
-		s.log.Info("station configuration changed", "key", key, "value", value, "status", res.Raw)
+		// Not the value: keys such as AuthorizationKey hold credentials.
+		s.log.Info("station configuration changed", "key", key, "status", res.Raw)
 		return res, nil
 	default:
 		return ocpp.Result{}, refused(OpConfigSet, key, res)
