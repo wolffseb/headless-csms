@@ -46,7 +46,7 @@ everything it would show except raw frames. Raw frames would need a tap in
 **Open questions.**
 - Does it stay in-process in `cpms run`, or become a **client of the API from idea 2**,
   the way k9s is a client of the Kubernetes API? The client model is cleaner: the daemon
-  runs headless on the office machine, and the UI attaches from any laptop. It also means
+  runs headless on the host machine, and the UI attaches from any laptop. It also means
   idea 2 comes first.
 - How much frame history is kept, and where: in memory with a ring buffer, or in the store
   from idea 3?
@@ -183,7 +183,7 @@ where it was decided.
   its follow-ups, see the review on #29.
 - **Soft reservations.** Only for stations without the Reservation profile, such as the
   third-party rey: OCPI `RESERVE_NOW` would need a reservation held in cpms that refuses
-  other tags at start. The office Alpitronic is known to support ReserveNow (tested with
+  other tags at start. An Alpitronic HYC50 is known to support ReserveNow (tested with
   another CSMS, chargecloud), so it does not need this; the hardware check, #11, confirms
   it against cpms.
 - **Set the station's HeartbeatInterval after boot.** Send `ChangeConfiguration

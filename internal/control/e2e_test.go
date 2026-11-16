@@ -135,7 +135,7 @@ func (r *simRig) waitFor(t *testing.T, what string, cond func() bool) {
 }
 
 // TestReserveStartStopAgainstTheSimulator is the flow this tool exists for:
-// reserve, redeem the reservation with the office tag, stop.
+// reserve, redeem the reservation with the RFID tag, stop.
 func TestReserveStartStopAgainstTheSimulator(t *testing.T) {
 	t.Parallel()
 	r := newSimRig(t, 5*time.Second)

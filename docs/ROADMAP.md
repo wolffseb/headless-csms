@@ -2,7 +2,7 @@
 
 ## Context
 
-We have an OCPP-capable Alpitronic charging station on the office LAN and no way to drive it
+We have an OCPP-capable Alpitronic charging station on a local LAN and no way to drive it
 without a full CPMS. We want a single self-contained binary that acts as a minimal CPMS:
 
 - speaks **OCPP 1.6-J** (and later 2.0.1) to the station so we can reserve a connector, redeem
@@ -14,13 +14,13 @@ without a full CPMS. We want a single self-contained binary that acts as a minim
 - is configured by one hand-edited file and needs no database, no container, no web UI.
 
 The value is a fast local loop for integration-testing the Fryte OCPI client against real charger
-behaviour, plus a usable tool for driving the office station day to day.
+behaviour, plus a usable tool for driving the station day to day.
 
 ## Decisions (settled)
 
 | Topic | Decision |
 |---|---|
-| Language | **Go**. Single static binary, cross-compiles, no runtime on the office machine. Code kept deliberately plain and commented. |
+| Language | **Go**. Single static binary, cross-compiles, no runtime on the host machine. Code kept deliberately plain and commented. |
 | Process model | **One process**. `cpms run` starts OCPP CSMS + OCPI HTTP server + TUI. `--headless` for no-TTY. One-shot subcommands attach to a running instance over a unix socket. |
 | OCPP direction | The charger is the WebSocket **client**; we are the **CSMS server**. The Alpitronic must be configured with `ws://<our-host>:9000/ocpp/<chargePointId>`. `charger.ip` in config is only used for a reachability pre-check and for display. |
 | OCPP versions | **1.6-J first**, end-to-end and proven against the real station. 2.0.1 lands later as its own issue, behind a version-agnostic interface designed for two implementations from day one. |
@@ -99,11 +99,11 @@ server:
   ocpi_bind: 0.0.0.0:8080
 
 auth:
-  default_id_tag: "04A1B2C3D4"    # the office RFID tag
+  default_id_tag: "04A1B2C3D4"    # the default RFID tag
 
 ocpi:
   country_code: DE
-  party_id: FRY
+  party_id: EXA
   public_base_url: http://192.168.1.10:8080/ocpi   # what we advertise to Fryte
   token_a: "…"     # we hand this to Fryte out-of-band
   token_c: "…"     # Fryte uses this after registration
@@ -112,15 +112,15 @@ ocpi:
     max_retries: 5
 
 location:                    # static OCPI Location data, verbatim from config
-  id: OFFICE-01
-  name: Fryte HQ
+  id: SITE-01
+  name: Example Site
   address: "…"
   city: "…"
   country: DEU
   coordinates: { latitude: "52.520008", longitude: "13.404954" }
   evses:
     - uid: ALP-HYC-001-1
-      evse_id: DE*FRY*E001*1
+      evse_id: DE*EXA*E001*1
       ocpp_connector_id: 1
       connectors:
         - id: "1"
@@ -367,7 +367,7 @@ curl -X POST -H "Authorization: Token …" -d @reserve.json \
 ```
 
 Expected: the TUI shows the connector flip to `RESERVED`, the simulator logs the `ReserveNow`, the
-`CommandResult` lands on the `response_url`, and a `PATCH …/locations/DE/FRY/OFFICE-01/…` reaches
+`CommandResult` lands on the `response_url`, and a `PATCH …/locations/DE/EXA/SITE-01/…` reaches
 the registered receiver. The same sequence runs unattended as `go test ./internal/e2e -race`.
 
 Against the real charger: point its CSMS URL at `ws://<host>:9000/ocpp/<id>`, run `cpms probe`

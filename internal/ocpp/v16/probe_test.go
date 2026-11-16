@@ -266,7 +266,7 @@ func TestProbeErrorsAreTheCallsErrors(t *testing.T) {
 	}
 }
 
-// alpitronicProfiles is what the office Alpitronic HYC50 (firmware
+// alpitronicProfiles is what an Alpitronic HYC50 (firmware
 // hyc_v3.0.1) reports: five profiles, at a maximum of five. It accepts
 // ReserveNow all the same: Reservation is the sixth profile and dropped off.
 const alpitronicProfiles = "Core,FirmwareManagement,LocalAuthListManagement,SmartCharging,RemoteTrigger"

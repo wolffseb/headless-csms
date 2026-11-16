@@ -17,7 +17,7 @@ auth:
 
 ocpi:
   country_code: DE
-  party_id: FRY
+  party_id: EXA
   public_base_url: http://192.168.1.10:8080/ocpi/
   token_a: "token-a-secret"
   token_c: "token-c-secret"
@@ -26,8 +26,8 @@ ocpi:
     max_retries: 3
 
 location:
-  id: OFFICE-01
-  name: Fryte HQ
+  id: SITE-01
+  name: Example Site
   address: Musterstrasse 1
   city: Berlin
   postal_code: "10115"
@@ -38,7 +38,7 @@ location:
   time_zone: Europe/Berlin
   evses:
     - uid: ALP-HYC-001-1
-      evse_id: DE*FRY*E001*1
+      evse_id: DE*EXA*E001*1
       ocpp_connector_id: 1
       connectors:
         - id: "1"
@@ -49,7 +49,7 @@ location:
           max_amperage: 500
           max_electric_power: 400000
     - uid: ALP-HYC-001-2
-      evse_id: DE*FRY*E001*2
+      evse_id: DE*EXA*E001*2
       ocpp_connector_id: 2
       connectors:
         - id: "1"

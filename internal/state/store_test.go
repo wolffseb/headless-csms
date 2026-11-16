@@ -360,7 +360,7 @@ func full(at time.Time) State {
 			VersionsURL:  "https://emsp.example/ocpi/versions",
 			Version:      "2.3.0",
 			Endpoints:    []Endpoint{{Identifier: "commands", Role: "RECEIVER", URL: "https://emsp.example/ocpi/2.3.0/commands"}},
-			Roles:        []PartyRole{{CountryCode: "DE", PartyID: "FRY", Role: "EMSP"}},
+			Roles:        []PartyRole{{CountryCode: "DE", PartyID: "EXA", Role: "EMSP"}},
 		},
 		NextReservationID: 43,
 		NextTransactionID: 1001,

@@ -16,7 +16,7 @@ func testConfig() *config.Config {
 	return &config.Config{
 		Charger: config.Charger{ID: testCP},
 		Location: config.Location{
-			ID: "OFFICE-01",
+			ID: "SITE-01",
 			EVSEs: []config.EVSE{
 				{UID: "EVSE-1", OCPPConnectorID: 1},
 				{UID: "EVSE-2", OCPPConnectorID: 2},

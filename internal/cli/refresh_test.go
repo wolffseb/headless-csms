@@ -8,7 +8,7 @@ import (
 	"github.com/wolffseb/cli-cpms/internal/simulator"
 )
 
-// TestRunAsksAResumedStationForItsStatus is #53 as it happened at the office:
+// TestRunAsksAResumedStationForItsStatus is #53 as it happened on an Alpitronic HYC50:
 // cpms restarts while the station keeps running, and the station redials
 // without a BootNotification and without reporting any status. cpms has
 // nothing to go on, so the EVSE reads UNKNOWN until cpms asks, after the

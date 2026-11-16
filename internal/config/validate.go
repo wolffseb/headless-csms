@@ -169,7 +169,7 @@ func (c *Config) validateOCPI(v *validator) {
 		v.add("ocpi.country_code", "%q must be two uppercase letters, e.g. \"DE\"", o.CountryCode)
 	}
 	if v.required("ocpi.party_id", o.PartyID) && !partyIDRe.MatchString(o.PartyID) {
-		v.add("ocpi.party_id", "%q must be three uppercase letters, e.g. \"FRY\"", o.PartyID)
+		v.add("ocpi.party_id", "%q must be three uppercase letters, e.g. \"EXA\"", o.PartyID)
 	}
 
 	if v.required("ocpi.public_base_url", o.PublicBaseURL) {
@@ -281,7 +281,7 @@ func (c *Config) validateLocation(v *validator) {
 
 		if v.required(base+".evse_id", e.EVSEID) {
 			if !evseIDRe.MatchString(e.EVSEID) {
-				v.add(base+".evse_id", "%q does not look like an eMI3 EVSE ID, e.g. \"DE*FRY*E001*1\"", e.EVSEID)
+				v.add(base+".evse_id", "%q does not look like an eMI3 EVSE ID, e.g. \"DE*EXA*E001*1\"", e.EVSEID)
 			}
 			if first, dup := seenEVSEID[strings.ToUpper(e.EVSEID)]; dup {
 				v.add(base+".evse_id", "%q is already used by location.evses[%d]", e.EVSEID, first)

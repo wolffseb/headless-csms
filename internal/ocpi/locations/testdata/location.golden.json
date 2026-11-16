@@ -1,21 +1,21 @@
 {
   "country_code": "DE",
-  "party_id": "FYT",
-  "id": "OFFICE-01",
+  "party_id": "EXA",
+  "id": "SITE-01",
   "publish": true,
-  "name": "Fryte HQ",
-  "address": "Astallerstr. 9",
-  "city": "München",
-  "postal_code": "80339",
+  "name": "Example Site",
+  "address": "Example Street 1",
+  "city": "Berlin",
+  "postal_code": "10115",
   "country": "DEU",
   "coordinates": {
-    "latitude": "48.134000",
-    "longitude": "11.539000"
+    "latitude": "52.520000",
+    "longitude": "13.405000"
   },
   "evses": [
     {
       "uid": "ALP-HYC-001-1",
-      "evse_id": "DE*FYT*E001*1",
+      "evse_id": "DE*EXA*E001*1",
       "status": "CHARGING",
       "capabilities": [
         "REMOTE_START_STOP_CAPABLE",
@@ -37,7 +37,7 @@
     },
     {
       "uid": "ALP-HYC-001-2",
-      "evse_id": "DE*FYT*E001*2",
+      "evse_id": "DE*EXA*E001*2",
       "status": "AVAILABLE",
       "capabilities": [
         "REMOTE_START_STOP_CAPABLE",

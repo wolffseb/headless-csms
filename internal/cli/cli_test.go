@@ -86,12 +86,12 @@ auth:
   default_id_tag: "04A1B2C3D4"
 ocpi:
   country_code: de
-  party_id: FRY
+  party_id: EXA
   public_base_url: http://192.168.1.10:8080/ocpi
   token_a: "token-a-secret"
   token_c: "token-c-secret"
 location:
-  id: OFFICE-01
+  id: SITE-01
   address: Musterstrasse 1
   city: Berlin
   country: DEU
@@ -101,7 +101,7 @@ location:
   time_zone: Europe/Berlin
   evses:
     - uid: E1
-      evse_id: DE*FRY*E001*1
+      evse_id: DE*EXA*E001*1
       ocpp_connector_id: 1
       connectors:
         - id: "1"

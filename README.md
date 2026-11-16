@@ -44,14 +44,14 @@ config.yaml is valid.
   Heartbeat timeout   90s
   OCPI listener       0.0.0.0:8080
   OCPI advertised as  http://192.168.1.10:8080/ocpi
-  OCPI party          DE*FYT
+  OCPI party          DE*EXA
   Default RFID tag    04A1B2C3D4
-  Location            OFFICE-01 "Fryte HQ", München (DEU) — 2 EVSEs, 2 connectors
+  Location            SITE-01 "Example Site", Berlin (DEU) — 2 EVSEs, 2 connectors
   State file          state.json
 
   EVSE           EVSE ID        OCPP CONNECTOR  CONNECTORS
-  ALP-HYC-001-1  DE*FYT*E001*1  1               IEC_62196_T2_COMBO/CABLE/DC 920V 500A
-  ALP-HYC-001-2  DE*FYT*E001*2  2               IEC_62196_T2_COMBO/CABLE/DC 920V 500A
+  ALP-HYC-001-1  DE*EXA*E001*1  1               IEC_62196_T2_COMBO/CABLE/DC 920V 500A
+  ALP-HYC-001-2  DE*EXA*E001*2  2               IEC_62196_T2_COMBO/CABLE/DC 920V 500A
 ```
 
 Then start the CSMS and point the station at the URL it prints:
@@ -204,7 +204,7 @@ config.yaml is not valid:
 
 While `cpms run` is serving, one-shot commands in another terminal act on the station
 through it. With the simulator from the previous section in a second terminal, a third one
-gives you the whole flow this tool exists for: reserve, redeem with the office tag, stop.
+gives you the whole flow this tool exists for: reserve, redeem with the RFID tag, stop.
 
 ```
 $ cpms reserve --evse ALP-HYC-001-1
@@ -679,9 +679,9 @@ counterparty has registered. Before that every token gets HTTP 401.
 TOKEN_C=change-me-token-c   # ocpi.token_c from your config
 auth="Authorization: Token $(printf '%s' "$TOKEN_C" | base64 | tr -d '\n')"
 curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations                    # the list
-curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations/OFFICE-01          # one Location
-curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations/OFFICE-01/ALP-HYC-001-1    # one EVSE
-curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations/OFFICE-01/ALP-HYC-001-1/1  # one Connector
+curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations/SITE-01            # one Location
+curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations/SITE-01/ALP-HYC-001-1      # one EVSE
+curl -s -H "$auth" http://127.0.0.1:8080/ocpi/2.3.0/locations/SITE-01/ALP-HYC-001-1/1    # one Connector
 ```
 
 - **Status** is the station's own, as core holds it: `UNKNOWN` while the station is
