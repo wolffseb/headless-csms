@@ -72,6 +72,10 @@ type chargePointState struct {
 	online   bool
 	boot     BootInfo
 	lastSeen time.Time
+	// bootedSinceConnect is whether a BootNotification has arrived over the
+	// current connection. A station that reconnects without one kept running
+	// and need not report its connectors again (#53).
+	bootedSinceConnect bool
 	// lastDisconnect is zero until the station has disconnected while this
 	// process was running.
 	lastDisconnect Disconnect
@@ -388,6 +392,7 @@ func (s *Service) Connected(cpID string) {
 	cp := s.ensure(cpID)
 	cp.online = true
 	cp.lastSeen = at
+	cp.bootedSinceConnect = false
 	events := append([]Event{{
 		Kind: EventChargePointConnected, At: at, ChargePointID: cpID,
 	}}, cp.recompute(at)...)
@@ -428,11 +433,24 @@ func (s *Service) Booted(cpID string, info BootInfo) {
 	cp := s.ensure(cpID)
 	cp.boot = info
 	cp.lastSeen = at
+	cp.bootedSinceConnect = true
 	s.mu.Unlock()
 
 	s.bus.publish(Event{
 		Kind: EventBootNotified, At: at, ChargePointID: cpID, Detail: info.String(),
 	})
+}
+
+// BootedSinceConnect reports whether the charge point has sent a
+// BootNotification since its current connection came up. A station that
+// boots reports every connector's status by itself; one that does not may
+// have to be asked.
+func (s *Service) BootedSinceConnect(cpID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	cp, ok := s.cps[cpID]
+	return ok && cp.online && cp.bootedSinceConnect
 }
 
 // Seen records any sign of life from the charge point.

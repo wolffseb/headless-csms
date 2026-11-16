@@ -5,11 +5,13 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"go.uber.org/goleak"
 
+	"github.com/wolffseb/cli-cpms/internal/clocktest"
 	"github.com/wolffseb/cli-cpms/internal/control"
 	"github.com/wolffseb/cli-cpms/internal/core"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
@@ -22,13 +24,20 @@ import (
 
 // simRig is the whole stack `cpms run` builds, with the simulator dialled in
 // as the station: core on a real state file, the CSMS, the 1.6 handler and
-// command adapter, and control on top.
+// command adapter, and control on top, which asks a station that connects
+// without booting for its statuses once grace has been advanced past
+// control.DefaultBootGrace.
 type simRig struct {
 	core  *core.Service
 	ctl   *control.Service
 	sim   *simulator.Simulator
 	store *statetest.Store
+	grace *clocktest.Clock
+	hooks *atomic.Int32
 }
+
+// hooksDone counts the OnConnect calls that have returned.
+func (r *simRig) hooksDone() int { return int(r.hooks.Load()) }
 
 func newSimRig(t *testing.T, callTimeout time.Duration, mutate ...func(*simulator.Options)) *simRig {
 	t.Helper()
@@ -39,12 +48,19 @@ func newSimRig(t *testing.T, callTimeout time.Duration, mutate ...func(*simulato
 	svc := core.New(cfg, core.WithStore(store), core.WithLogger(discard))
 	t.Cleanup(svc.Close)
 
+	grace := clocktest.New(t0)
+	hooks := &atomic.Int32{}
+	var ctl *control.Service
 	server, err := csms.New(csms.Options{
 		Bind:     "127.0.0.1:0",
 		Core:     svc,
 		Handlers: map[ocpp.Version]ocpp.Handler{ocpp.Version16: v16.NewHandler(cfg, svc, discard)},
 		NewChargePoint: func(conn *ocppj.Conn) (ocpp.ChargePoint, error) {
 			return v16.NewChargePoint(conn, cfg), nil
+		},
+		OnConnect: func(ctx context.Context, cp ocpp.ChargePoint) {
+			defer hooks.Add(1)
+			ctl.RefreshStatusOnConnect(ctx, cp)
 		},
 		CallTimeout: callTimeout,
 		IdleTimeout: 30 * time.Second,
@@ -53,6 +69,10 @@ func newSimRig(t *testing.T, callTimeout time.Duration, mutate ...func(*simulato
 	if err != nil {
 		t.Fatalf("csms.New: %v", err)
 	}
+	ctl = control.New(control.Options{
+		Core: svc, Commands: server, Config: cfg, Log: discard,
+		AfterFunc: func(d time.Duration, fn func()) core.Stopper { return grace.AfterFunc(d, fn) },
+	})
 	if err := server.Start(); err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -84,9 +104,11 @@ func newSimRig(t *testing.T, callTimeout time.Duration, mutate ...func(*simulato
 
 	r := &simRig{
 		core:  svc,
-		ctl:   control.New(control.Options{Core: svc, Commands: server, Config: cfg, Log: discard}),
+		ctl:   ctl,
 		sim:   sim,
 		store: store,
+		grace: grace,
+		hooks: hooks,
 	}
 	r.waitFor(t, "both EVSEs available", func() bool {
 		return r.status("EVSE-1") == core.StatusAvailable && r.status("EVSE-2") == core.StatusAvailable

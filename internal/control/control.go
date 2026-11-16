@@ -10,6 +10,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -25,6 +26,12 @@ import (
 // caller does not say.
 const DefaultReservationLength = 15 * time.Minute
 
+// DefaultBootGrace is how long RefreshStatusOnConnect waits for a
+// BootNotification before it asks a newly connected station for its
+// statuses. A station that is starting up sends BootNotification as its
+// first message, well within this.
+const DefaultBootGrace = 5 * time.Second
+
 // Commander hands out the command interface for a connected charge point.
 // *csms.Server satisfies it.
 type Commander interface {
@@ -39,7 +46,13 @@ type Options struct {
 	// Now is the clock used to compute expiry times. It defaults to time.Now;
 	// tests pass the same fake clock they give core.
 	Now func() time.Time
-	Log *slog.Logger
+	// BootGrace is how long RefreshStatusOnConnect waits for a
+	// BootNotification; zero means DefaultBootGrace.
+	BootGrace time.Duration
+	// AfterFunc schedules that wait. It defaults to time.AfterFunc; tests
+	// pass a fake clock's.
+	AfterFunc func(time.Duration, func()) core.Stopper
+	Log       *slog.Logger
 }
 
 // Service performs actions on the configured station.
@@ -49,6 +62,9 @@ type Service struct {
 	cfg      *config.Config
 	now      func() time.Time
 	log      *slog.Logger
+
+	bootGrace time.Duration
+	afterFunc func(time.Duration, func()) core.Stopper
 
 	// inflight counts Reserve calls and the background cancels they start,
 	// so Close can wait for them. mu orders Add before Close's Wait: Reserve
@@ -66,12 +82,20 @@ func New(opts Options) *Service {
 	if opts.Log == nil {
 		opts.Log = slog.Default()
 	}
+	if opts.BootGrace <= 0 {
+		opts.BootGrace = DefaultBootGrace
+	}
+	if opts.AfterFunc == nil {
+		opts.AfterFunc = func(d time.Duration, fn func()) core.Stopper { return time.AfterFunc(d, fn) }
+	}
 	return &Service{
-		core:     opts.Core,
-		commands: opts.Commands,
-		cfg:      opts.Config,
-		now:      opts.Now,
-		log:      opts.Log,
+		core:      opts.Core,
+		commands:  opts.Commands,
+		cfg:       opts.Config,
+		now:       opts.Now,
+		log:       opts.Log,
+		bootGrace: opts.BootGrace,
+		afterFunc: opts.AfterFunc,
 	}
 }
 
@@ -378,6 +402,79 @@ func (s *Service) TriggerStatus(ctx context.Context, evseUID string) error {
 		return refused(OpTriggerStatus, evseUID, res)
 	}
 	return nil
+}
+
+// RefreshStatusOnConnect asks a station that has just connected for the
+// status of every configured EVSE, one TriggerMessage per EVSE, unless it
+// sends a BootNotification within the boot grace. It is meant to run as
+// csms.Options.OnConnect, with cp bound to the new connection and ctx ending
+// with it.
+//
+// A station that reconnects without rebooting need not report anything
+// (OCPP 1.6 asks for StatusNotifications only after a boot), and until it
+// does every EVSE reads UNKNOWN in core and over OCPI (#53). One that boots
+// reports by itself, so asking as well would only crowd its start-up; a boot
+// that comes after the grace gets duplicate statuses, which change nothing.
+//
+// Each EVSE is asked for by its connector id, not with the connectorId left
+// out: OCPP 1.6 section 5.17 reads an absent id as "the station and every
+// connector", which adds a connector 0 report nobody needs and relies on a
+// part of the spec stations implement unevenly.
+//
+// It is best effort and never retried: a station that refuses (Rejected,
+// NotImplemented, or a CALLERROR because it lacks the RemoteTrigger profile)
+// is logged once at INFO, and the EVSEs keep their status until the station
+// reports a change. Each call is bounded by the call timeout of the
+// connection.
+func (s *Service) RefreshStatusOnConnect(ctx context.Context, cp ocpp.ChargePoint) {
+	if cp.ID() != s.cfg.Charger.ID {
+		return
+	}
+	if !s.sleep(ctx, s.bootGrace) {
+		return
+	}
+	if s.core.BootedSinceConnect(cp.ID()) {
+		s.log.Debug("station booted after connecting; not asking for its statuses", "charge_point", cp.ID())
+		return
+	}
+
+	for _, e := range s.cfg.Location.EVSEs {
+		res, err := cp.TriggerStatus(ctx, e.UID)
+		var rpcErr *ocpp.RPCError
+		switch {
+		case err == nil && res.Status == ocpp.CommandAccepted:
+			continue
+		case err == nil:
+			s.log.Info("station will not report its status on request; EVSEs keep their status until it reports a change",
+				"charge_point", cp.ID(), "evse", e.UID, "status", res.Raw)
+		case errors.As(err, &rpcErr):
+			s.log.Info("station will not report its status on request; EVSEs keep their status until it reports a change",
+				"charge_point", cp.ID(), "evse", e.UID, "error", err)
+		case ctx.Err() != nil, errors.Is(err, ocpp.ErrNotConnected):
+			s.log.Debug("connection ended before the station reported its status", "charge_point", cp.ID())
+		default:
+			s.log.Warn("could not ask the station for its status after it connected",
+				"charge_point", cp.ID(), "evse", e.UID, "error", err)
+		}
+		return
+	}
+	s.log.Info("asked the station for the status of every EVSE after it connected without booting",
+		"charge_point", cp.ID(), "evses", len(s.cfg.Location.EVSEs))
+}
+
+// sleep waits d on the service's clock. It reports false, early, if ctx ends
+// first.
+func (s *Service) sleep(ctx context.Context, d time.Duration) bool {
+	fired := make(chan struct{})
+	timer := s.afterFunc(d, func() { close(fired) })
+	defer timer.Stop()
+
+	select {
+	case <-fired:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // Probe asks the station what it supports and how it is set up. It changes

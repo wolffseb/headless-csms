@@ -425,3 +425,39 @@ func TestEVSELastUpdatedFollowsTheEffectiveStatus(t *testing.T) {
 		t.Errorf("after disconnect: %v, want %v", got, want)
 	}
 }
+
+func TestBootedSinceConnectIsPerConnection(t *testing.T) {
+	t.Parallel()
+
+	// Control asks a station for its statuses only when it reconnected
+	// without booting, so a boot over an earlier connection must not count.
+	s := core.New(testConfig())
+	if s.BootedSinceConnect(testCP) {
+		t.Fatal("a station never seen counts as booted")
+	}
+
+	s.Connected(testCP)
+	if s.BootedSinceConnect(testCP) {
+		t.Fatal("a fresh connection counts as booted before any BootNotification")
+	}
+	s.Booted(testCP, core.BootInfo{Vendor: "Alpitronic"})
+	if !s.BootedSinceConnect(testCP) {
+		t.Fatal("a BootNotification over the connection is not recorded")
+	}
+
+	s.Disconnected(testCP, "network")
+	if s.BootedSinceConnect(testCP) {
+		t.Error("an offline station counts as booted")
+	}
+	s.Connected(testCP)
+	if s.BootedSinceConnect(testCP) {
+		t.Error("the boot of the previous connection carries over to a reconnect")
+	}
+
+	// A replacement connection arrives without a Disconnected in between.
+	s.Booted(testCP, core.BootInfo{Vendor: "Alpitronic"})
+	s.Connected(testCP)
+	if s.BootedSinceConnect(testCP) {
+		t.Error("the boot of a replaced connection carries over")
+	}
+}
