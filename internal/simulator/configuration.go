@@ -44,7 +44,9 @@ func (s *Simulator) configuration() []configEntry {
 	// capability the station then actually honours.
 	//
 	// SmartCharging is advertised before the simulator answers its messages
-	// (#47): nothing in cpms sends them yet.
+	// (#47): nothing in cpms sends them yet. Its messages (SetChargingProfile,
+	// ClearChargingProfile, GetCompositeSchedule) answer NotImplemented until
+	// stack C1 of #47 lands.
 	profiles := "Core,FirmwareManagement,RemoteTrigger,Reservation,SmartCharging"
 	if s.opts.Scenario == ScenarioRejectReserve {
 		profiles = "Core,FirmwareManagement,RemoteTrigger,SmartCharging"

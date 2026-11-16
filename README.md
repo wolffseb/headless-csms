@@ -330,7 +330,10 @@ cpms: the station lacks 1 capability that cpms requires: reservation
   (`!`); it does not change the exit code.
 - `--raw` adds every key the station reported, with whether it is read-only. `--json` prints
   the whole report, including every key, with `ok`, `missing`, `unconfirmed` and `warnings`
-  for scripts. `ok` is false only when `missing` is not empty.
+  for scripts. `ok` is false only when `missing` is not empty. A feature's `grants` lists the
+  capabilities it provides, whether or not cpms uses them (SmartCharging grants
+  `smart_charging`, which no command needs yet); what cpms requires is what `missing` and
+  `unconfirmed` are computed from.
 If the station is not connected, `cpms probe` exits 3 and prints the CSMS URL to configure on
 the station, the same one `cpms config validate` prints, plus when and why it last
 disconnected.

@@ -196,6 +196,7 @@ func TestProbeWithoutSmartCharging(t *testing.T) {
 	var out struct {
 		OK           bool                     `json:"ok"`
 		Capabilities []socket.ProbeCapability `json:"capabilities"`
+		Features     []socket.ProbeFeature    `json:"features"`
 		Settings     []socket.ProbeSetting    `json:"settings"`
 	}
 	if err := json.Unmarshal([]byte(s.mustCPMS("probe", "--json")), &out); err != nil {
@@ -203,6 +204,14 @@ func TestProbeWithoutSmartCharging(t *testing.T) {
 	}
 	if !out.OK {
 		t.Error("json ok = false, but smart charging is not required")
+	}
+	// grants is what a feature provides, not what cpms needs: SmartCharging
+	// grants smart_charging while ok stays true.
+	if !slices.ContainsFunc(out.Features, func(f socket.ProbeFeature) bool {
+		return f.Name == "SmartCharging" && f.Support == "no" &&
+			slices.Equal(f.Grants, []string{"smart_charging"})
+	}) {
+		t.Errorf("features = %+v, want SmartCharging no, granting smart_charging", out.Features)
 	}
 	if !slices.Contains(out.Capabilities, socket.ProbeCapability{Name: "smart_charging", Support: "no"}) {
 		t.Errorf("capabilities = %+v, want smart_charging no", out.Capabilities)

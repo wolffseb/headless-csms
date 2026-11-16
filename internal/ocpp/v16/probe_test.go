@@ -63,9 +63,18 @@ func TestProbeReadsTheWholeConfigurationOnce(t *testing.T) {
 	if !slices.Equal(names, want) {
 		t.Errorf("features = %v, want %v", names, want)
 	}
-	for _, f := range report.Features[4:] {
-		if len(f.Grants) != 0 {
-			t.Errorf("%s grants %v, but cpms has no use for it", f.Name, f.Grants)
+	// Grants lists what a feature provides, whether or not cpms needs it:
+	// SmartCharging grants smart_charging although nothing requires it yet.
+	wantGrants := map[string][]ocpp.Capability{
+		"Core":               {ocpp.CapRemoteStartStop, ocpp.CapUnlock},
+		"Reservation":        {ocpp.CapReservation},
+		"RemoteTrigger":      {ocpp.CapTriggerStatus},
+		"SmartCharging":      {ocpp.CapSmartCharging},
+		"FirmwareManagement": nil,
+	}
+	for _, f := range report.Features {
+		if !slices.Equal(f.Grants, wantGrants[f.Name]) {
+			t.Errorf("%s grants %v, want %v", f.Name, f.Grants, wantGrants[f.Name])
 		}
 	}
 
