@@ -7,13 +7,13 @@ without a full CPMS. We want a single self-contained binary that acts as a minim
 
 - speaks **OCPP 1.6-J** (and later 2.0.1) to the station so we can reserve a connector, redeem
   the reservation with a known RFID tag, stop, and unlock — from a terminal;
-- exposes a minimal **OCPI 2.3.0 CPO** interface on the LAN so the **Fryte backend** can register,
+- exposes a minimal **OCPI 2.3.0 CPO** interface on the LAN so an **eMSP backend** can register,
   pull static location data, and push `RESERVE_NOW` that ends up at the real charger;
-- **PATCHes** the EVSE status to Fryte whenever it changes — whether the change came from our
-  terminal or from someone physically plugging in a car;
+- **PATCHes** the EVSE status to the OCPI partner whenever it changes — whether the change came
+  from our terminal or from someone physically plugging in a car;
 - is configured by one hand-edited file and needs no database, no container, no web UI.
 
-The value is a fast local loop for integration-testing the Fryte OCPI client against real charger
+The value is a fast local loop for integration-testing an eMSP's OCPI client against real charger
 behaviour, plus a usable tool for driving the station day to day.
 
 ## Decisions (settled)
@@ -34,12 +34,12 @@ behaviour, plus a usable tool for driving the station day to day.
 
 | Token | Who owns it | Lives in |
 |---|---|---|
-| `TOKEN_A` | us — handed to Fryte out-of-band to bootstrap | `config.yaml` |
-| `TOKEN_C` | us — Fryte authenticates with it after registration | `config.yaml` (fixed value, not randomly generated) |
-| `TOKEN_B` + Fryte's `versions` URL and endpoint list | Fryte — received during handshake | `state.json` |
+| `TOKEN_A` | us — handed to the OCPI partner out-of-band to bootstrap | `config.yaml` |
+| `TOKEN_C` | us — the partner authenticates with it after registration | `config.yaml` (fixed value, not randomly generated) |
+| `TOKEN_B` + the partner's `versions` URL and endpoint list | the OCPI partner — received during handshake | `state.json` |
 
 `state.json` also holds: registration status, active reservations (id, connector, expiry), active
-transaction ids, and last-known EVSE status, so a restart does not lose the Fryte pairing or
+transaction ids, and last-known EVSE status, so a restart does not lose the partner pairing or
 orphan a reservation.
 
 ## Architecture
@@ -54,7 +54,7 @@ internal/ocpp/csms           WS server, subprotocol negotiation, Call/CallResult
 internal/ocpp/v16            OCPP 1.6-J messages + adapter
 internal/ocpp/v201           OCPP 2.0.1 messages + adapter        (issue 10)
 internal/ocpi                versions, credentials, locations (sender), commands (receiver)
-internal/ocpi/push           debounced PATCH client → Fryte
+internal/ocpi/push           debounced PATCH client → OCPI partner
 internal/tui                 Bubble Tea model, panes, spinners
 internal/simulator           charge point client used by tests and for demos
 ```
@@ -104,9 +104,9 @@ auth:
 ocpi:
   country_code: DE
   party_id: EXA
-  public_base_url: http://192.168.1.10:8080/ocpi   # what we advertise to Fryte
-  token_a: "…"     # we hand this to Fryte out-of-band
-  token_c: "…"     # Fryte uses this after registration
+  public_base_url: http://192.168.1.10:8080/ocpi   # what we advertise to the OCPI partner
+  token_a: "…"     # we hand this to the partner out-of-band
+  token_c: "…"     # the partner uses this after registration
   push:
     debounce: 500ms
     max_retries: 5
@@ -155,7 +155,7 @@ as a `CommandResult` to the caller's `response_url`. Tests must assert both halv
 ## Issues → PRs
 
 Dependency order: 1 → 2 → 3 → 4 → {5 → 6 → 7, 8} → 9 → 10 → 11.
-Milestones: after **4** the terminal→charger loop works; after **8** the Fryte→charger loop works;
+Milestones: after **4** the terminal→charger loop works; after **8** the partner→charger loop works;
 after **9** it is pleasant to use; after **10** it speaks 2.0.1.
 
 ---
@@ -241,15 +241,16 @@ the Alpitronic actually supports the Reservation profile.
 `GET /ocpi/versions`, `GET /ocpi/2.3.0` (endpoint list), and the `credentials` module
 (GET/POST/PUT/DELETE). Shared OCPI response envelope (`status_code`, `status_message`,
 `timestamp`), the standard error codes, and `Authorization: Token <base64>` middleware.
-`TOKEN_A`/`TOKEN_C` read from config; Fryte's `TOKEN_B` and endpoint list written to `state.json`.
+`TOKEN_A`/`TOKEN_C` read from config; the partner's `TOKEN_B` and endpoint list written to
+`state.json`.
 
 **Acceptance** (all via `httptest`, no network)
 - Unauthenticated request → HTTP 401 with OCPI `2001`.
 - `GET /ocpi/versions` with `TOKEN_A` lists exactly one version, `2.3.0`, with a URL derived from
   `ocpi.public_base_url`.
 - `POST /credentials` with `TOKEN_A` → `1000`, body contains our URL and `TOKEN_C`; `state.json`
-  now holds Fryte's token and fetched endpoints; the tool has called Fryte's versions endpoint
-  during the handshake (asserted against a fake eMSP server).
+  now holds the partner's token and fetched endpoints; the tool has called the partner's
+  versions endpoint during the handshake (asserted against a fake eMSP server).
 - Second `POST /credentials` → `2002` (already registered). `PUT` re-registers. `DELETE`
   unregisters and clears the tokens from `state.json`.
 - After registration, `TOKEN_A` is rejected and `TOKEN_C` is accepted.
@@ -275,17 +276,17 @@ config block plus live status from `core`. Pagination via `Link`, `X-Total-Count
 ### Issue 7 — Push: PATCH location on every status change
 
 Subscriber on the core event bus that PATCHes
-`{fryte_endpoint}/locations/{country_code}/{party_id}/{location_id}/{evse_uid}` with
+`{partner_endpoint}/locations/{country_code}/{party_id}/{location_id}/{evse_uid}` with
 `{status, last_updated}`. Per-EVSE ordered queue, configurable debounce (default 500ms), retry with
 exponential backoff up to `max_retries`, failures logged and surfaced in the TUI but never fatal.
-No-ops cleanly when Fryte is not registered.
+No-ops cleanly when no OCPI partner is registered.
 
 **Acceptance**
 - Fake eMSP receiver (`httptest`): simulator flips connector `Available→Charging`; exactly one
   PATCH arrives within 1s with the correct path, `Authorization: Token <base64 TOKEN_B>`, and body.
 - Rapid flapping (5 changes in 100ms) coalesces into one PATCH carrying the final status.
 - A CLI-triggered `cpms reserve` produces a PATCH with `RESERVED` — proving both change sources
-  (terminal and charger) reach Fryte.
+  (terminal and charger) reach the OCPI partner.
 - Receiver returning 500 → retried with backoff, then dropped with a logged error; the process
   stays healthy and later changes still push.
 - Not registered → no HTTP calls, no errors, no goroutine growth.
@@ -359,7 +360,7 @@ Three terminals:
 ```
 cpms run -c config.yaml                                  # CSMS + OCPI + TUI
 cpms simulate charger --csms ws://127.0.0.1:9000 --id ALP-HYC-001
-# in a third: drive it as Fryte would
+# in a third: drive it as the OCPI partner would
 curl -H "Authorization: Token $(printf 'TOKEN_A' | base64)" http://127.0.0.1:8080/ocpi/versions
 curl -X POST -H "Authorization: Token …" -d @creds.json http://127.0.0.1:8080/ocpi/2.3.0/credentials
 curl -X POST -H "Authorization: Token …" -d @reserve.json \

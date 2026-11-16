@@ -1,7 +1,7 @@
 // Package config loads and validates cpms's single configuration file.
 //
 // The tool never writes this file. Everything cpms discovers at runtime —
-// the OCPI credentials token the Fryte backend hands us, active reservations,
+// the OCPI credentials token the eMSP backend hands us, active reservations,
 // last known EVSE status — belongs in state.json instead. Keeping the split
 // strict means the operator can hand-edit config.yaml (comments and all)
 // without the tool ever clobbering it.

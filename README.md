@@ -830,7 +830,7 @@ be pointed at a randomly chosen port).
 ```mermaid
 flowchart LR
     cli["One-shot commands<br/>cpms reserve / start / stop<br/>unlock / status"]
-    fryte["Fryte backend<br/>(OCPI client)"]
+    partner["OCPI partner<br/>(eMSP backend, OCPI client)"]
     station["Charging station<br/>(Alpitronic, or<br/>cpms simulate charger)"]
 
     subgraph run ["cpms run (one process)"]
@@ -844,7 +844,7 @@ flowchart LR
     end
 
     cli -- "Unix socket" --> sock
-    fryte <-. "OCPI 2.3.0<br/>(commands in, PATCHes out)" .-> ocpi
+    partner <-. "OCPI 2.3.0<br/>(commands in, PATCHes out)" .-> ocpi
     sock --> ctrl
     ocpi -.-> ctrl
     ctrl -- "commands" --> csms
@@ -863,9 +863,9 @@ Three things talk to `cpms run`, and each one has exactly one way in:
 - **One-shot commands go through the control socket.** They cannot talk to the station
   themselves, because the station's only connection is to `cpms run`. They send one request
   to the socket and get one answer back, then exit.
-- **Fryte will come in over OCPI** (roadmap steps 5–8). It ends up in the same `control`
-  layer as the terminal, so a reservation from Fryte and one from the terminal are the same
-  thing to the rest of cpms.
+- **The OCPI partner will come in over OCPI** (roadmap steps 5–8). It ends up in the same
+  `control` layer as the terminal, so a reservation from the partner and one from the
+  terminal are the same thing to the rest of cpms.
 
 ### Inside `cpms run`
 
@@ -1096,26 +1096,26 @@ Each request is bounded by `charger.call_timeout` and nothing is retried. A stat
 without the RemoteTrigger profile (`Rejected`, `NotImplemented`, or a CALLERROR) gets one
 INFO line in the log and stays connected; its EVSEs then wait for its next status change.
 
-#### Planned: Fryte reserves over OCPI
+#### Planned: an OCPI partner reserves
 
 Roadmap steps 5–8. The OCPI side ends in the same `control.Reserve` as the terminal.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant F as Fryte
+    participant P as OCPI partner
     participant O as OCPI server
     participant Ctl as control
     participant St as Station
 
-    F->>O: POST /ocpi/2.3.0/commands/RESERVE_NOW {token, expiry_date, evse_uid, response_url}
-    O-->>F: CommandResponse ACCEPTED (immediately)
+    P->>O: POST /ocpi/2.3.0/commands/RESERVE_NOW {token, expiry_date, evse_uid, response_url}
+    O-->>P: CommandResponse ACCEPTED (immediately)
     O->>Ctl: Reserve (same path as the terminal)
     Ctl->>St: ReserveNow
     St-->>Ctl: Accepted
-    O->>F: POST response_url: CommandResult ACCEPTED
+    O->>P: POST response_url: CommandResult ACCEPTED
     St->>Ctl: StatusNotification Reserved
-    O->>F: PATCH /locations/.../{evse_uid} {status: RESERVED}
+    O->>P: PATCH /locations/.../{evse_uid} {status: RESERVED}
 ```
 
 ### Design notes
