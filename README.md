@@ -493,8 +493,8 @@ each EVSE: `id`, `purpose`, `stack_level`, `unit`, `periods` (`start_s`, `limit`
 **Answers and exit codes.** `Accepted` exits 0. `Rejected` exits 4: the station will not take
 this profile (a `tx` one without a session, a unit it does not allow, a stack level or period
 count beyond its limits, too many profiles installed). `NotSupported`, or a `NotImplemented` /
-`NotSupported` CALLERROR, exits 11: the station does not do Smart Charging at all, or not this
-request. A clear answered `Unknown` exits 4 with "holds no matching charging profile". No
+`NotSupported` CALLERROR, exits 11: the station does not support this request, which for `limit show`
+(`GetCompositeSchedule`) says nothing about whether it takes profiles. A clear answered `Unknown` exits 4 with "holds no matching charging profile". No
 answer within `charger.call_timeout` exits 7. When a profile went out but no answer came
 back (exit 7, or 3 if the connection dropped), the station may hold it although cpms records
 nothing; the message names the id it was sent with: check with `cpms limit show` and remove
@@ -539,8 +539,9 @@ the four keys above. `cpms run` is running, the station is connected, and one EV
 configured (otherwise add `--evse`). Use the RFID card you will charge with as `--tag`.
 
 1. **Check the station.** `cpms probe`: the four keys above, and SmartCharging ✓ or `?`.
-   `cpms limit show` should answer (exit 0); exit 11 means no Smart Charging at all and the
-   rest is moot.
+   `cpms limit show` should answer (exit 0). Exit 11 means only that the station does not
+   answer `GetCompositeSchedule`: carry on with step 3, whose exit 11 is the real
+   no-Smart-Charging signal, and read the limit from the meter instead of `limit show`.
 2. **Reserve.** `cpms reserve --tag <card> --expires 30m`. `cpms status` shows `RESERVED`.
 3. **Set a limit while reserved.** `cpms limit set --kw 20`.
    - exit 0, `Accepted`: the station took a TxDefault on a reserved connector. `cpms status`
