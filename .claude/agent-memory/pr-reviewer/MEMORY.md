@@ -27,6 +27,11 @@ Lessons from earlier reviews in this repo. Newest last. Keep generalised; prune 
 
 - **idTag comparisons** (2026-10-22). OCPP 1.6 IdToken is CiString20Type, which is case-insensitive (§7.15). core uses `strings.EqualFold`, so flag any `==` on idTags in the simulator or the handlers. Prove it with a case-differs row in the table test.
 - **Retry bounds scale with the queue** (2026-10-22). "At most 3 attempts" bounds one message, but a replay holds the CALL slot for queue length × (backoff + 3 × call_timeout), which blocks the status round and new Start/Stop. Quantify the total, not just the per-message cost.
+- **Probe "meaning" text as future spec** (2026-11-16). Operator-facing explanations in `probedSettings`/README become the basis for later checks. Check them against the spec's key and measurand tables. For example, smart-charging limits show in `Power.Offered`/`Current.Offered` (the limit itself) or in `*.Import` (the effect), measurands may carry phase suffixes, and CSLs may contain spaces.
+- **Public-JSON field contracts drift silently** (2026-11-16). A new entry can change what a field means (e.g. probe `features[].grants` used to mean "cpms uses it"). Read the field's doc comment and look for test slices/indices the PR shifted to dodge the old invariant.
+- **New repo-wide guards vs. open PRs** (2026-11-16). A PR that adds a source/convention guard (e.g. #56's `TestNoCobraPrint`) is green alone but turns `main` red when another open PR still uses the old pattern (#41's `cmd.Printf` in ocpi.go). Grep every open PR's head for the banned pattern, and merge-test it.
+
+- **CLI tests can't see stdout vs. stderr for `cmd.Print*`** (2026-11-16). `run()` calls `cmd.SetOut(&out)`, and cobra's `cmd.Printf` writes to `OutOrStderr`, so in tests it lands in the stdout buffer but goes to stderr in the real binary. An e2e assertion on "stdout" passes either way. Only #56's `TestNoCobraPrint` source guard catches it. Look for non-conflicting `cmd.Printf` lines that git merges silently next to converted ones.
 
 ## Checks that paid off
 
@@ -47,9 +52,21 @@ Lessons from earlier reviews in this repo. Newest last. Keep generalised; prune 
 - Never run `git stash` in a scratch worktree: the stash ref is shared with the main repo. Move scratch files out instead.
 - Check that the PR doesn't reverse a recorded decision (git blame the test or README line). If it does, the light is at least yellow, and the owner decides.
 
+- Read the OCPP 1.6 errata sheet as well as the spec (`ocpp-1.6-errata-sheet.md` in the SAP transcriptions). It can withdraw a key's meaning: 3.81 says `SupportedFeatureProfilesMaxLength` "should not have been part of OCPP 1.6". Heuristics built on such keys are vendor quirks, not spec rules, and should say so.
+
 ## False alarms to avoid
 
 - `TestSimulateChargerAgainstRun` can flake under full-suite load (shutdown races the simulator's status burst). It passes in isolation and isn't caused by unrelated PRs.
 - `TestShutdownWaitsForTheOrphanCancel` (cli/station_test.go) flakes under `-race` on the base branch too (2026-10-22). Check the base before blaming the PR.
 - Race fixes in code driven by clocktest (2026-10-22). Reverting the fix often still passes `-race -count=20`, because `Advance` orders the racing goroutine after the caller returns. Report "correct by inspection, not guarded by a test", and don't call it proven or missing.
 - "address already in use" when other agents run `cli` tests on fixed ports in parallel: retry, don't report.
+- **Length checks on config values** (2026-11-16). Count what goes on the wire: trimmed if the getter trims (`OCPIBusinessName`), raw if the builder copies the field as-is (`locations.Build`). OCPI `string(n)` is UTF-8, so count runes. `CiString` is ASCII-only, so `len` is fine there once the charset is checked.
+
+- **Live readings keyed per EVSE** (2026-11-16). "Clear on StopTransaction" doesn't hold when the next MeterValues just re-adds the reading: a late or replayed sample brings the stopped session back. Check that the transactionId is honoured. Also check that whole-reading replacement doesn't let an energy-only clock-aligned message wipe the power/offered fields. OCPP 1.6 sampled data flows only during a transaction; idle or Reserved connectors report only via `MeterValuesAlignedData` + `ClockAlignedDataInterval`.
+
+- **Waits on core status after a reconnect are vacuous** (2026-11-16). `core.Connected` restores the last known connector statuses, so "both EVSEs AVAILABLE again" passes before the redial's BootNotification is handled. A test that advances a clocktest grace on that signal then races the boot. #60's e2e test failed in about 1 of 3 full-package `-race` runs and never when run alone. Wait on the event itself (`BootedSinceConnect`, `IsOnline`, a proxy `Saw`). Run the whole package in a loop, not `-run X -count=N`.
+- **ocppj.Conn.Call does not serialise outbound CALLs** (2026-11-16). Any automatic CSMS-initiated call (on-connect hooks, background cancels) can overlap a socket command, which breaks OCPP-J §4.1.1. Treat claims of "one call in flight" as scoped to their own loop.
+- **Simulator "simplifications" that invert a spec SHALL** (2026-11-16). Check every documented simulator model rule against the spec text and the errata. #62 wiped charging profiles on Reset, but errata 3.37 says they persist across reboots. It also capped each connector with ChargePointMax, while §3.13.3 makes it the combined limit. Both mislead hardware runbooks built against the simulator. Also, errata 3.57: a composite `chargingSchedule` omits `startSchedule`.
+- **Test-table struct changes break other PRs' rows** (2026-11-16). A PR that adds a field to a shared test-table struct (e.g. `TestGoldenPayloads` gaining `file`) makes another PR's positional rows `{action, func}` fail to compile after a textual conflict resolution. Merge-test with `go vet`, and name the row in the report.
+
+- **Hardware runbooks that change persistent station state** (2026-11-16). Charging profiles and config keys survive a reboot (errata 3.37). Check that the *last* step cleans up, not just a middle one: #66's cleanup was step 9 and steps 10–11 set new TxDefaults afterwards. Also check that every observation a step asks for exists on `main` (not just in an open PR), and that a "negative test" that is accepted cannot confound a later step.
