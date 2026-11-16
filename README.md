@@ -451,21 +451,24 @@ disconnected.
 
 ### Tested hardware
 
-Alpitronic HYC50, firmware `hyc_v3.0.1`, OCPP 1.6-J. What it does that cpms has to
-expect:
+Alpitronic HYC50, firmware `hyc_v3.0.1`, OCPP 1.6-J. It dials `<CSMS URL>/ocpp/<identity>`,
+adding its own identity, and connects over plain `ws://` with security profile 0. What it does
+that cpms has to expect:
 
 | Topic | Seen on the station | What cpms does |
 |---|---|---|
-| Feature profiles | `SupportedFeatureProfiles` lists 5 of its 6 profiles (`SupportedFeatureProfilesMaxLength` = 5) and leaves out Reservation | A missing profile on a full list is *unconfirmed*, not missing. `ReserveNow` and `CancelReservation` work. |
+| Feature profiles | `SupportedFeatureProfiles` lists 5 of its 6 profiles (`SupportedFeatureProfilesMaxLength` = 5) and leaves out Reservation | A missing profile on a full list is *unconfirmed*, not missing. `ReserveNow` and `CancelReservation` work, and the connector goes Reserved. |
 | Reconnect | After a reconnect without a reboot, it sends no StatusNotification | Asks for every EVSE's status with TriggerMessage after a short grace |
 | Status timing | Reports a change only after `MinimumStatusDuration` (10 s) | Nothing; expect the delay |
+| RFID | A tag presented with no remote command is sent as `Authorize`, as the UID in uppercase hex without separators. After `Accepted` it asks for the cable. | Answers `Authorize`; tags compare without regard to case |
+| Remote start | Accepted, then it asks for the cable and waits `ConnectionTimeOut` (120 s) | Nothing |
 | Meter values | `MeterValuesSampledData` is energy only, and `ClockAlignedDataInterval` is 0 (no aligned data) | Turn power and offered values on with `cpms config set`; see [Power, current and the station's configuration](#power-current-and-the-stations-configuration) |
 | Smart Charging | Rate units `Power,Current`, stack levels up to 9, 10 periods, 100 profiles installed | `cpms limit` stays within these |
-| Heartbeat | Takes the interval cpms sends at boot | Nothing |
 
-Not yet checked on the station: the start, stop and unlock flow with a car, RFID without
-a remote command, timestamps, the offline watchdog, and charging profiles while a
-connector is Reserved. Results go in #11.
+Not yet checked on the station: start, stop and unlock with a car connected, which
+connector id is which outlet, whether connector 0 reports a status, the heartbeat spacing,
+timestamps, the station's own offline behaviour, meter values during a session, and charging
+profiles while a connector is Reserved. Results go in #11.
 
 ## Smart charging
 
