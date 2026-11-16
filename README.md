@@ -229,6 +229,11 @@ ALP-HYC-001-1 remote stop accepted
 configured. A typo is caught from config before anything is sent, and the error lists the
 valid uids.
 
+**Output streams:** reports (`status`, `probe` and their `--json`, `config validate`,
+the command confirmations, `version`, the startup lines of `run`) go to stdout, so
+`cpms probe --json | jq` works. Logs, warnings, validation problems and `cpms: …` errors
+go to stderr.
+
 **Exit codes** are stable, so scripts can branch on them:
 
 | Code | Meaning |

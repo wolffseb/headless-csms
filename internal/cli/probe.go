@@ -105,7 +105,7 @@ func newProbeCommand(opts *options) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				cmd.Println(string(b))
+				fmt.Fprintln(cmd.OutOrStdout(), string(b))
 			} else {
 				printProbe(cmd, out, raw)
 			}
@@ -219,10 +219,11 @@ func seconds(d time.Duration) string { return fmt.Sprintf("%gs", d.Seconds()) }
 
 // printProbe renders the report for a person.
 func printProbe(cmd *cobra.Command, out probeOutput, raw bool) {
+	stdout := cmd.OutOrStdout()
 	r := out.ProbeResult
 	cp := r.ChargePoint
 
-	cmd.Printf("%s  OCPP %s\n", cp.ID, cp.OCPPVersion)
+	fmt.Fprintf(stdout, "%s  OCPP %s\n", cp.ID, cp.OCPPVersion)
 	var identity []string
 	if station := strings.TrimSpace(cp.Vendor + " " + cp.Model); station != "" {
 		identity = append(identity, station)
@@ -234,12 +235,12 @@ func printProbe(cmd *cobra.Command, out probeOutput, raw bool) {
 		identity = append(identity, "firmware "+cp.Firmware)
 	}
 	if len(identity) > 0 {
-		cmd.Println("  " + strings.Join(identity, ", "))
+		fmt.Fprintln(stdout, "  "+strings.Join(identity, ", "))
 	}
 
-	cmd.Println()
-	cmd.Println("Features")
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Features")
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	for _, f := range r.Features {
 		required, usedFor := "", "not used by cpms"
 		var uses []string
@@ -260,9 +261,9 @@ func printProbe(cmd *cobra.Command, out probeOutput, raw bool) {
 	}
 	_ = w.Flush()
 
-	cmd.Println()
-	cmd.Println("Settings")
-	w = tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Settings")
+	w = tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	for _, s := range r.Settings {
 		value := s.Value
 		if !s.Reported {
@@ -272,16 +273,16 @@ func printProbe(cmd *cobra.Command, out probeOutput, raw bool) {
 	}
 	_ = w.Flush()
 
-	cmd.Println()
-	cmd.Println("Checks")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Checks")
 	for _, c := range out.checks {
-		cmd.Printf("  %-2s  %s\n", c.mark, c.text)
+		fmt.Fprintf(stdout, "  %-2s  %s\n", c.mark, c.text)
 	}
 
 	if raw {
-		cmd.Println()
-		cmd.Println("All keys")
-		w = tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+		fmt.Fprintln(stdout)
+		fmt.Fprintln(stdout, "All keys")
+		w = tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 		for _, k := range r.Raw {
 			access := "rw"
 			if k.Readonly {
@@ -292,23 +293,23 @@ func printProbe(cmd *cobra.Command, out probeOutput, raw bool) {
 		_ = w.Flush()
 	}
 
-	cmd.Println()
+	fmt.Fprintln(stdout)
 	for _, f := range r.Features {
 		if f.Assumed {
-			cmd.Printf("%s was not reported, but it is mandatory in OCPP %s: assumed present.\n", f.Name, r.ChargePoint.OCPPVersion)
+			fmt.Fprintf(stdout, "%s was not reported, but it is mandatory in OCPP %s: assumed present.\n", f.Name, r.ChargePoint.OCPPVersion)
 		}
 	}
 	for _, name := range out.Missing {
 		n, _ := needOf(name)
-		cmd.Printf("%s is missing: %s\n", grantedBy(r, name), n.without)
+		fmt.Fprintf(stdout, "%s is missing: %s\n", grantedBy(r, name), n.without)
 	}
 	for _, name := range out.Unconfirmed {
 		n, _ := needOf(name)
-		cmd.Printf("%s was not reported, so cpms cannot be sure of it. Try it (%s); if the station refuses, this is what stops working: %s\n",
+		fmt.Fprintf(stdout, "%s was not reported, so cpms cannot be sure of it. Try it (%s); if the station refuses, this is what stops working: %s\n",
 			grantedBy(r, name), tryIt(name), n.without)
 	}
 	if len(out.Missing) == 0 && len(out.Unconfirmed) == 0 {
-		cmd.Println("Every capability cpms requires is present.")
+		fmt.Fprintln(stdout, "Every capability cpms requires is present.")
 	}
 }
 

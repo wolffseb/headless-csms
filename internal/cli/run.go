@@ -166,11 +166,11 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	defer stop()
 	ctl.Serve(ctx)
 
-	cmd.Printf("cpms listening for %s on ws://%s/ocpp/%s\n",
+	fmt.Fprintf(cmd.OutOrStdout(), "cpms listening for %s on ws://%s/ocpp/%s\n",
 		cfg.Charger.ID, server.Addr(), cfg.Charger.ID)
-	cmd.Printf("OCPI versions endpoint %s (listening on %s)\n", ocpiServer.VersionsURL(), ocpiServer.Addr())
-	cmd.Printf("control socket %s\n", ctl.Path())
-	cmd.Println("waiting for the charge point to connect; press Ctrl-C to stop")
+	fmt.Fprintf(cmd.OutOrStdout(), "OCPI versions endpoint %s (listening on %s)\n", ocpiServer.VersionsURL(), ocpiServer.Addr())
+	fmt.Fprintf(cmd.OutOrStdout(), "control socket %s\n", ctl.Path())
+	fmt.Fprintln(cmd.OutOrStdout(), "waiting for the charge point to connect; press Ctrl-C to stop")
 
 	done := make(chan struct{})
 	go func() {
@@ -181,7 +181,7 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	}()
 
 	<-ctx.Done()
-	cmd.Println("shutting down")
+	fmt.Fprintln(cmd.OutOrStdout(), "shutting down")
 	// Each listener gets its own grace, started when its turn comes:
 	// commands.Close below can take up to call_timeout, which would spend a
 	// shared one before the OCPP server got to use it.
