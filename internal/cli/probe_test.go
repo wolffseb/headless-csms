@@ -94,8 +94,8 @@ func TestProbeJSONAndRaw(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &report); err != nil {
 		t.Fatalf("probe --json is not JSON: %v", err)
 	}
-	if !report.OK || len(report.Raw) != 15 {
-		t.Fatalf("ok = %v with %d raw keys, want ok with the simulator's 15", report.OK, len(report.Raw))
+	if !report.OK || len(report.Raw) != 16 {
+		t.Fatalf("ok = %v with %d raw keys, want ok with the simulator's 16", report.OK, len(report.Raw))
 	}
 
 	// --raw lists every key the station reported, with its value.
@@ -259,6 +259,47 @@ func TestProbeUnreportedProfilesAreUnconfirmedNotMissing(t *testing.T) {
 	}
 	if !out.OK || len(out.Missing) != 0 || strings.Join(out.Unconfirmed, ",") != "reservation" {
 		t.Errorf("json = %+v, want ok, nothing missing, reservation unconfirmed", out)
+	}
+}
+
+// A station whose profile list is as long as SupportedFeatureProfilesMaxLength
+// may have left a profile out, like the office Alpitronic HYC50 does with
+// Reservation: that is unconfirmed, with the reason, and the probe exits 0. A
+// list with room left still means what it says (TestProbeWithoutReservationExits10).
+func TestProbeFullProfileListIsUnconfirmedNotMissing(t *testing.T) {
+	t.Parallel()
+	s := newStation(t, 19620)
+	s.connect(func(o *simulator.Options) {
+		// Five profiles, as many as the simulator reports it can list.
+		o.FeatureProfiles = "Core,FirmwareManagement,LocalAuthListManagement,SmartCharging,RemoteTrigger"
+	})
+
+	stdout := s.mustCPMS("probe")
+	expectLines(t, stdout,
+		`Reservation +\? +required`,
+		`Reservation is not in the station's profile list, but the list is full \(SupportedFeatureProfilesMaxLength = 5\), so a profile missing from it may still be supported\.`,
+		`Reservation is unconfirmed\. Try it \(`+"`cpms reserve`"+`\)`,
+	)
+	if strings.Contains(stdout, "Reservation is missing") || strings.Contains(stdout, "Reservation was not reported") {
+		t.Errorf("Reservation is unconfirmed because the list is full, not missing or unreported:\n%s", stdout)
+	}
+
+	var out struct {
+		OK          bool                  `json:"ok"`
+		Missing     []string              `json:"missing"`
+		Unconfirmed []string              `json:"unconfirmed"`
+		Features    []socket.ProbeFeature `json:"features"`
+	}
+	if err := json.Unmarshal([]byte(s.mustCPMS("probe", "--json")), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.OK || len(out.Missing) != 0 || strings.Join(out.Unconfirmed, ",") != "reservation" {
+		t.Errorf("json = %+v, want ok, nothing missing, reservation unconfirmed", out)
+	}
+	if !slices.ContainsFunc(out.Features, func(f socket.ProbeFeature) bool {
+		return f.Name == "Reservation" && f.Support == "unknown" && strings.Contains(f.Note, "SupportedFeatureProfilesMaxLength = 5")
+	}) {
+		t.Errorf("features = %+v, want Reservation unknown, with a note naming the max length", out.Features)
 	}
 }
 

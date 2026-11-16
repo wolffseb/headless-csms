@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -262,5 +263,123 @@ func TestProbeErrorsAreTheCallsErrors(t *testing.T) {
 	bad, _ := newFakeChargePoint(`{"configurationKey":"nope"}`)
 	if _, err := bad.Probe(context.Background()); err == nil {
 		t.Error("a malformed answer should be an error")
+	}
+}
+
+// alpitronicProfiles is what the office Alpitronic HYC50 (firmware
+// hyc_v3.0.1) reports: five profiles, at a maximum of five. It accepts
+// ReserveNow all the same: Reservation is the sixth profile and dropped off.
+const alpitronicProfiles = "Core,FirmwareManagement,LocalAuthListManagement,SmartCharging,RemoteTrigger"
+
+func profilesConfiguration(profiles string, maxLength *string) string {
+	conf := `{"configurationKey":[{"key":"SupportedFeatureProfiles","readonly":true,"value":"` + profiles + `"}`
+	if maxLength != nil {
+		conf += `,{"key":"SupportedFeatureProfilesMaxLength","readonly":true,"value":"` + *maxLength + `"}`
+	}
+	return conf + `]}`
+}
+
+// A list as long as SupportedFeatureProfilesMaxLength may have been cut
+// short, so a profile missing from it is unknown, not absent. A list with
+// room left still means what it says, and without a usable max length
+// nothing changes.
+func TestProbeFullProfileListLeavesMissingProfilesUnknown(t *testing.T) {
+	t.Parallel()
+
+	ptr := func(s string) *string { return &s }
+	tests := []struct {
+		name      string
+		profiles  string
+		maxLength *string
+		want      ocpp.Support
+		noted     bool
+	}{
+		{"full list, as the Alpitronic reports it", alpitronicProfiles, ptr("5"), ocpp.SupportUnknown, true},
+		{"longer than the max length", alpitronicProfiles + ",VendorProfile", ptr("5"), ocpp.SupportUnknown, true},
+		{"room left in the list", "Core,FirmwareManagement,SmartCharging,RemoteTrigger", ptr("5"), ocpp.SupportNo, false},
+		{"no max length", alpitronicProfiles, nil, ocpp.SupportNo, false},
+		{"max length not an integer", alpitronicProfiles, ptr("five"), ocpp.SupportNo, false},
+		{"max length zero", alpitronicProfiles, ptr("0"), ocpp.SupportNo, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cp, _ := newFakeChargePoint(profilesConfiguration(tt.profiles, tt.maxLength))
+			report, err := cp.Probe(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := report.Support(ocpp.CapReservation); got != tt.want {
+				t.Errorf("reservation = %s, want %s", got, tt.want)
+			}
+			// What the list does name is still there.
+			for _, c := range []ocpp.Capability{ocpp.CapRemoteStartStop, ocpp.CapTriggerStatus, ocpp.CapSmartCharging} {
+				if got := report.Support(c); got != ocpp.SupportYes {
+					t.Errorf("%s = %s, want yes", c, got)
+				}
+			}
+
+			for _, f := range report.Features {
+				if f.Name != "Reservation" {
+					if f.Note != "" {
+						t.Errorf("%s has a note %q; only the profile left out needs one", f.Name, f.Note)
+					}
+					continue
+				}
+				if !tt.noted {
+					if f.Note != "" {
+						t.Errorf("Reservation note = %q, want none", f.Note)
+					}
+					continue
+				}
+				for _, part := range []string{"Reservation", "SupportedFeatureProfilesMaxLength = 5", "may still be supported"} {
+					if !strings.Contains(f.Note, part) {
+						t.Errorf("Reservation note = %q, want it to mention %q", f.Note, part)
+					}
+				}
+			}
+		})
+	}
+}
+
+// Core is mandatory in 1.6, so a full list that leaves it out does not make
+// remote start/stop and unlock unconfirmed: Core is assumed present, as when
+// no list is reported at all.
+func TestProbeFullProfileListWithoutCoreAssumesCore(t *testing.T) {
+	t.Parallel()
+
+	five := "5"
+	cp, _ := newFakeChargePoint(profilesConfiguration(
+		"FirmwareManagement,LocalAuthListManagement,Reservation,SmartCharging,RemoteTrigger", &five))
+	report, err := cp.Probe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := report.Support(ocpp.CapRemoteStartStop); got != ocpp.SupportYes {
+		t.Errorf("remote start/stop = %s, want yes", got)
+	}
+	for _, f := range report.Features {
+		if f.Name == "Core" && (!f.Assumed || f.Note != "") {
+			t.Errorf("Core = %+v, want assumed and no note", f)
+		}
+	}
+}
+
+// Capabilities reads the same two keys as Probe and comes to the same answer.
+func TestCapabilitiesFullProfileListLeavesReservationUnknown(t *testing.T) {
+	t.Parallel()
+
+	five := "5"
+	cp, fake := newFakeChargePoint(profilesConfiguration(alpitronicProfiles, &five))
+	caps, err := cp.Capabilities(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if caps.Reservation != ocpp.SupportUnknown {
+		t.Errorf("reservation = %s, want unknown", caps.Reservation)
+	}
+	if sent := fake.sent(); len(sent) != 1 || !strings.Contains(string(sent[0].payload), "SupportedFeatureProfilesMaxLength") {
+		t.Errorf("sent %+v, want one GetConfiguration that asks for SupportedFeatureProfilesMaxLength too", sent)
 	}
 }

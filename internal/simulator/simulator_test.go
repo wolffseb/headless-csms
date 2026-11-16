@@ -525,6 +525,25 @@ func TestGetConfigurationReportsFeatureProfiles(t *testing.T) {
 		}
 	})
 
+	// The max length is how many profiles the simulator implements, so its
+	// default list is full and an overridden list of that length lacking a
+	// profile looks cut short, as on a real station that has more profiles
+	// than it can list.
+	t.Run("profile list max length", func(t *testing.T) {
+		t.Parallel()
+
+		r := newRig(t)
+		waitFor(t, "the station to come online", func() bool { return r.core.IsOnline(testCP) })
+
+		var conf v16.GetConfigurationConf
+		r.call(t, v16.ActionGetConfiguration, v16.GetConfigurationReq{}, &conf)
+
+		profiles := strings.Split(configValue(conf, v16.KeySupportedFeatureProfiles), ",")
+		if got, want := configValue(conf, v16.KeySupportedFeatureProfilesMaxLength), strconv.Itoa(len(profiles)); got != want {
+			t.Errorf("%s = %q, want %q, the length of %v", v16.KeySupportedFeatureProfilesMaxLength, got, want, profiles)
+		}
+	})
+
 	t.Run("unknown key", func(t *testing.T) {
 		t.Parallel()
 

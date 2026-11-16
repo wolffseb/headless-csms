@@ -109,7 +109,7 @@ func BuildProbe(report ocpp.ProbeReport, snap core.Snapshot, chargePointID strin
 		for _, g := range f.Grants {
 			grants = append(grants, string(g))
 		}
-		out.Features = append(out.Features, ProbeFeature{Name: f.Name, Support: string(f.Support), Grants: grants, Assumed: f.Assumed})
+		out.Features = append(out.Features, ProbeFeature{Name: f.Name, Support: string(f.Support), Grants: grants, Assumed: f.Assumed, Note: f.Note})
 	}
 	for _, c := range ocpp.AllCapabilities() {
 		out.Capabilities = append(out.Capabilities, ProbeCapability{Name: string(c), Support: string(report.Support(c))})

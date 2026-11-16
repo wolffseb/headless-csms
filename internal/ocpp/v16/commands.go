@@ -156,6 +156,11 @@ const (
 	KeyMeterValueSampleInterval      = "MeterValueSampleInterval"
 	KeyMeterValuesSampledData        = "MeterValuesSampledData"
 
+	// KeySupportedFeatureProfilesMaxLength caps how many profiles the
+	// station can list in SupportedFeatureProfiles, so a list that long may
+	// have been cut short.
+	KeySupportedFeatureProfilesMaxLength = "SupportedFeatureProfilesMaxLength"
+
 	// The Smart Charging profile's own keys.
 	KeyChargingScheduleAllowedChargingRateUnit = "ChargingScheduleAllowedChargingRateUnit"
 	KeyChargeProfileMaxStackLevel              = "ChargeProfileMaxStackLevel"

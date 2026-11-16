@@ -117,22 +117,22 @@ const (
 	profileSmartCharging = "SmartCharging"
 )
 
-// Capabilities reads SupportedFeatureProfiles. A station that does not report
-// the key, or reports it empty, has not said anything about its optional
-// features: they are unknown, as in Probe, not absent.
+// Capabilities reads SupportedFeatureProfiles and its max length. A station
+// that does not report the list, or reports it empty, has not said anything
+// about its optional features: they are unknown, as in Probe, not absent. So
+// is a profile missing from a list that is as long as the station can make
+// it.
 func (cp *ChargePoint) Capabilities(ctx context.Context) (ocpp.Capabilities, error) {
-	conf, err := cp.GetConfiguration(ctx, []string{KeySupportedFeatureProfiles})
+	conf, err := cp.GetConfiguration(ctx, []string{KeySupportedFeatureProfiles, KeySupportedFeatureProfilesMaxLength})
 	if err != nil {
 		return ocpp.Capabilities{}, err
 	}
 
-	var value string
+	values := make(map[string]string, len(conf.ConfigurationKey))
 	for _, k := range conf.ConfigurationKey {
-		if k.Key == KeySupportedFeatureProfiles {
-			value = k.Value
-		}
+		values[k.Key] = k.Value
 	}
-	report := ocpp.ProbeReport{Features: features(value)}
+	report := ocpp.ProbeReport{Features: features(values)}
 	return ocpp.Capabilities{
 		Reservation:   report.Support(ocpp.CapReservation),
 		RemoteTrigger: report.Support(ocpp.CapTriggerStatus),
