@@ -208,6 +208,9 @@ func (e *stationEnv) call(cmd *cobra.Command, req socket.Request) (json.RawMessa
 		if req.Op == socket.OpConfigSet {
 			subject = req.Key
 		}
+		if req.Station {
+			subject = "station"
+		}
 		return nil, exitFor(req.Op, subject, err)
 	}
 	return raw, nil
@@ -294,6 +297,7 @@ func printStatus(cmd *cobra.Command, st socket.Status) {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", e.UID, status, reservation, transaction, meterCell(e, time.Now()))
 	}
 	_ = w.Flush()
+	printProfiles(cmd.OutOrStdout(), st)
 	fmt.Fprintln(cmd.OutOrStdout())
 	fmt.Fprintln(cmd.OutOrStdout(), ocpiLine(st.OCPI))
 }

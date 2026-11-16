@@ -171,6 +171,11 @@ func (s *Service) StopTransaction(cpID, txID string, meterStop int, reason strin
 	// has gone as still charging.
 	delete(cp.readings, tx.EVSEUID)
 	out := *tx
+	// The spec ends a TxProfile with its transaction; TxDefault and
+	// StationMax records stay.
+	_, profileEvents := s.forgetLocked(func(p ChargingProfile) bool {
+		return p.ChargePointID == cpID && p.Purpose == PurposeTx && p.TransactionID == txID
+	}, ProfileTransactionEnded)
 	s.mu.Unlock()
 
 	if err := s.persist(); err != nil {
@@ -182,6 +187,7 @@ func (s *Service) StopTransaction(cpID, txID string, meterStop int, reason strin
 		Kind: EventTransactionStopped, At: at, ChargePointID: cpID,
 		EVSEUID: out.EVSEUID, TransactionID: txID, IDTag: out.IDTag, Detail: reason,
 	})
+	s.publishAll(profileEvents)
 	return out, true
 }
 

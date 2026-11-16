@@ -241,6 +241,7 @@ ALP-HYC-001-1 remote stop accepted
 | `cpms ocpi unregister` | Forgets the OCPI registration so the partner can register again; see [Registering with an OCPI partner](#registering-with-an-ocpi-partner). |
 | `cpms probe [--json] [--raw]` | What the station supports and how it is set up; see [Probing the station](#probing-the-station). |
 | `cpms config set <key> <value>` | Sets one of the **station's** OCPP configuration keys (`ChangeConfiguration`); `config.yaml` is not touched. See [Power, current and the station's configuration](#power-current-and-the-stations-configuration). |
+| `cpms limit set\|clear\|show`, `cpms profile set` | Charging limits (OCPP Smart Charging); see [Smart charging](#smart-charging). |
 
 `--evse` takes the EVSE `uid` from config, and may be left out when only one EVSE is
 configured. A typo is caught from config before anything is sent, and the error lists the
@@ -265,8 +266,9 @@ stdout too. Logs, validation problems and `cpms: …` errors go to stderr.
 | 6 | The station is faulted or unavailable |
 | 7 | The station did not answer within `charger.call_timeout` |
 | 8 | Unlock failed, or the station does not support the command |
-| 9 | Refused by cpms before sending: already reserved (including while the cancel of a timed-out reservation is in flight), no reservation to cancel, nothing to stop, shutting down. `cpms ocpi unregister`: nothing is registered, or a registration is still in progress (nothing was changed; try again) |
+| 9 | Refused by cpms before sending: already reserved (including while the cancel of a timed-out reservation is in flight), no reservation to cancel, nothing to stop, a `tx` limit with no session running (without `--force`), shutting down. `cpms ocpi unregister`: nothing is registered, or a registration is still in progress (nothing was changed; try again) |
 | 10 | `cpms probe`: the station reported that it lacks a capability cpms requires (one it merely did not report is not an error) |
+| 11 | `cpms limit` / `cpms profile`: the station does not support this charging profile or request (`NotSupported`, or a `NotImplemented`/`NotSupported` CALLERROR) |
 
 ### Power, current and the station's configuration
 
@@ -368,7 +370,7 @@ Features
   Core                ✓  required  start, stop, unlock
   Reservation         ✓  required  reserve, cancel, OCPI RESERVE_NOW
   RemoteTrigger       ✓  optional  status refresh on demand
-  SmartCharging       ✓            not used by cpms
+  SmartCharging       ✓  optional  limit, profile
   FirmwareManagement  ✓            not used by cpms
 
 Settings
@@ -409,9 +411,9 @@ cpms: the station lacks 1 capability that cpms requires: reservation
 
 - **Features** are named as the station names them (1.6 feature profiles). Core and
   Reservation are required; without RemoteTrigger cpms only learns about status changes when
-  the station reports them by itself. SmartCharging is reported so that you know, before
-  cpms can set charging limits, whether the station takes OCPP charging profiles; nothing in
-  cpms needs it yet, so its absence never fails the probe.
+  the station reports them by itself. SmartCharging is optional: without it `cpms limit` and
+  `cpms profile` are refused, but nothing else is affected, so its absence never fails the
+  probe.
 - **Missing is not the same as not reported.** A capability the station reports as absent
   is *missing*, and makes the command exit 10. A required capability the station says
   nothing about (`?`) is *unconfirmed*: a warning that suggests trying it, such as
@@ -439,14 +441,134 @@ cpms: the station lacks 1 capability that cpms requires: reservation
 - `--raw` adds every key the station reported, with whether it is read-only. `--json` prints
   the whole report, including every key, with `ok`, `missing`, `unconfirmed` and `warnings`
   for scripts. `ok` is false only when `missing` is not empty. A feature's `grants` lists the
-  capabilities it provides, whether or not cpms uses them (SmartCharging grants
-  `smart_charging`, which no command needs yet); what cpms requires is what `missing` and
-  `unconfirmed` are computed from. A feature's `note` says why its support is what it is
-  when the station's answer alone would mislead, such as a full profile list; it is empty
-  otherwise.
+  capabilities it provides, whether or not cpms uses them (FirmwareManagement grants
+  nothing cpms uses); what cpms requires is what `missing` and `unconfirmed` are computed
+  from. A feature's `note` says why its support is what it is when the station's answer
+  alone would mislead, such as a full profile list; it is empty otherwise.
 If the station is not connected, `cpms probe` exits 3 and prints the CSMS URL to configure on
 the station, the same one `cpms config validate` prints, plus when and why it last
 disconnected.
+
+## Smart charging
+
+`cpms limit` and `cpms profile` set OCPP 1.6 charging profiles: limits on how much power or
+current an EVSE, or the whole station, may draw. The motivating case is the office Alpitronic
+HYC50: can a limit be set while a connector is **reserved**, and does it hold once the
+reservation is redeemed?
+
+| Command | Does |
+|---|---|
+| `cpms limit set [--evse UID \| --station] (--kw N \| --amps N) [--purpose P] [--stack N] [--for 1h] [--force]` | Installs a one-period profile from now on. `--kw` is sent in W, `--amps` per phase; exactly one is required. |
+| `cpms limit clear [--evse UID \| --station] (--id N \| --purpose P \| --all)` | `ClearChargingProfile`. `--purpose` and `--all` clear on every EVSE and the station unless `--evse` or `--station` narrows them. |
+| `cpms limit show [--evse UID \| --station] [--duration 1h] [--unit W\|A]` | `GetCompositeSchedule`: the limits the station will actually apply, all profiles combined, as a period table. |
+| `cpms profile set [--evse UID \| --station] -f profile.json` | Installs a full profile from a file (shape below). |
+
+**Purposes** (`--purpose`, default `tx-default`):
+
+- `tx-default` (`TxDefaultProfile`) applies to sessions that start after it is set. It is the
+  one that can be set while an EVSE is reserved and idle.
+- `tx` (`TxProfile`) applies to the running session and overrides `tx-default`; it ends with
+  the session. cpms fills in the transaction id of the one session on the EVSE. With no session
+  running cpms refuses it (exit 9) unless `--force`, which sends it without a transaction id to
+  see what the station says (the spec expects `Rejected`).
+- `station-max` (`ChargePointMaxProfile`) caps the whole station; it needs `--station`, and
+  `--station` takes nothing else.
+
+Within one purpose the highest `--stack` level wins. `--for 1h` sets the schedule's
+`duration` and the profile's `validTo`; without it the limit holds until cleared. cpms
+allocates the profile ids (never reused, also across restarts), and a profile with the same
+id, or the same EVSE, purpose and stack level, replaces the one before it, at the station and
+in cpms's records.
+
+**What cpms remembers.** A profile is recorded in `state.json` only once the station answers
+`Accepted`, and `cpms status` lists the records per EVSE and for the station, marked *as sent*:
+the station is the source of truth and may have dropped them, for instance on a reboot. `cpms
+limit show` asks it what it applies. A `tx` record goes when its session stops; a clear the
+station answers `Unknown` (it holds no such profile) drops the matching records too.
+`status --json` carries them as `charging_profiles`, on `charge_point` for the station and on
+each EVSE: `id`, `purpose`, `stack_level`, `unit`, `periods` (`start_s`, `limit`, `phases`),
+`valid_from`, `valid_to`, `transaction_id`, `set_at` and `source`.
+
+**Answers and exit codes.** `Accepted` exits 0. `Rejected` exits 4: the station will not take
+this profile (a `tx` one without a session, a unit it does not allow, a stack level or period
+count beyond its limits, too many profiles installed). `NotSupported`, or a `NotImplemented` /
+`NotSupported` CALLERROR, exits 11: the station does not do Smart Charging at all, or not this
+request. A clear answered `Unknown` exits 4 with "holds no matching charging profile". No
+answer within `charger.call_timeout` exits 7. Mistakes in the flags or the file exit 1 before
+anything is sent.
+
+**Profile file** for `cpms profile set -f`. The id is not part of it; cpms allocates one.
+
+```json
+{
+  "purpose": "tx-default",
+  "stack_level": 1,
+  "kind": "absolute",
+  "valid_from": "2026-11-17T08:00:00Z",
+  "valid_to": "2026-11-17T18:00:00Z",
+  "schedule": {
+    "unit": "W",
+    "start": "2026-11-17T08:00:00Z",
+    "duration_s": 36000,
+    "min_rate": 4000,
+    "periods": [
+      {"start_s": 0, "limit": 22000},
+      {"start_s": 3600, "limit": 11000, "phases": 3}
+    ]
+  }
+}
+```
+
+`purpose` is `tx-default`, `station-max` or `tx` (then optionally `transaction_id`); `kind` is
+`absolute` (default), `relative` or `recurring` (then `recurrency`: `daily` or `weekly`, and a
+`start`); `unit` is `W` or `A`. Only `purpose`, `schedule.unit` and `schedule.periods` are
+required. Periods start at 0 and increase; limits take at most one decimal place. Unknown
+fields are refused.
+
+### Runbook: a limit while reserved, on the office Alpitronic
+
+The HYC50 reports `ChargingScheduleAllowedChargingRateUnit=Power,Current`,
+`ChargeProfileMaxStackLevel=9`, `ChargingScheduleMaxPeriods=10` and
+`MaxChargingProfilesInstalled=100`. Its `SupportedFeatureProfiles` is cut short at five
+entries, so `cpms probe` may show SmartCharging as `?` although the station supports it: go by
+the four keys above. `cpms run` is running, the station is connected, and one EVSE is
+configured (otherwise add `--evse`). Use the RFID card you will charge with as `--tag`.
+
+1. **Check the station.** `cpms probe`: the four keys above, and SmartCharging ✓ or `?`.
+   `cpms limit show` should answer (exit 0); exit 11 means no Smart Charging at all and the
+   rest is moot.
+2. **Reserve.** `cpms reserve --tag <card> --expires 30m`. `cpms status` shows `RESERVED`.
+3. **Set a limit while reserved.** `cpms limit set --kw 20`.
+   - exit 0, `Accepted`: the station took a TxDefault on a reserved connector. `cpms status`
+     still shows `RESERVED` and lists `#1 tx-default stack 0, 20.0 kW` as sent.
+   - exit 4, `Rejected`: it refuses profiles while reserved (or in W: try `--amps 32`).
+   - exit 11: no Smart Charging.
+4. **Ask what it applies.** `cpms limit show`: a period at `20.0 kW`. No period, or a higher
+   one, means it accepted the profile but does not (yet) apply it to this connector.
+5. **Negative test.** `cpms limit set --purpose tx --kw 20 --force`: expected exit 4,
+   `Rejected` (no session to bind it to). `Accepted` is worth noting: the station then holds a
+   TxProfile without a session; clear it with `cpms limit clear --purpose tx`.
+6. **A station cap leaves the reservation alone.** `cpms limit set --station --purpose
+   station-max --kw 30`, then `cpms status`: still `RESERVED`, reservation unchanged.
+7. **Redeem.** Plug in the car and present the card (or `cpms start --tag <card>`).
+   `cpms status` shows `CHARGING` with the session, and the reservation gone. Wait for a meter
+   reading: the power stays at or below 20 kW and the offered power shows the limit. If it
+   charges above 20 kW, the station accepted the TxDefault but did not apply it to the session
+   that redeemed the reservation, which is the finding.
+8. **Tighten during the session.** `cpms limit set --purpose tx --kw 10`: exit 0, the power
+   falls to 10 kW or below within a meter interval, and `cpms limit show` shows 10.0 kW.
+9. **Stop and clean up.** `cpms stop`, then `cpms status`: the `tx` record is gone with the
+   session, the `tx-default` and `station-max` remain. `cpms limit clear --all` removes
+   everything (exit 0; exit 4 with `Unknown` means the station had already dropped them), and
+   `cpms limit show` shows no limit.
+10. **Expiry with a TxDefault set.** `cpms reserve --expires 2m`, `cpms limit set --kw 20`,
+    let the reservation expire (or `cpms cancel`), then `cpms limit show`: the TxDefault
+    should survive the reservation ending.
+11. **Units.** Repeat step 3 in the other unit (`--amps 32` after `--kw`); the HYC50 allows
+    both, so both should be `Accepted`.
+
+The simulator runs the same sequence: `cpms simulate charger --meter-interval 5s` caps its
+50 kW at the active limit, and `--scenario reject-profile` answers every profile `Rejected`.
 
 ## OCPI
 
@@ -599,7 +721,8 @@ which is commented field by field and is itself checked by the test suite.
 Two files, one rule: **`config.yaml` is read-only to the tool.** It holds what you decide
 (the charger, the static location data, and the two OCPI tokens that are ours to choose).
 `state.json` holds what the tool learns at runtime (the counterparty's token and endpoints,
-active reservations and transactions, and the id counters) and is the only file cpms writes.
+active reservations and transactions, the charging profiles the station accepted, and the id
+counters) and is the only file cpms writes.
 
 `state.json` sits next to the config file by default, wherever cpms is started from;
 `--state <path>` puts it elsewhere, and `cpms config validate` prints which file is in use.
@@ -611,12 +734,15 @@ never overwritten: move it aside to start from empty state.
 
 What survives a restart: **active** reservations (with their expiry timers re-armed; one that
 expired while cpms was down is dropped), **active** transactions (so the station can still stop
-a session that began before the restart), and the counters behind reservation, transaction and
-remote-start ids, which are never handed out twice. Reservations still waiting for the
+a session that began before the restart), the charging profiles the station accepted (as
+sent; a `tx` one whose session ended meanwhile is dropped), and the counters behind
+reservation, transaction, remote-start and charging-profile ids, which are never handed out
+twice. Reservations still waiting for the
 station's answer (or for the answer to their cancel), and finished sessions, are deliberately not kept: `state.json` is not a
 history.
 
-Any change to its schema bumps the `version` field. A cpms only reads its own version, so an
+Any change to its schema bumps the `version` field. A cpms reads its own version and migrates
+older ones (version 2 added the charging profiles; a version 1 file loads with none), and an
 older build refuses a newer file instead of silently dropping fields it does not know.
 
 That split is why `ocpi.token_c` is a fixed value in config rather than being generated
@@ -939,9 +1065,9 @@ arrive later as a sibling of `v16` rather than as a rewrite.
 Commands go the other way through `ocpp.ChargePoint`, which `csms.Server.Command(id)` hands
 out: `ReserveNow`, `CancelReservation`, `RemoteStart`, `RemoteStop`, `UnlockConnector`,
 `TriggerStatus`, `Capabilities`, `Probe`, and the smart-charging trio `SetChargingProfile`,
-`ClearChargingProfile` and `GetCompositeSchedule` (no CLI yet). A charging profile is
+`ClearChargingProfile` and `GetCompositeSchedule` (`cpms limit`, `cpms profile`). A charging profile is
 validated before anything is sent (periods from 0 and strictly increasing, limits with at
-most one decimal place, a `Tx` profile needs a transaction, only `StationMax` may address the
+most one decimal place, only a `Tx` profile takes a transaction, only `StationMax` may address the
 whole station); a bad one fails with `ocpp.ErrInvalidProfile`. Callers address EVSEs by their OCPI `uid` from config and
 get back a version-agnostic status (`Accepted`, `Occupied`, `UnlockFailed`, ...) alongside the
 station's literal answer. A station saying no is a result, not an error; errors are for the

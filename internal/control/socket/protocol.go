@@ -36,6 +36,14 @@ const (
 	OpProbe   Op = "probe"
 	// OpConfigSet changes one of the station's configuration keys.
 	OpConfigSet Op = "config_set"
+	// OpLimitSet installs a single-limit charging profile.
+	OpLimitSet Op = "limit_set"
+	// OpLimitClear clears charging profiles.
+	OpLimitClear Op = "limit_clear"
+	// OpLimitShow asks the station for its composite schedule.
+	OpLimitShow Op = "limit_show"
+	// OpProfileSet installs a full charging profile.
+	OpProfileSet Op = "profile_set"
 	// OpOCPIUnregister forgets the OCPI registration, so the counterparty
 	// can register again with TOKEN_A.
 	OpOCPIUnregister Op = "ocpi-unregister"
@@ -57,6 +65,85 @@ type Request struct {
 	// config_set.
 	Key   string `json:"key,omitempty"`
 	Value string `json:"value,omitempty"`
+	// Station addresses the whole station (OCPP 1.6 connector 0) instead of
+	// EVSE, for the limit and profile operations.
+	Station bool `json:"station,omitempty"`
+	// Limit is the limit for limit_set.
+	Limit *LimitRequest `json:"limit,omitempty"`
+	// Clear selects the profiles for limit_clear.
+	Clear *ClearRequest `json:"clear,omitempty"`
+	// Schedule is the window for limit_show.
+	Schedule *ScheduleRequest `json:"schedule,omitempty"`
+	// Profile is the profile for profile_set.
+	Profile *Profile `json:"profile,omitempty"`
+}
+
+// LimitRequest is a single-limit profile. Exactly one of KW and Amps is set.
+type LimitRequest struct {
+	KW   *float64 `json:"kw,omitempty"`
+	Amps *float64 `json:"amps,omitempty"`
+	// Purpose is "tx-default" (the default), "station-max" or "tx".
+	Purpose    string `json:"purpose,omitempty"`
+	StackLevel int    `json:"stack_level,omitempty"`
+	// For is a Go duration ("1h") bounding the profile; empty is open-ended.
+	For string `json:"for,omitempty"`
+	// Force sends a tx profile without a transaction when none is running.
+	Force bool `json:"force,omitempty"`
+}
+
+// ClearRequest selects charging profiles. Each unset field means "any"; the
+// request's EVSE or Station narrows it to one EVSE, or the station, only
+// when ByTarget is set.
+type ClearRequest struct {
+	ID       *int   `json:"id,omitempty"`
+	Purpose  string `json:"purpose,omitempty"`
+	ByTarget bool   `json:"by_target,omitempty"`
+}
+
+// ScheduleRequest is the window for a composite schedule.
+type ScheduleRequest struct {
+	// Duration is a Go duration; empty means an hour.
+	Duration string `json:"duration,omitempty"`
+	// Unit is "W" or "A"; empty leaves it to the station.
+	Unit string `json:"unit,omitempty"`
+}
+
+// Profile is a charging profile in cpms's neutral JSON shape: what `cpms
+// profile set -f` reads, documented in the README. Its id is not part of
+// it; cpms allocates one.
+type Profile struct {
+	// Purpose is "tx-default", "station-max" or "tx".
+	Purpose    string `json:"purpose"`
+	StackLevel int    `json:"stack_level"`
+	// Kind is "absolute" (the default), "relative" or "recurring".
+	Kind string `json:"kind,omitempty"`
+	// Recurrency is "daily" or "weekly", for a recurring profile.
+	Recurrency string     `json:"recurrency,omitempty"`
+	ValidFrom  *time.Time `json:"valid_from,omitempty"`
+	ValidTo    *time.Time `json:"valid_to,omitempty"`
+	// TransactionID pins a tx profile to a session; empty means the one
+	// running on the EVSE.
+	TransactionID string          `json:"transaction_id,omitempty"`
+	Schedule      ProfileSchedule `json:"schedule"`
+}
+
+// ProfileSchedule is a profile's schedule.
+type ProfileSchedule struct {
+	// Unit is "W" or "A".
+	Unit string `json:"unit"`
+	// Start anchors an absolute or recurring schedule.
+	Start           *time.Time      `json:"start,omitempty"`
+	DurationSeconds *int            `json:"duration_s,omitempty"`
+	MinRate         *float64        `json:"min_rate,omitempty"`
+	Periods         []ProfilePeriod `json:"periods"`
+}
+
+// ProfilePeriod is one step of a schedule: Limit, in the schedule's unit,
+// from StartSeconds after the schedule's start until the next period.
+type ProfilePeriod struct {
+	StartSeconds int     `json:"start_s"`
+	Limit        float64 `json:"limit"`
+	Phases       *int    `json:"phases,omitempty"`
 }
 
 // Response is the one line the socket answers with.
@@ -107,6 +194,10 @@ const (
 	// already reserved, nothing to cancel, nothing to stop, or cpms is
 	// shutting down.
 	CodeRefused Code = "refused"
+	// CodeNotSupported means the station does not support the charging
+	// profile or request: it answered NotSupported, or a NotImplemented or
+	// NotSupported CALLERROR, to a limit or profile operation.
+	CodeNotSupported Code = "not_supported"
 	// CodeInternal is anything else.
 	CodeInternal Code = "internal"
 )
@@ -126,6 +217,47 @@ type ConfigSetResult struct {
 	Key    string `json:"key"`
 	Value  string `json:"value"`
 	Status string `json:"status"`
+}
+
+// ChargingProfileStatus is a charging profile the station accepted, as cpms
+// sent it. The station may have dropped it since. It is part of status
+// --json, so a public interface.
+type ChargingProfileStatus struct {
+	ID int `json:"id"`
+	// Purpose is "tx-default", "station-max" or "tx".
+	Purpose    string          `json:"purpose"`
+	StackLevel int             `json:"stack_level"`
+	Unit       string          `json:"unit"`
+	Periods    []ProfilePeriod `json:"periods"`
+	ValidFrom  *time.Time      `json:"valid_from,omitempty"`
+	ValidTo    *time.Time      `json:"valid_to,omitempty"`
+	// TransactionID is set for a tx profile.
+	TransactionID string    `json:"transaction_id,omitempty"`
+	SetAt         time.Time `json:"set_at"`
+	Source        string    `json:"source"`
+}
+
+// ProfileResult is the result of OpLimitSet and OpProfileSet: the profile
+// the station accepted, on EVSE ("" for the station).
+type ProfileResult struct {
+	EVSE string `json:"evse"`
+	ChargingProfileStatus
+}
+
+// ClearResult is the result of OpLimitClear: the ids of the records cpms
+// dropped.
+type ClearResult struct {
+	Dropped []int `json:"dropped"`
+}
+
+// ScheduleResult is the result of OpLimitShow: the limits the station will
+// apply, all profiles combined.
+type ScheduleResult struct {
+	EVSE            string          `json:"evse"`
+	Start           time.Time       `json:"start"`
+	DurationSeconds *int            `json:"duration_s,omitempty"`
+	Unit            string          `json:"unit"`
+	Periods         []ProfilePeriod `json:"periods"`
 }
 
 // Status is the result of OpStatus. Its JSON is what `cpms status --json`
@@ -172,6 +304,8 @@ type ChargePointStatus struct {
 	// LastDisconnect is nil unless the station has disconnected since
 	// `cpms run` started.
 	LastDisconnect *DisconnectStatus `json:"last_disconnect"`
+	// ChargingProfiles are the station-wide profiles it accepted, as sent.
+	ChargingProfiles []ChargingProfileStatus `json:"charging_profiles"`
 }
 
 // DisconnectStatus is when and why the station last went offline.
@@ -204,6 +338,9 @@ type EVSEStatus struct {
 	CurrentAt        *time.Time `json:"current_at,omitempty"`
 	PowerOfferedAt   *time.Time `json:"power_offered_at,omitempty"`
 	CurrentOfferedAt *time.Time `json:"current_offered_at,omitempty"`
+	// ChargingProfiles are the profiles the station accepted for this EVSE,
+	// as sent.
+	ChargingProfiles []ChargingProfileStatus `json:"charging_profiles"`
 }
 
 // ReservationStatus is a reservation held on an EVSE.

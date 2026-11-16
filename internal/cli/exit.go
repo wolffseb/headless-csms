@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/wolffseb/cli-cpms/internal/control/socket"
 )
@@ -24,6 +25,10 @@ const (
 	// capability cpms requires. It is distinct so the on-site hardware
 	// check can script it.
 	ExitMissingCapability = 10
+	// ExitNotSupported means the station does not support a charging limit
+	// or profile: it answered NotSupported, or a NotImplemented or
+	// NotSupported CALLERROR.
+	ExitNotSupported = 11
 )
 
 // ExitStatus is an error that carries the process exit code. main exits with
@@ -83,6 +88,14 @@ func exitFor(op socket.Op, evse string, err error) error {
 			hint = ": it does not know this key. `cpms probe --raw` lists the keys it reports"
 		case op == socket.OpConfigSet:
 			hint = ". The key may be read-only, or the value not one it accepts"
+		case op == socket.OpLimitClear && se.Status == "Unknown":
+			dropped := ""
+			if strings.Contains(se.Message, "cpms dropped") {
+				dropped = "; cpms dropped its records of them"
+			}
+			return &ExitStatus{Code: ExitRejected, Err: msg("the station holds no matching charging profile (status Unknown)%s", dropped)}
+		case op == socket.OpLimitSet || op == socket.OpProfileSet:
+			hint = ". A tx profile needs a running session; otherwise check the unit, stack level and periods against `cpms probe`"
 		}
 		return &ExitStatus{Code: ExitRejected, Err: msg("the station rejected the %s%s%s", noun(op), answer(se), hint)}
 	case socket.CodeOccupied:
@@ -96,6 +109,9 @@ func exitFor(op socket.Op, evse string, err error) error {
 			return &ExitStatus{Code: ExitUnlockFailed, Err: msg("the station could not release the cable lock%s", answer(se))}
 		}
 		return &ExitStatus{Code: ExitUnlockFailed, Err: msg("the station does not support this%s", answer(se))}
+	case socket.CodeNotSupported:
+		return &ExitStatus{Code: ExitNotSupported, Err: msg(
+			"the station does not support this %s%s. `cpms probe` shows its SmartCharging support, allowed units and limits", noun(op), answer(se))}
 	case socket.CodeRefused:
 		// control's message already names the EVSE.
 		return &ExitStatus{Code: ExitRefused, Err: errors.New(se.Message)}
@@ -131,6 +147,12 @@ func noun(op socket.Op) string {
 		return "remote stop"
 	case socket.OpConfigSet:
 		return "configuration change"
+	case socket.OpLimitSet, socket.OpProfileSet:
+		return "charging profile"
+	case socket.OpLimitClear:
+		return "clearing of charging profiles"
+	case socket.OpLimitShow:
+		return "composite schedule request"
 	default:
 		return string(op)
 	}

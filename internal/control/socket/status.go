@@ -16,7 +16,7 @@ import (
 // Every timestamp is in UTC; the CLI converts to local time for display.
 func BuildStatus(snap core.Snapshot, chargePointID string) Status {
 	out := Status{
-		ChargePoint: ChargePointStatus{ID: chargePointID},
+		ChargePoint: ChargePointStatus{ID: chargePointID, ChargingProfiles: []ChargingProfileStatus{}},
 		EVSEs:       []EVSEStatus{},
 	}
 
@@ -33,6 +33,8 @@ func BuildStatus(snap core.Snapshot, chargePointID string) Status {
 		Model:         cp.Boot.Model,
 		Firmware:      cp.Boot.FirmwareVersion,
 		StationStatus: string(cp.StationStatus),
+
+		ChargingProfiles: []ChargingProfileStatus{},
 	}
 	if d := cp.LastDisconnect; !d.At.IsZero() {
 		out.ChargePoint.LastDisconnect = &DisconnectStatus{At: d.At.UTC(), Reason: d.Reason}
@@ -49,8 +51,20 @@ func BuildStatus(snap core.Snapshot, chargePointID string) Status {
 		}
 	}
 
+	profiles := make(map[string][]ChargingProfileStatus)
+	for _, p := range cp.ChargingProfiles {
+		if p.EVSEUID == "" {
+			out.ChargePoint.ChargingProfiles = append(out.ChargePoint.ChargingProfiles, profileStatus(p))
+			continue
+		}
+		profiles[p.EVSEUID] = append(profiles[p.EVSEUID], profileStatus(p))
+	}
+
 	for _, e := range cp.EVSEs {
-		row := EVSEStatus{UID: e.UID, Status: string(e.Status), ErrorCode: e.ErrorCode}
+		row := EVSEStatus{UID: e.UID, Status: string(e.Status), ErrorCode: e.ErrorCode, ChargingProfiles: profiles[e.UID]}
+		if row.ChargingProfiles == nil {
+			row.ChargingProfiles = []ChargingProfileStatus{}
+		}
 		if r, ok := reservations[e.UID]; ok {
 			row.Reservation = &ReservationStatus{
 				ID: r.ID, IDTag: r.IDTag, ExpiresAt: r.ExpiresAt.UTC(), State: string(r.Status),

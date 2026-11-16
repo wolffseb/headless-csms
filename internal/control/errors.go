@@ -11,6 +11,7 @@ import (
 // Errors refused locally, before anything is sent to the station. Besides
 // these, a Service method can return:
 //
+//   - ocpp.ErrInvalidProfile: a charging profile or limit that cannot be sent;
 //   - *RefusedError: the station answered, and the answer was no;
 //   - ocpp.ErrTimeout: the station did not answer in time;
 //   - ocpp.ErrNotConnected: the station is not connected;
@@ -45,6 +46,9 @@ const (
 	OpUnlock        Op = "unlock"
 	OpTriggerStatus Op = "trigger status"
 	OpConfigSet     Op = "config set"
+	OpSetProfile    Op = "set charging profile"
+	OpClearProfiles Op = "clear charging profiles"
+	OpSchedule      Op = "composite schedule"
 )
 
 // RefusedError means the station answered the command and said no: Rejected,

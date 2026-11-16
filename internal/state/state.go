@@ -1,6 +1,7 @@
 // Package state persists what cpms learns at runtime to state.json: the OCPI
-// registration, the active reservations and transactions, and the id counters
-// that keep reservation, transaction and remote-start ids from being reused.
+// registration, the active reservations and transactions, the charging
+// profiles the station accepted, and the id counters that keep reservation,
+// transaction, remote-start and charging-profile ids from being reused.
 //
 // config.yaml is read-only to the tool; this is the only file cpms writes. The
 // package imports nothing else from internal/, so any layer can use it without
@@ -22,7 +23,11 @@ import "time"
 // on its next write, and refusing the file is better than losing data. Each
 // bump ships with a migration from the previous version, so an upgraded cpms
 // still reads the file the old one wrote.
-const Version = 1
+//
+// Version 2 added next_charging_profile_id and charging_profiles. A version 1
+// file has neither, which decodes as a zero counter and no profiles: the
+// migration is to read it and write it back as version 2.
+const Version = 2
 
 // State is the whole of state.json.
 type State struct {
@@ -33,9 +38,17 @@ type State struct {
 	// NextRemoteStartID feeds the remoteStartId OCPP 2.0.1 requires on
 	// RequestStartTransaction and echoes in TransactionEvent. 1.6 has no such
 	// field, but the counter advances for every remote start regardless.
-	NextRemoteStartID int           `json:"next_remote_start_id"`
-	Reservations      []Reservation `json:"reservations"` // active only
-	Transactions      []Transaction `json:"transactions"` // active only: this is not a history
+	NextRemoteStartID int `json:"next_remote_start_id"`
+	// NextChargingProfileID feeds chargingProfileId: a profile with the id
+	// of one already installed replaces it at the station, so ids are never
+	// reused.
+	NextChargingProfileID int           `json:"next_charging_profile_id"`
+	Reservations          []Reservation `json:"reservations"` // active only
+	Transactions          []Transaction `json:"transactions"` // active only: this is not a history
+	// ChargingProfiles are the profiles the station accepted, as sent. The
+	// station is the source of truth: it may have dropped them since, for
+	// instance on a reboot.
+	ChargingProfiles []ChargingProfile `json:"charging_profiles"`
 }
 
 // OCPIRegistration is what the counterparty told us during the credentials
@@ -90,9 +103,39 @@ type Transaction struct {
 	ReservationID int       `json:"reservation_id,omitempty"`
 }
 
+// ChargingProfile is a charging profile the station accepted, as cpms sent
+// it.
+type ChargingProfile struct {
+	ID            int    `json:"id"`
+	ChargePointID string `json:"charge_point_id"`
+	// EVSEUID is "" for a profile on the whole station (connector 0 in 1.6).
+	EVSEUID    string `json:"evse_uid"`
+	Purpose    string `json:"purpose"` // "StationMax", "TxDefault" or "Tx"
+	StackLevel int    `json:"stack_level"`
+	Unit       string `json:"unit"` // "W" or "A"
+	// Periods are the schedule's steps, as offsets from its start.
+	Periods   []ChargingPeriod `json:"periods"`
+	ValidFrom *time.Time       `json:"valid_from,omitempty"`
+	ValidTo   *time.Time       `json:"valid_to,omitempty"`
+	// TransactionID is set for a Tx profile: the session it ends with.
+	TransactionID string    `json:"transaction_id,omitempty"`
+	SetAt         time.Time `json:"set_at"`
+	Source        string    `json:"source"` // "cli", "tui" or "ocpi"
+}
+
+// ChargingPeriod is one step of a recorded schedule.
+type ChargingPeriod struct {
+	StartSeconds int     `json:"start_s"`
+	Limit        float64 `json:"limit"`
+	Phases       *int    `json:"phases,omitempty"`
+}
+
 // empty is the state of a tool that has never written anything.
 func empty() State {
-	return State{Version: Version, Reservations: []Reservation{}, Transactions: []Transaction{}}
+	return State{
+		Version: Version, Reservations: []Reservation{}, Transactions: []Transaction{},
+		ChargingProfiles: []ChargingProfile{},
+	}
 }
 
 // clone returns a deep copy, so no caller can reach the store's own slices.
@@ -100,6 +143,10 @@ func (s State) clone() State {
 	out := s
 	out.Reservations = append([]Reservation{}, s.Reservations...)
 	out.Transactions = append([]Transaction{}, s.Transactions...)
+	out.ChargingProfiles = make([]ChargingProfile, len(s.ChargingProfiles))
+	for i, p := range s.ChargingProfiles {
+		out.ChargingProfiles[i] = p.clone()
+	}
 	if s.OCPI != nil {
 		reg := *s.OCPI
 		reg.Endpoints = append([]Endpoint(nil), s.OCPI.Endpoints...)
@@ -121,6 +168,18 @@ func (s *State) normalize() {
 	if s.Transactions == nil {
 		s.Transactions = []Transaction{}
 	}
+	if s.ChargingProfiles == nil {
+		s.ChargingProfiles = []ChargingProfile{}
+	}
+	for i := range s.ChargingProfiles {
+		p := &s.ChargingProfiles[i]
+		p.SetAt = p.SetAt.UTC()
+		p.ValidFrom = utcPtr(p.ValidFrom)
+		p.ValidTo = utcPtr(p.ValidTo)
+		if p.Periods == nil {
+			p.Periods = []ChargingPeriod{}
+		}
+	}
 	for i := range s.Reservations {
 		r := &s.Reservations[i]
 		r.ExpiresAt = r.ExpiresAt.UTC()
@@ -132,4 +191,29 @@ func (s *State) normalize() {
 	if s.OCPI != nil {
 		s.OCPI.RegisteredAt = s.OCPI.RegisteredAt.UTC()
 	}
+}
+
+// clone deep-copies a profile: its periods and pointers.
+func (p ChargingProfile) clone() ChargingProfile {
+	out := p
+	out.Periods = make([]ChargingPeriod, len(p.Periods))
+	for i, period := range p.Periods {
+		out.Periods[i] = period
+		if period.Phases != nil {
+			n := *period.Phases
+			out.Periods[i].Phases = &n
+		}
+	}
+	out.ValidFrom = utcPtr(p.ValidFrom)
+	out.ValidTo = utcPtr(p.ValidTo)
+	return out
+}
+
+// utcPtr copies a time pointer, in UTC.
+func utcPtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	u := t.UTC()
+	return &u
 }
