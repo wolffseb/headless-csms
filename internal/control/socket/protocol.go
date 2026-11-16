@@ -197,6 +197,13 @@ type EVSEStatus struct {
 	PowerOfferedW   *float64   `json:"power_offered_w,omitempty"`
 	CurrentOfferedA *float64   `json:"current_offered_a,omitempty"`
 	ReadingAt       *time.Time `json:"reading_at,omitempty"`
+	// PowerAt and the rest are when each value was taken. A MeterValues
+	// that lacks a value keeps the one before, so values can differ in age;
+	// ReadingAt is the newest message.
+	PowerAt          *time.Time `json:"power_at,omitempty"`
+	CurrentAt        *time.Time `json:"current_at,omitempty"`
+	PowerOfferedAt   *time.Time `json:"power_offered_at,omitempty"`
+	CurrentOfferedAt *time.Time `json:"current_offered_at,omitempty"`
 }
 
 // ReservationStatus is a reservation held on an EVSE.

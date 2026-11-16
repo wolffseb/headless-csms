@@ -105,8 +105,13 @@ type chargePointState struct {
 // MeterReading is the newest meter reading for an EVSE, in units that do
 // not depend on how the station chose to send them. A nil field was not in
 // the reading, or could not be read.
+//
+// Core keeps one per EVSE and merges each MeterValues into it field by
+// field: stations interleave messages with different measurand sets, so a
+// value the newest message lacks keeps the one before, and its own time in
+// the matching ...At field says how old it is.
 type MeterReading struct {
-	// At is when the station took the reading.
+	// At is when the station took the newest reading merged in.
 	At     time.Time
 	PowerW *float64
 	// CurrentA is the highest phase current when the station reports only
@@ -117,8 +122,37 @@ type MeterReading struct {
 	PowerOfferedW   *float64
 	CurrentOfferedA *float64
 	EnergyWh        *int
-	// Summary is the reading as one line, for the log and the TUI.
+	// Summary is the newest reading as one line, for the log and the TUI.
 	Summary string
+
+	// PowerAt and the rest are when each value was taken, zero for a value
+	// never reported. Core sets them; a reading passed to RecordMeterValues
+	// leaves them out.
+	PowerAt          time.Time
+	CurrentAt        time.Time
+	PowerOfferedAt   time.Time
+	CurrentOfferedAt time.Time
+	EnergyAt         time.Time
+}
+
+// merge lays next over r: next's values replace their own fields, stamped
+// with next.At, and r's other values stay as they were.
+func (r MeterReading) merge(next MeterReading) MeterReading {
+	take := func(dst **float64, at *time.Time, v *float64) {
+		if v != nil {
+			*dst, *at = clonePtr(v), next.At
+		}
+	}
+	out := *r.clone()
+	take(&out.PowerW, &out.PowerAt, next.PowerW)
+	take(&out.CurrentA, &out.CurrentAt, next.CurrentA)
+	take(&out.PowerOfferedW, &out.PowerOfferedAt, next.PowerOfferedW)
+	take(&out.CurrentOfferedA, &out.CurrentOfferedAt, next.CurrentOfferedA)
+	if next.EnergyWh != nil {
+		out.EnergyWh, out.EnergyAt = clonePtr(next.EnergyWh), next.At
+	}
+	out.At, out.Summary = next.At, next.Summary
+	return out
 }
 
 // clone copies r so that a snapshot shares no pointers with core's state.
@@ -454,9 +488,10 @@ func (s *Service) SetConnectorStatus(cpID string, connectorID int, status EVSESt
 	s.publishAll(events)
 }
 
-// RecordMeterValues keeps r as the EVSE's newest reading. Only the newest is
-// kept, in memory: nothing in cpms bills, and meter history is out of scope.
-// r.Summary is what the log and the TUI show.
+// RecordMeterValues merges r into the EVSE's reading, field by field (see
+// MeterReading). Only the newest value of each is kept, in memory: nothing in
+// cpms bills, and meter history is out of scope. r.Summary is what the log
+// and the TUI show.
 //
 // txID is the transaction the station says the values belong to, or "" for
 // none. A reading for a transaction that is not running on the EVSE is
@@ -481,7 +516,7 @@ func (s *Service) RecordMeterValues(cpID string, connectorID int, txID string, r
 		stale = !ok || !tx.Active() || tx.EVSEUID != uid
 	}
 	if !stale {
-		cp.readings[uid] = *r.clone()
+		cp.readings[uid] = cp.readings[uid].merge(r)
 	}
 	s.mu.Unlock()
 

@@ -63,6 +63,8 @@ func BuildStatus(snap core.Snapshot, chargePointID string) Status {
 			row.PowerW, row.CurrentA = m.PowerW, m.CurrentA
 			row.PowerOfferedW, row.CurrentOfferedA = m.PowerOfferedW, m.CurrentOfferedA
 			row.ReadingAt = utcOrNil(m.At)
+			row.PowerAt, row.CurrentAt = utcOrNil(m.PowerAt), utcOrNil(m.CurrentAt)
+			row.PowerOfferedAt, row.CurrentOfferedAt = utcOrNil(m.PowerOfferedAt), utcOrNil(m.CurrentOfferedAt)
 		}
 		out.EVSEs = append(out.EVSEs, row)
 	}

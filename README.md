@@ -278,9 +278,14 @@ ALP-HYC-001-1  CHARGING  -            1 04A1B2C3D4 since 14:28:32  50.0 kW 125.0
 ```
 
 `cpms status --json` has the same as fields on each EVSE, all omitted when absent:
-`power_w` (W), `current_a` (A), `power_offered_w` (W), `current_offered_a` (A) and
-`reading_at` (when the station took it). They come from the newest value of the last
-`MeterValues`: `Power.Active.Import`, `Current.Import`, `Power.Offered`, `Current.Offered`.
+`power_w` (W), `current_a` (A), `power_offered_w` (W), `current_offered_a` (A),
+`reading_at` (when the station took the newest `MeterValues`), and per value when it was
+taken: `power_at`, `current_at`, `power_offered_at`, `current_offered_at`. They come from
+the newest value of `MeterValues`: `Power.Active.Import`, `Current.Import`,
+`Power.Offered`, `Current.Offered`. Stations interleave messages with different
+measurands (clock-aligned energy between periodic samples, for instance), so a message
+without a value keeps the one before; when the values then differ in age, the `METER`
+column gives each its own, as in `50.0 kW 125.0 A 3s ago, offered 22.0 kW 1m0s ago`.
 When a station reports only phases, power is the sum of the phases and current the highest
 phase. `kW` is converted to W; a value cpms cannot read is logged and left out. The reading
 is kept in memory only: it is not in `state.json`, and it is dropped when the session on the

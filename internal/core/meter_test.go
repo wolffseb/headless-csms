@@ -117,3 +117,48 @@ func TestMeterValuesForAStoppedSessionAreDropped(t *testing.T) {
 		t.Errorf("reading without a transaction id = %+v, want 150 kW offered", r)
 	}
 }
+
+// TestMeterReadingsMergePerField: stations interleave MeterValues with
+// different measurand sets (clock-aligned energy between periodic samples, a
+// Transaction.Begin with energy only). A value the newest message lacks keeps
+// its previous one, with that value's own time, so a carried-over value is
+// not shown as fresh.
+func TestMeterReadingsMergePerField(t *testing.T) {
+	t.Parallel()
+
+	s := core.New(testConfig())
+	s.Connected(testCP)
+	at := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	later := at.Add(time.Minute)
+
+	s.RecordMeterValues(testCP, 1, "", core.MeterReading{
+		At: at, PowerW: watts(50000), PowerOfferedW: watts(22000), Summary: "sampled",
+	})
+	energy := 1000
+	s.RecordMeterValues(testCP, 1, "", core.MeterReading{At: later, EnergyWh: &energy, Summary: "aligned"})
+
+	r := reading(t, s, "EVSE-1")
+	if r == nil || r.PowerOfferedW == nil || *r.PowerOfferedW != 22000 || r.PowerW == nil || *r.PowerW != 50000 {
+		t.Fatalf("reading = %+v, want 50 kW and 22 kW offered kept from the earlier message", r)
+	}
+	if r.EnergyWh == nil || *r.EnergyWh != 1000 {
+		t.Errorf("energy = %v, want 1000 Wh from the newest message", r.EnergyWh)
+	}
+	if !r.PowerAt.Equal(at) || !r.PowerOfferedAt.Equal(at) || !r.EnergyAt.Equal(later) {
+		t.Errorf("value times: power %v, offered %v, energy %v; want %v, %v, %v",
+			r.PowerAt, r.PowerOfferedAt, r.EnergyAt, at, at, later)
+	}
+	if !r.CurrentAt.IsZero() || !r.CurrentOfferedAt.IsZero() {
+		t.Errorf("times for values never reported: %v, %v; want zero", r.CurrentAt, r.CurrentOfferedAt)
+	}
+	if !r.At.Equal(later) || r.Summary != "aligned" {
+		t.Errorf("reading at %v %q, want the newest message's", r.At, r.Summary)
+	}
+
+	// A new value replaces its own field only.
+	s.RecordMeterValues(testCP, 1, "", core.MeterReading{At: later, PowerOfferedW: watts(11000)})
+	r = reading(t, s, "EVSE-1")
+	if *r.PowerOfferedW != 11000 || !r.PowerOfferedAt.Equal(later) || *r.PowerW != 50000 || !r.PowerAt.Equal(at) {
+		t.Errorf("reading = %+v, want 11 kW offered now and 50 kW from before", r)
+	}
+}

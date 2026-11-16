@@ -32,6 +32,10 @@ func TestStatusShowsThePowerTheStationReports(t *testing.T) {
 	if e.CurrentA == nil || *e.CurrentA != 125 || e.ReadingAt == nil {
 		t.Errorf("reading = current %v at %v, want 125 A and a time", e.CurrentA, e.ReadingAt)
 	}
+	if e.PowerAt == nil || e.CurrentAt == nil || e.PowerOfferedAt != nil {
+		t.Errorf("value times: power %v, current %v, offered %v; want the first two only",
+			e.PowerAt, e.CurrentAt, e.PowerOfferedAt)
+	}
 	if e.PowerOfferedW != nil || e.CurrentOfferedA != nil {
 		t.Errorf("offered %v W / %v A, want none: the simulator does not send them", e.PowerOfferedW, e.CurrentOfferedA)
 	}
@@ -47,7 +51,7 @@ func TestStatusShowsThePowerTheStationReports(t *testing.T) {
 		t.Errorf("after stop: power %v, current %v, reading at %v; want none", e.PowerW, e.CurrentA, e.ReadingAt)
 	}
 	raw := s.mustCPMS("status", "--json")
-	for _, field := range []string{"power_w", "current_a", "reading_at"} {
+	for _, field := range []string{"power_w", "current_a", "reading_at", "power_at", "current_at"} {
 		if strings.Contains(raw, field) {
 			t.Errorf("status --json after stop still has %s:\n%s", field, raw)
 		}
