@@ -104,3 +104,46 @@ func TestStartAfterRestartEndsTheSessionFromStateFile(t *testing.T) {
 		t.Errorf("state.json transactions = %+v, want only 2", txs)
 	}
 }
+
+// A station that starts a session with an id it still has active is a
+// replacement, not a second session: the id is the one the station knows, so
+// the old entry is overwritten and nothing has ended. Ending it first would
+// publish a stop the station never made and drop the Tx profile and live
+// reading the session still uses.
+func TestStartWithTheSameIDOnAConnectorReplacesItWithoutEndingIt(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, clocktest.New(t0), statetest.New(t))
+
+	r.svc.StartTransaction(testCP, core.TransactionStart{ID: "7", ConnectorID: 1, IDTag: "TAG-A", MeterStart: 1000})
+	bound := profile(1, "EVSE-1", core.PurposeTx, 0, 10000)
+	bound.TransactionID = "7"
+	r.svc.RecordChargingProfile(bound)
+	r.svc.RecordMeterValues(testCP, 1, "", core.MeterReading{At: t0.Add(time.Minute), PowerW: watts(11000)})
+	collect(t, r.events)
+
+	r.svc.StartTransaction(testCP, core.TransactionStart{ID: "7", ConnectorID: 1, IDTag: "TAG-A", MeterStart: 1000})
+
+	var got []string
+	for _, e := range collect(t, r.events) {
+		got = append(got, string(e.Kind)+":"+e.TransactionID)
+	}
+	if strings.Join(got, " ") != "transaction_started:7" {
+		t.Errorf("events = %v, want only transaction_started:7", got)
+	}
+	if active := r.svc.ActiveTransactions("EVSE-1"); len(active) != 1 || active[0].ID != "7" {
+		t.Errorf("active on EVSE-1 = %+v, want only 7", active)
+	}
+	if left := ids(r.svc.ChargingProfiles("EVSE-1")); !sameInts(left, []int{1}) {
+		t.Errorf("EVSE-1 profiles = %v, want the one bound to 7 kept", left)
+	}
+	if rd := reading(t, r.svc, "EVSE-1"); rd == nil || rd.PowerW == nil || *rd.PowerW != 11000 {
+		t.Errorf("EVSE-1 reading = %+v, want it kept", rd)
+	}
+	logs := r.logs.String()
+	if !strings.Contains(logs, "reused an active transaction id") {
+		t.Errorf("no reused-id warning; log:\n%s", logs)
+	}
+	if strings.Contains(logs, "superseded_by") {
+		t.Errorf("the reused id was treated as superseded; log:\n%s", logs)
+	}
+}
