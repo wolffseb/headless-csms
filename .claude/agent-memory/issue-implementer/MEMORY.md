@@ -46,6 +46,7 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - Smart charging C2 (#50, 2026-11-16): core keeps profile records (`RecordChargingProfile`/`ForgetChargingProfiles`/`ChargingProfiles`, Tx dropped on StopTransaction); control has `SetLimit`/`SetProfile`/`ClearProfiles`/`Schedule`; socket `classifyProfile` maps "cannot do that" to `not_supported` (exit 11) only for limit/profile ops, keeping unlock's mapping. Purposes are kebab-case (`tx-default`) in CLI and JSON via `socket.ParsePurpose`/`PurposeName`. state.json is version 2; `parse` accepts 1..Version.
 - Station meter (#64, 2026-11-16): connector 0 never maps to an EVSE. `core.ChargePointSnapshot.StationReading` holds its MeterValues; `socket.MeterStatus` is the reading shape, embedded in `EVSEStatus` (flat JSON) and as `ChargePointStatus.Meter`. `meterCell` takes a `MeterStatus`. Any new per-connector handler in core must branch on connector 0 like `SetConnectorStatus`/`RecordMeterValues`, or `evseUID` invents `<cp>-0`. Raw OCPP through `cpms run` in a cli test: `ocpptest.MustDial(t, "ws://127.0.0.1:<port>/ocpp/ALP-HYC-001")` on a `newStation` without `connect()`.
 - A test that needs a field from an unmerged sibling PR can gate on `reflect.TypeOf(T{}).FieldByName(...)` and decode the raw JSON itself: it compiles on both bases and turns strict by itself after the rebase. Prove the gated part in a scratch worktree with the sibling merged (never pushed).
+- One session per connector (#73, 2026-11-18): `core.StartTransaction` ends any other active tx on the same EVSE (`ReasonSuperseded` = "Other", via `endTransactionLocked`). A test that needs two active on one EVSE must seed state.json: control's `newRigOn(t, store)` + `twoActiveOnEVSE1(t)`. `control.Stop(ctx, evse, txID)` and `transactionOn(evse, txID)` pick a session; socket `Request.TransactionID` / `LimitRequest.TransactionID`.
 
 ## OCPI/OCPP traps
 
@@ -59,6 +60,7 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - OCPP 1.6 JSON schemas: the OCA zip is not on GitHub; mobilityhouse/ocpp vendors them at `ocpp/v16/schemas/<Action>.json` / `<Action>Response.json`. ClearChargingProfile's `Unknown` is a defined status, not "out of spec". `encoding/json` writes float64 without an exponent below 1e21, so a `limit` needs no custom marshaller.
 - The simulator reports `MeterValuesSampledData` as read-only and answers `Rejected` to it. Use `ConnectionTimeOut` or `HeartbeatInterval` when a test needs an `Accepted` ChangeConfiguration.
 - Core keeps each EVSE's last *reported* status through a disconnect and restores it on reconnect (`recompute`), so in-process the EVSEs are stale, not UNKNOWN; UNKNOWN only after a cpms restart. Write reconnect tests for the case you mean. OCPP 1.6 spec PDF: the OCA zip (openchargealliance.org/download-ocpp) has `ocpp-1.6 edition 2.pdf`; `pdftotext -layout` reads it.
+- Core profile records replace on same EVSE + purpose + stack level, like the station does, so two test profiles on one EVSE need different `StackLevel`s or the first silently vanishes (2026-11-18).
 
 ## Process that worked
 
@@ -71,6 +73,8 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - `bodyclose` flags test helpers that return `*http.Response`, even when they close the body. Return status, headers and the decoded body instead.
 - A Python mutation table (name, file, old, new, pkg, -run) applied one at a time with restore in `finally` makes the fail-without proof cheap; keep the script in the scratchpad.
 - A counter of finished hooks must count every connection's: the first connection's hook also finishes (cancelled) on a reconnect, so wait for n == 2, not 1. A fake-clock test that a timer has not fired yet should assert `clk.Pending()`, not only the absence of its effect, or a shortened timer survives mutation.
+- A station that forgets its session across a cpms restart, in a cli test: `s.sim.Close(); s.sim.Wait(); s.stopRun(); s.startRun(); s.connect()` (a fresh sim). A sim with `Reconnect` keeps its session instead. With the real binary: `kill -9` the simulator. Build the pre-change binary from a detached `git worktree add` in the scratchpad for the "before" run (2026-11-18).
+- Assert a reason/constant against its literal value, not the exported const, or a mutation of the const survives (2026-11-18).
 
 ## Tooling
 
