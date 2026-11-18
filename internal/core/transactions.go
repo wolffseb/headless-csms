@@ -86,6 +86,23 @@ func (s *Service) StartTransaction(cpID string, t TransactionStart) Transaction 
 			"charge_point", cpID, "transaction_id", t.ID)
 	}
 
+	// One connector runs one session at a time, so a new one there means the
+	// old one has ended, whether or not its StopTransaction ever arrives. A
+	// station that reconnects and starts again without stopping does this
+	// (#73); keeping both would leave the EVSE with two sessions and no way
+	// to tell which `cpms stop` should end.
+	var stopped []Event
+	for _, old := range cp.transactions {
+		if old.ID == t.ID || old.EVSEUID != uid || !old.Active() {
+			continue
+		}
+		s.log.Warn("a new transaction started on a connector that still had one; ending the old one",
+			"charge_point", cpID, "evse", uid, "transaction_id", old.ID, "superseded_by", t.ID)
+		// No meter reading closes it, so it claims no energy.
+		stopped = append(stopped, s.endTransactionLocked(cp, old, old.MeterStart, ReasonSuperseded, t.At, false)...)
+	}
+
+	var events []Event
 	s.txSeq++
 	tx := &Transaction{
 		ID: t.ID, EVSEUID: uid, ConnectorID: t.ConnectorID,
@@ -94,7 +111,6 @@ func (s *Service) StartTransaction(cpID string, t TransactionStart) Transaction 
 		seq:           s.txSeq,
 	}
 
-	var events []Event
 	if r := s.redeemedLocked(cpID, uid, t); r != nil {
 		tx.ReservationID = r.ID
 		events = append(events, s.endLocked(r, ReservationConsumed))
@@ -114,6 +130,7 @@ func (s *Service) StartTransaction(cpID string, t TransactionStart) Transaction 
 			"transaction_id", t.ID, "error", err)
 	}
 
+	s.publishAll(stopped)
 	s.bus.publish(Event{
 		Kind: EventTransactionStarted, At: t.At, ChargePointID: cpID,
 		EVSEUID: uid, TransactionID: t.ID, IDTag: t.IDTag,
@@ -121,6 +138,12 @@ func (s *Service) StartTransaction(cpID string, t TransactionStart) Transaction 
 	s.publishAll(events)
 	return out
 }
+
+// ReasonSuperseded is the stop reason of a transaction that core ended
+// because a new one started on its connector. It is OCPP 1.6's "Other": the
+// station never said why, and a reason outside the protocol's list would
+// have to be mapped wherever reasons are passed on.
+const ReasonSuperseded = "Other"
 
 // redeemedLocked finds the active reservation a starting session redeems, if
 // any.
@@ -163,22 +186,9 @@ func (s *Service) StopTransaction(cpID, txID string, meterStop int, reason strin
 		s.mu.Unlock()
 		return Transaction{}, false
 	}
-	tx.StoppedAt = at
-	tx.MeterStop = meterStop
-	tx.Reason = reason
 	cp.lastSeen = s.now()
-	// The draw belonged to the session; keeping it would show a car that
-	// has gone as still charging.
-	delete(cp.readings, tx.EVSEUID)
+	events := s.endTransactionLocked(cp, tx, meterStop, reason, at, true)
 	out := *tx
-	// The spec ends a TxProfile with its transaction; TxDefault and
-	// StationMax records stay. A TxProfile sent without a transaction id
-	// (--force with no session) bound, if the station kept it, to the next
-	// session on its EVSE, which is this one.
-	_, profileEvents := s.forgetLocked(func(p ChargingProfile) bool {
-		return p.ChargePointID == cpID && p.Purpose == PurposeTx &&
-			(p.TransactionID == txID || p.TransactionID == "" && p.EVSEUID == tx.EVSEUID)
-	}, ProfileTransactionEnded)
 	s.mu.Unlock()
 
 	if err := s.persist(); err != nil {
@@ -186,17 +196,41 @@ func (s *Service) StopTransaction(cpID, txID string, meterStop int, reason strin
 			"transaction_id", txID, "error", err)
 	}
 
-	s.bus.publish(Event{
-		Kind: EventTransactionStopped, At: at, ChargePointID: cpID,
-		EVSEUID: out.EVSEUID, TransactionID: txID, IDTag: out.IDTag, Detail: reason,
-	})
-	s.publishAll(profileEvents)
+	s.publishAll(events)
 	return out, true
 }
 
+// endTransactionLocked closes a transaction and returns the events to publish
+// once the lock is released: its stop, then any charging profiles that ended
+// with it. The caller persists.
+//
+// unbound also drops a Tx profile on the EVSE that was sent without a
+// transaction id (--force with no session): if the station kept it, it bound
+// to the next session there. That is the one a StopTransaction ends, but not
+// necessarily one that is superseded, so StartTransaction leaves it.
+func (s *Service) endTransactionLocked(cp *chargePointState, tx *Transaction, meterStop int, reason string, at time.Time, unbound bool) []Event {
+	tx.StoppedAt = at
+	tx.MeterStop = meterStop
+	tx.Reason = reason
+	// The draw belonged to the session; keeping it would show a car that
+	// has gone as still charging.
+	delete(cp.readings, tx.EVSEUID)
+	// The spec ends a TxProfile with its transaction; TxDefault and
+	// StationMax records stay.
+	_, profileEvents := s.forgetLocked(func(p ChargingProfile) bool {
+		return p.ChargePointID == cp.id && p.Purpose == PurposeTx &&
+			(p.TransactionID == tx.ID || unbound && p.TransactionID == "" && p.EVSEUID == tx.EVSEUID)
+	}, ProfileTransactionEnded)
+	return append([]Event{{
+		Kind: EventTransactionStopped, At: at, ChargePointID: cp.id,
+		EVSEUID: tx.EVSEUID, TransactionID: tx.ID, IDTag: tx.IDTag, Detail: reason,
+	}}, profileEvents...)
+}
+
 // ActiveTransactions returns the running transactions on an EVSE. There
-// should be at most one; a caller seeing more has found a bug and should say
-// so rather than pick one.
+// should be at most one, since StartTransaction ends any older one on the
+// same connector. More can only come from a state.json written before that
+// (#73), and a caller seeing more should say so rather than pick one.
 func (s *Service) ActiveTransactions(evseUID string) []Transaction {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

@@ -124,7 +124,8 @@ func (s *Server) dispatchProfile(ctx context.Context, req Request) Response {
 		}
 		l := req.Limit
 		params := control.LimitParams{
-			EVSEUID: req.target(), KW: l.KW, Amps: l.Amps, StackLevel: l.StackLevel, Force: l.Force, Source: "cli",
+			EVSEUID: req.target(), KW: l.KW, Amps: l.Amps, StackLevel: l.StackLevel, Force: l.Force,
+			TransactionID: l.TransactionID, Source: "cli",
 		}
 		if l.Purpose != "" {
 			purpose, err := ParsePurpose(l.Purpose)

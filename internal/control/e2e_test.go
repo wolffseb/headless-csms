@@ -167,7 +167,7 @@ func TestReserveStartStopAgainstTheSimulator(t *testing.T) {
 		t.Errorf("state.json transactions = %+v, want %s", got, tx.ID)
 	}
 
-	if err := r.ctl.Stop(ctx, "EVSE-1"); err != nil {
+	if err := r.ctl.Stop(ctx, "EVSE-1", ""); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 	r.waitFor(t, "the transaction to end", func() bool { return len(r.core.ActiveTransactions("EVSE-1")) == 0 })

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strings"
 	"time"
 
 	"github.com/wolffseb/cli-cpms/internal/core"
@@ -26,8 +25,8 @@ type LimitParams struct {
 	// For bounds the profile: it sets the schedule's duration and validTo.
 	// Zero means open-ended.
 	For time.Duration
-	// TransactionID is the session a Tx profile is for. Empty picks the one
-	// active transaction on the EVSE.
+	// TransactionID is the session a Tx profile is for, and must be active
+	// on the EVSE. Empty picks the one active transaction there.
 	TransactionID string
 	// Force sends a Tx profile without a transactionId when no session is
 	// running, instead of refusing it locally. It exists to see what the
@@ -58,6 +57,17 @@ func (s *Service) SetLimit(ctx context.Context, p LimitParams) (core.ChargingPro
 	}
 	if p.Purpose == "" {
 		p.Purpose = ocpp.PurposeTxDefault
+	}
+	if p.TransactionID != "" && p.Purpose == ocpp.PurposeTx {
+		// Named on the command line, so checked like `cpms stop --tx`: a
+		// session that is not running here is a typo, not a choice. Any
+		// other purpose with a transaction id fails Validate.
+		if err := s.checkEVSE(p.EVSEUID); err != nil {
+			return core.ChargingProfile{}, err
+		}
+		if _, err := s.transactionOn(p.EVSEUID, p.TransactionID); err != nil {
+			return core.ChargingProfile{}, err
+		}
 	}
 
 	unit, limit := ocpp.UnitA, 0.0
@@ -214,20 +224,11 @@ func (s *Service) Schedule(ctx context.Context, evseUID string, d time.Duration,
 
 // activeTransaction is the one session running on an EVSE.
 func (s *Service) activeTransaction(evseUID string) (string, error) {
-	txs := s.core.ActiveTransactions(evseUID)
-	switch len(txs) {
-	case 0:
+	txID, err := s.transactionOn(evseUID, "")
+	if errors.Is(err, ErrNoActiveTransaction) {
 		return "", fmt.Errorf("%s: %w for a Tx profile (use --force to send it anyway)", evseUID, ErrNoActiveTransaction)
-	case 1:
-		return txs[0].ID, nil
-	default:
-		ids := make([]string, len(txs))
-		for i, tx := range txs {
-			ids[i] = tx.ID
-		}
-		return "", fmt.Errorf("%s has %d active transactions (%s); refusing to guess which the profile is for",
-			evseUID, len(txs), strings.Join(ids, ", "))
 	}
+	return txID, err
 }
 
 // checkEVSEOrStation is checkEVSE that also accepts "" for the station.

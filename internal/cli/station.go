@@ -64,6 +64,7 @@ func newStationCommands(opts *options) []*cobra.Command {
 		reserveTag string
 		expires    time.Duration
 		startTag   string
+		stopTx     string
 		statusJSON bool
 	)
 
@@ -121,11 +122,23 @@ func newStationCommands(opts *options) []*cobra.Command {
 	stop := &cobra.Command{
 		Use:   "stop",
 		Short: "Stop the charging session running on an EVSE",
-		Args:  cobra.NoArgs,
+		Long: "Asks the station to stop the session on an EVSE. --tx names the session;\n" +
+			"it is only needed when cpms holds more than one there, which a state.json\n" +
+			"written before cpms ended superseded sessions can still do.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return simpleCommand(cmd, opts, socket.OpStop, "", "%s remote stop accepted\n")
+			env, err := newStationEnv(cmd, opts)
+			if err != nil {
+				return err
+			}
+			if _, err := env.call(cmd, socket.Request{Op: socket.OpStop, EVSE: env.evse, TransactionID: stopTx}); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s remote stop accepted\n", env.evse)
+			return nil
 		},
 	}
+	stop.Flags().StringVar(&stopTx, "tx", "", "transaction id to stop (default: the one running on the EVSE)")
 
 	unlock := &cobra.Command{
 		Use:   "unlock",

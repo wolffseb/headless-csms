@@ -235,7 +235,7 @@ ALP-HYC-001-1 remote stop accepted
 | `cpms reserve [--evse UID] [--tag TAG] [--expires 15m]` | Holds an EVSE for a tag. The tag defaults to `auth.default_id_tag`, the length to 15 minutes. |
 | `cpms cancel [--evse UID]` | Releases the reservation on an EVSE |
 | `cpms start [--evse UID] [--tag TAG]` | Asks the station to start a session. It returns once the station accepts; the session shows up in `status` when the station reports it. |
-| `cpms stop [--evse UID]` | Stops the session running on an EVSE |
+| `cpms stop [--evse UID] [--tx ID]` | Stops the session running on an EVSE. `--tx` names it; it is only needed when cpms holds two sessions on one EVSE (see below). |
 | `cpms unlock [--evse UID]` | Releases the cable lock |
 | `cpms status [--json]` | The station, per EVSE its status, reservation and session, and the OCPI registration. `--json` is a stable format for scripts. |
 | `cpms ocpi unregister` | Forgets the OCPI registration so the partner can register again; see [Registering with an OCPI partner](#registering-with-an-ocpi-partner). |
@@ -246,6 +246,15 @@ ALP-HYC-001-1 remote stop accepted
 `--evse` takes the EVSE `uid` from config, and may be left out when only one EVSE is
 configured. A typo is caught from config before anything is sent, and the error lists the
 valid uids.
+
+**One session per EVSE.** A connector runs one session at a time, so when a station starts a
+new one on a connector where cpms still holds one, cpms ends the old one itself: stopped at the
+new one's start, reason `Other`, with a warning in the log. Stations do this when they come back
+from a restart having forgotten their session, and never send its `StopTransaction`; a late
+one is logged as a stop for an unknown transaction. A `state.json` from a cpms before this can
+still hold two sessions on one EVSE. `cpms stop` and `cpms limit set --purpose tx` then refuse to
+guess (exit 1) and list both ids; `--tx ID` chooses, and must name a session active on that EVSE
+(exit 9 otherwise).
 
 **Output streams:** reports go to stdout, so `cpms probe --json | jq` works: `status`,
 `probe` and their `--json`, `config validate`, the command confirmations, `version`, the
@@ -484,7 +493,7 @@ reservation is redeemed?
 
 | Command | Does |
 |---|---|
-| `cpms limit set [--evse UID \| --station] (--kw N \| --amps N) [--purpose P] [--stack N] [--for 1h] [--force]` | Installs a one-period profile from now on. `--kw` is sent in W, `--amps` per phase; exactly one is required. |
+| `cpms limit set [--evse UID \| --station] (--kw N \| --amps N) [--purpose P] [--stack N] [--for 1h] [--force \| --tx ID]` | Installs a one-period profile from now on. `--kw` is sent in W, `--amps` per phase; exactly one is required. |
 | `cpms limit clear [--evse UID \| --station] (--id N \| --purpose P \| --all)` | `ClearChargingProfile`. `--purpose` and `--all` clear on every EVSE and the station unless `--evse` or `--station` narrows them. |
 | `cpms limit show [--evse UID \| --station] [--duration 1h] [--unit W\|A]` | `GetCompositeSchedule`: the limits the station will actually apply, all profiles combined, as a period table. |
 | `cpms profile set [--evse UID \| --station] -f profile.json` | Installs a full profile from a file (shape below). |
@@ -494,7 +503,8 @@ reservation is redeemed?
 - `tx-default` (`TxDefaultProfile`) applies to sessions that start after it is set. It is the
   one that can be set while an EVSE is reserved and idle.
 - `tx` (`TxProfile`) applies to the running session and overrides `tx-default`; it ends with
-  the session. cpms fills in the transaction id of the one session on the EVSE. With no session
+  the session. cpms fills in the transaction id of the one session on the EVSE, or the one
+  `--tx` names. With no session
   running cpms refuses it (exit 9) unless `--force`, which sends it without a transaction id to
   see what the station says (the spec expects `Rejected`).
 - `station-max` (`ChargePointMaxProfile`) caps the whole station; it needs `--station`, and
