@@ -154,6 +154,40 @@ func TestTxLimitPicksTheRunningTransaction(t *testing.T) {
 	}
 }
 
+// A state.json from before #73 can hold two sessions on one EVSE; --tx
+// chooses. A named session must be running on the EVSE, and goes only with a
+// tx limit.
+func TestTxLimitForANamedTransaction(t *testing.T) {
+	t.Parallel()
+	r := newRigOn(t, twoActiveOnEVSE1(t))
+	tx := func(id string) control.LimitParams {
+		return control.LimitParams{EVSEUID: "EVSE-1", KW: f64(10), Purpose: ocpp.PurposeTx, TransactionID: id}
+	}
+
+	if _, err := r.ctl.SetLimit(context.Background(), tx("")); err == nil || !strings.Contains(err.Error(), "--tx") {
+		t.Fatalf("err = %v, want a refusal to guess that points at --tx", err)
+	}
+	if _, err := r.ctl.SetLimit(context.Background(), tx("99")); !errors.Is(err, control.ErrNoActiveTransaction) {
+		t.Errorf("unknown transaction: err = %v, want ErrNoActiveTransaction", err)
+	}
+	notTx := tx("41")
+	notTx.Purpose = ocpp.PurposeTxDefault
+	if _, err := r.ctl.SetLimit(context.Background(), notTx); !errors.Is(err, ocpp.ErrInvalidProfile) {
+		t.Errorf("tx-default with a transaction: err = %v, want ErrInvalidProfile", err)
+	}
+	if n := r.station.callCount(); n != 0 {
+		t.Fatalf("%d calls sent before a valid request", n)
+	}
+
+	rec, err := r.ctl.SetLimit(context.Background(), tx("42"))
+	if err != nil {
+		t.Fatalf("SetLimit for 42: %v", err)
+	}
+	if sent := r.station.profiles[0]; sent.TransactionID != "42" || rec.TransactionID != "42" {
+		t.Errorf("sent transaction %q, recorded %q; want 42", sent.TransactionID, rec.TransactionID)
+	}
+}
+
 func TestSetProfileAllocatesItsOwnID(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)

@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -328,32 +329,23 @@ func (s *Service) Start(ctx context.Context, evseUID, idTag string) error {
 	return nil
 }
 
-// Stop asks the station to end the session running on an EVSE.
-func (s *Service) Stop(ctx context.Context, evseUID string) error {
+// Stop asks the station to end the session running on an EVSE. txID names
+// the session; "" means the one active there. It must be active on that
+// EVSE in core either way, so a typo cannot stop a session elsewhere.
+func (s *Service) Stop(ctx context.Context, evseUID, txID string) error {
 	if err := s.checkEVSE(evseUID); err != nil {
 		return err
 	}
-	txs := s.core.ActiveTransactions(evseUID)
-	switch len(txs) {
-	case 0:
-		return fmt.Errorf("%s: %w", evseUID, ErrNoActiveTransaction)
-	case 1:
-	default:
-		// One EVSE, one session. Two means core missed a StopTransaction,
-		// and guessing which one to stop could end the wrong session.
-		ids := make([]string, len(txs))
-		for i, tx := range txs {
-			ids[i] = tx.ID
-		}
-		return fmt.Errorf("%s has %d active transactions (%s); refusing to guess which to stop",
-			evseUID, len(txs), strings.Join(ids, ", "))
+	txID, err := s.transactionOn(evseUID, txID)
+	if err != nil {
+		return err
 	}
 	cp, err := s.chargePoint()
 	if err != nil {
 		return err
 	}
 
-	res, err := cp.RemoteStop(ctx, txs[0].ID)
+	res, err := cp.RemoteStop(ctx, txID)
 	if err != nil {
 		return err
 	}
@@ -361,6 +353,39 @@ func (s *Service) Stop(ctx context.Context, evseUID string) error {
 		return refused(OpStop, evseUID, res)
 	}
 	return nil
+}
+
+// transactionOn picks the session a command on an EVSE is for: txID if it is
+// active there, or else the one active session.
+//
+// One EVSE runs one session, and core ends an older one when a new one starts
+// (#73). Two can still come from a state.json written before that; guessing
+// which one is meant could end the wrong session, so the caller has to name
+// it.
+func (s *Service) transactionOn(evseUID, txID string) (string, error) {
+	txs := s.core.ActiveTransactions(evseUID)
+	ids := make([]string, len(txs))
+	for i, tx := range txs {
+		if txID != "" && tx.ID == txID {
+			return txID, nil
+		}
+		ids[i] = tx.ID
+	}
+	sort.Strings(ids)
+	switch {
+	case txID != "" && len(ids) == 0:
+		return "", fmt.Errorf("%s: transaction %s: %w", evseUID, txID, ErrNoActiveTransaction)
+	case txID != "":
+		return "", fmt.Errorf("%s: transaction %s: %w here (active: %s)",
+			evseUID, txID, ErrNoActiveTransaction, strings.Join(ids, ", "))
+	case len(ids) == 0:
+		return "", fmt.Errorf("%s: %w", evseUID, ErrNoActiveTransaction)
+	case len(ids) == 1:
+		return ids[0], nil
+	default:
+		return "", fmt.Errorf("%s has %d active transactions (%s); refusing to guess, name one with --tx",
+			evseUID, len(ids), strings.Join(ids, ", "))
+	}
 }
 
 // Unlock releases the cable lock on an EVSE.

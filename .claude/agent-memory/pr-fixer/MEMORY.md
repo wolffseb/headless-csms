@@ -40,6 +40,8 @@ Lessons from earlier fix passes in this repo. Newest last within each section. K
 - Unanchored `.gitignore` rules (e.g. `config.yaml`) also hide test fixtures, so CI fails while local runs pass on untracked files. After any ignore-rule change, run `git check-ignore -v` on the fixture paths (#40).
 - Per-field merges (MeterValues): test with two messages whose measurand sets don't overlap, and assert each value's own time as well as its value. A merge that loses the per-field time passes a values-only test (#61).
 
+- A guard condition a review says is untested ("remove it, tests stay green"): the mutant check is to delete just that clause and see the new test fail on its side effects (events, profiles, reading, log text), not only on the headline one (#74).
+
 ## Known flakes (rerun, don't fix in unrelated PRs)
 
 - `TestShutdownWaitsForTheOrphanCancel` (#43): two 1 s timers race. Rerun the failed job.

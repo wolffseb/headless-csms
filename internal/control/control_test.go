@@ -16,6 +16,7 @@ import (
 	"github.com/wolffseb/cli-cpms/internal/control"
 	"github.com/wolffseb/cli-cpms/internal/core"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
+	"github.com/wolffseb/cli-cpms/internal/state"
 	"github.com/wolffseb/cli-cpms/internal/statetest"
 )
 
@@ -192,9 +193,15 @@ type rig struct {
 
 func newRig(t *testing.T) *rig {
 	t.Helper()
+	return newRigOn(t, statetest.New(t))
+}
+
+// newRigOn starts the rig from what store already holds, as `cpms run` does
+// from an existing state.json.
+func newRigOn(t *testing.T, store *statetest.Store) *rig {
+	t.Helper()
 
 	clk := clocktest.New(t0)
-	store := statetest.New(t)
 	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := testConfig()
 	svc := core.New(cfg,
@@ -597,7 +604,7 @@ func TestStop(t *testing.T) {
 	t.Run("no active transaction", func(t *testing.T) {
 		t.Parallel()
 		r := newRig(t)
-		if err := r.ctl.Stop(context.Background(), "EVSE-1"); !errors.Is(err, control.ErrNoActiveTransaction) {
+		if err := r.ctl.Stop(context.Background(), "EVSE-1", ""); !errors.Is(err, control.ErrNoActiveTransaction) {
 			t.Fatalf("err = %v, want ErrNoActiveTransaction", err)
 		}
 		if n := r.station.callCount(); n != 0 {
@@ -610,7 +617,7 @@ func TestStop(t *testing.T) {
 		r := newRig(t)
 		r.core.StartTransaction(testCP, core.TransactionStart{ID: "41", ConnectorID: 1, IDTag: testTag})
 
-		if err := r.ctl.Stop(context.Background(), "EVSE-1"); err != nil {
+		if err := r.ctl.Stop(context.Background(), "EVSE-1", ""); err != nil {
 			t.Fatalf("Stop: %v", err)
 		}
 		if len(r.station.stops) != 1 || r.station.stops[0] != "41" {
@@ -620,17 +627,69 @@ func TestStop(t *testing.T) {
 
 	t.Run("refuses to guess between two", func(t *testing.T) {
 		t.Parallel()
-		r := newRig(t)
-		r.core.StartTransaction(testCP, core.TransactionStart{ID: "41", ConnectorID: 1, IDTag: testTag})
-		r.core.StartTransaction(testCP, core.TransactionStart{ID: "42", ConnectorID: 1, IDTag: testTag})
+		r := newRigOn(t, twoActiveOnEVSE1(t))
 
-		if err := r.ctl.Stop(context.Background(), "EVSE-1"); err == nil {
+		err := r.ctl.Stop(context.Background(), "EVSE-1", "")
+		if err == nil {
 			t.Fatal("Stop picked one of two active transactions")
+		}
+		if !strings.Contains(err.Error(), "(41, 42)") || !strings.Contains(err.Error(), "--tx") {
+			t.Errorf("err = %v, want both ids and a pointer to --tx", err)
 		}
 		if n := r.station.callCount(); n != 0 {
 			t.Errorf("station saw %d calls, want none", n)
 		}
 	})
+
+	t.Run("stops the one named", func(t *testing.T) {
+		t.Parallel()
+		r := newRigOn(t, twoActiveOnEVSE1(t))
+
+		if err := r.ctl.Stop(context.Background(), "EVSE-1", "41"); err != nil {
+			t.Fatalf("Stop 41: %v", err)
+		}
+		if len(r.station.stops) != 1 || r.station.stops[0] != "41" {
+			t.Errorf("RemoteStop calls = %v, want [41]", r.station.stops)
+		}
+	})
+
+	t.Run("refuses a named one not active on the EVSE", func(t *testing.T) {
+		t.Parallel()
+		r := newRig(t)
+		r.core.StartTransaction(testCP, core.TransactionStart{ID: "41", ConnectorID: 1, IDTag: testTag})
+		r.core.StartTransaction(testCP, core.TransactionStart{ID: "43", ConnectorID: 2, IDTag: testTag})
+
+		// 43 runs, but on EVSE-2; 99 runs nowhere.
+		for _, id := range []string{"43", "99"} {
+			if err := r.ctl.Stop(context.Background(), "EVSE-1", id); !errors.Is(err, control.ErrNoActiveTransaction) {
+				t.Errorf("Stop %s on EVSE-1: err = %v, want ErrNoActiveTransaction", id, err)
+			}
+		}
+		if n := r.station.callCount(); n != 0 {
+			t.Errorf("station saw %d calls, want none", n)
+		}
+	})
+}
+
+// twoActiveOnEVSE1 is a state.json from before #73, when a second
+// StartTransaction on a connector left the first one active: 41 and 42 both
+// run on EVSE-1. Core no longer gets there by itself.
+func twoActiveOnEVSE1(t *testing.T) *statetest.Store {
+	t.Helper()
+	store := statetest.New(t)
+	err := store.Update(func(st *state.State) error {
+		for _, id := range []string{"41", "42"} {
+			st.Transactions = append(st.Transactions, state.Transaction{
+				ID: id, ChargePointID: testCP, EVSEUID: "EVSE-1", ConnectorID: 1,
+				IDTag: testTag, StartedAt: t0,
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
 }
 
 func TestUnlockAndTrigger(t *testing.T) {
@@ -663,7 +722,7 @@ func TestLocalRefusalsSendNothing(t *testing.T) {
 		},
 		"cancel":  func(c *control.Service) error { return c.Cancel(ctx, "NOPE") },
 		"start":   func(c *control.Service) error { return c.Start(ctx, "NOPE", "") },
-		"stop":    func(c *control.Service) error { return c.Stop(ctx, "NOPE") },
+		"stop":    func(c *control.Service) error { return c.Stop(ctx, "NOPE", "") },
 		"unlock":  func(c *control.Service) error { return c.Unlock(ctx, "NOPE") },
 		"trigger": func(c *control.Service) error { return c.TriggerStatus(ctx, "NOPE") },
 	}

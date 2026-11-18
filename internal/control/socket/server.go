@@ -291,7 +291,7 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 	case OpStart:
 		return done(s.opts.Control.Start(ctx, req.EVSE, req.IDTag))
 	case OpStop:
-		return done(s.opts.Control.Stop(ctx, req.EVSE))
+		return done(s.opts.Control.Stop(ctx, req.EVSE, req.TransactionID))
 	case OpUnlock:
 		return done(s.opts.Control.Unlock(ctx, req.EVSE))
 	case OpLimitSet, OpLimitClear, OpLimitShow, OpProfileSet:

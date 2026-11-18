@@ -65,6 +65,9 @@ type Request struct {
 	// config_set.
 	Key   string `json:"key,omitempty"`
 	Value string `json:"value,omitempty"`
+	// TransactionID names the session for stop; empty means the one
+	// active on the EVSE.
+	TransactionID string `json:"transaction_id,omitempty"`
 	// Station addresses the whole station (OCPP 1.6 connector 0) instead of
 	// EVSE, for the limit and profile operations.
 	Station bool `json:"station,omitempty"`
@@ -89,6 +92,9 @@ type LimitRequest struct {
 	For string `json:"for,omitempty"`
 	// Force sends a tx profile without a transaction when none is running.
 	Force bool `json:"force,omitempty"`
+	// TransactionID names the session a tx limit is for; empty means the
+	// one active on the EVSE.
+	TransactionID string `json:"transaction_id,omitempty"`
 }
 
 // ClearRequest selects charging profiles. Each unset field means "any"; the

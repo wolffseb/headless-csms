@@ -64,6 +64,7 @@ func newLimitSetCommand(opts *options) *cobra.Command {
 		stack    int
 		forD     time.Duration
 		force    bool
+		txID     string
 	)
 	c := &cobra.Command{
 		Use:   "set",
@@ -74,7 +75,7 @@ func newLimitSetCommand(opts *options) *cobra.Command {
 			"caps the whole station and needs --station.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			req := socket.LimitRequest{Purpose: purpose, StackLevel: stack, Force: force}
+			req := socket.LimitRequest{Purpose: purpose, StackLevel: stack, Force: force, TransactionID: txID}
 			switch hasKW, hasAmps := cmd.Flags().Changed("kw"), cmd.Flags().Changed("amps"); {
 			case hasKW && hasAmps:
 				return usage("--kw and --amps exclude each other")
@@ -100,6 +101,10 @@ func newLimitSetCommand(opts *options) *cobra.Command {
 				return usage("--stack %d is negative", stack)
 			case force && purpose != "tx":
 				return usage("--force only applies to --purpose tx")
+			case txID != "" && purpose != "tx":
+				return usage("--tx only applies to --purpose tx")
+			case txID != "" && force:
+				return usage("--tx and --force exclude each other")
 			}
 			if forD > 0 {
 				req.For = forD.String()
@@ -123,6 +128,7 @@ func newLimitSetCommand(opts *options) *cobra.Command {
 	c.Flags().IntVar(&stack, "stack", 0, "stack level: the highest of one purpose wins")
 	c.Flags().DurationVar(&forD, "for", 0, "how long the limit holds (default: until cleared)")
 	c.Flags().BoolVar(&force, "force", false, "with --purpose tx: send it even with no session running, without a transaction id")
+	c.Flags().StringVar(&txID, "tx", "", "with --purpose tx: the transaction to limit (default: the one running on the EVSE)")
 	return c
 }
 
