@@ -63,3 +63,6 @@ Lessons from earlier fix passes in this repo. Newest last within each section. K
 - A branch already checked out in another worktree can't be checked out again: use a local branch of another name tracking it, and push with `HEAD:<branch>` (#66).
 - Stop a background `cpms run` by its PID (`kill -INT`), not `pkill -f`, which also hits other agents' runs.
 - Run `go test -race -timeout 240s ./...`: a run with no timeout hung once for 15 min under load and named nothing. With the timeout, a real hang fails with a stack dump (#61).
+
+- A "must fail when X is removed" test for a retry or timer loop should fail fast, not by `eventually` timing out: wait on "retry armed OR round ended" and assert which one happened, so the mutant gives a clear message in milliseconds (2026-11-19, #78).
+- Transport errors from `client.Do` wrap a `*url.Error` and open with the full URL twice. Anything shown cut to a width (`cpms status`) should store `errors.As(*url.Error).Err` instead (#78).
