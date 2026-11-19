@@ -100,6 +100,26 @@ func TestCallOnClosedConnMatchesErrNotConnected(t *testing.T) {
 	}
 }
 
+// A call made on a connection that is already closed was never sent, every
+// time. The free call slot and the free writer buffer are both ready, so
+// without a check for the closed connection first, Go's select picks the
+// buffer about half the time and the call is reported as possibly sent.
+func TestCallOnClosedConnIsAlwaysNotSent(t *testing.T) {
+	t.Parallel()
+
+	conn := silentPeer(t, time.Second)
+	conn.Close()
+
+	for i := 0; i < 200; i++ {
+		_, err := conn.Call(context.Background(), "UnlockConnector", map[string]any{})
+		for _, target := range []error{ErrClosedUnsent, ErrConnClosed, ocpp.ErrNotConnected, ocpp.ErrNotSent} {
+			if !errors.Is(err, target) {
+				t.Fatalf("call %d on a closed connection: err = %v, want one matching %v", i, err, target)
+			}
+		}
+	}
+}
+
 // wirePeer is a charge point that records every CALL frame it receives and
 // answers only when the test tells it to, so a test sees exactly what is on
 // the wire and when.

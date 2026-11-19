@@ -246,6 +246,23 @@ func (c *Conn) Call(ctx context.Context, action string, payload any) (json.RawMe
 	c.pendingMu.Unlock()
 	defer c.forget(id)
 
+	// A connection that closed before this point never sends the frame, and
+	// done never reopens, so say so. Without this check a free slot and a free
+	// writer buffer are both ready on a dead connection, the select below picks
+	// one at random, and the frame would sit in a buffer nobody drains while
+	// the wait reports plain ErrConnClosed ("may have been acted on").
+	//
+	// A close that lands after this check, while the select runs, can still
+	// lose the race to the buffer; the frame is then queued for a writer that
+	// may already be gone, and the call is reported as ErrConnClosed. That is
+	// the honest side of the race: we cannot tell whether the writer got the
+	// frame out, so we do not claim it was not sent.
+	select {
+	case <-c.done:
+		return nil, ErrClosedUnsent
+	default:
+	}
+
 	select {
 	case c.send <- data:
 	case <-c.done:
