@@ -3,6 +3,7 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wolffseb/cli-cpms/internal/control/socket"
 )
@@ -44,6 +45,44 @@ func TestExitForNamesTheStationsAnswer(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), "status )") {
 			t.Errorf("%s: empty status in %q", c.name, err)
+		}
+	}
+}
+
+// "Busy, not sent" is the one failure that promises nothing happened, so it
+// must not share a code with a timeout, after which the station may well have
+// acted, and the message says so.
+func TestBusyHasItsOwnExitCode(t *testing.T) {
+	t.Parallel()
+
+	err := exitFor(socket.OpUnlock, "EVSE-1", &socket.Error{Code: socket.CodeBusy})
+	if code := ExitCode(err); code != ExitBusy || ExitBusy != 12 {
+		t.Errorf("busy exits %d, want 12", code)
+	}
+	for _, other := range []int{ExitOK, ExitError, ExitNotRunning, ExitNotConnected, ExitRejected, ExitOccupied,
+		ExitFaulted, ExitTimeout, ExitUnlockFailed, ExitRefused, ExitMissingCapability, ExitNotSupported} {
+		if other == ExitBusy {
+			t.Errorf("exit code %d is used for busy and for something else", other)
+		}
+	}
+	for _, want := range []string{"EVSE-1", "busy", "not sent", "Nothing changed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("message %q should mention %q", err, want)
+		}
+	}
+}
+
+// The CLI must outwait the daemon: a command that waits the whole queue cap
+// for its turn and then the whole call timeout for the station's answer is
+// still answered by the daemon before the CLI gives up. A CLI that gave up
+// earlier would report a failure for a command the station then carries out.
+func TestSocketWaitOutlastsQueueAndCall(t *testing.T) {
+	t.Parallel()
+
+	for _, callTimeout := range []time.Duration{time.Second, 30 * time.Second, 2 * time.Minute} {
+		queueCap := callTimeout // ocppj.Options.QueueTimeout defaults to the call timeout
+		if got, need := socketWait(callTimeout), queueCap+callTimeout+socketGrace; got < need {
+			t.Errorf("call_timeout %s: waits %s, want at least queue cap + call timeout + margin = %s", callTimeout, got, need)
 		}
 	}
 }

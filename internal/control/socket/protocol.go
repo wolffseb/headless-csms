@@ -196,6 +196,10 @@ const (
 	CodeFaulted Code = "faulted"
 	// CodeTimeout means the station did not answer within the call timeout.
 	CodeTimeout Code = "timeout"
+	// CodeBusy means the station stayed busy with an earlier command for the
+	// whole time this one could wait, so it was not sent. Unlike a timeout,
+	// the station has not seen the command and will not: asking again is safe.
+	CodeBusy Code = "busy"
 	// CodeUnlockFailed means the station could not release the cable, or does
 	// not support the command.
 	CodeUnlockFailed Code = "unlock_failed"

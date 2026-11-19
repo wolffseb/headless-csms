@@ -20,8 +20,8 @@ import (
 //
 // A station saying no (Rejected, Occupied, ...) is not an error: the call
 // worked, and the answer is in Result. Errors are reserved for the call not
-// working at all: ErrTimeout, ErrNotConnected, ErrUnknownEVSE, or a CALLERROR
-// from the station as *RPCError.
+// working at all: ErrTimeout, ErrNotConnected, ErrNotSent, ErrUnknownEVSE, or a
+// CALLERROR from the station as *RPCError.
 type ChargePoint interface {
 	// ID is the charge point identity.
 	ID() string
@@ -146,4 +146,10 @@ var (
 	// ErrUnknownEVSE means the EVSE uid is not in config. It is returned
 	// before anything is sent.
 	ErrUnknownEVSE = errors.New("ocpp: unknown EVSE")
+	// ErrNotSent means the station was busy with an earlier command of ours
+	// (one CALL is in flight per connection) and stayed busy for the whole
+	// time the command was allowed to wait in the queue. Nothing went out, so
+	// the station has not seen the command and will not: it is safe to ask
+	// again.
+	ErrNotSent = errors.New("ocpp: station busy, command not sent")
 )

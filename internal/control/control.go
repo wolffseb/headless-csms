@@ -190,6 +190,13 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		IDTag:         r.IDTag,
 		ExpiresAt:     r.ExpiresAt,
 	})
+	if errors.Is(err, ocpp.ErrNotSent) {
+		// The station never saw the ReserveNow, so there is nothing to
+		// cancel, and a cancel for a reservation that never went out would
+		// only be a second command for a station that is already busy.
+		s.core.EndReservation(r.ID, core.ReservationFailed)
+		return core.Reservation{}, err
+	}
 	if err != nil {
 		// Ending the record before the cancel has an answer would free the
 		// EVSE for a second ReserveNow that overtakes it and is answered

@@ -278,6 +278,7 @@ stdout too. Logs, validation problems and `cpms: …` errors go to stderr.
 | 9 | Refused by cpms before sending: already reserved (including while the cancel of a timed-out reservation is in flight), no reservation to cancel, nothing to stop, a `tx` limit with no session running (without `--force`), shutting down. `cpms ocpi unregister`: nothing is registered, or a registration is still in progress (nothing was changed; try again) |
 | 10 | `cpms probe`: the station reported that it lacks a capability cpms requires (one it merely did not report is not an error) |
 | 11 | `cpms limit` / `cpms profile`: the station does not support this charging profile or request (`NotSupported`, or a `NotImplemented`/`NotSupported` CALLERROR) |
+| 12 | The command was **not sent**: the station stayed busy with an earlier command (one command is in flight at a time) for the whole of `charger.call_timeout`. Nothing happened, so repeating it is safe; unlike 7, where the station may have acted |
 
 ### Power, current and the station's configuration
 
@@ -534,7 +535,8 @@ count beyond its limits, too many profiles installed). `NotSupported`, or a `Not
 answer within `charger.call_timeout` exits 7. When a profile went out but no answer came
 back (exit 7, or 3 if the connection dropped), the station may hold it although cpms records
 nothing; the message names the id it was sent with: check with `cpms limit show` and remove
-it with `cpms limit clear --id N`. Mistakes in the flags or the file exit 1 before
+it with `cpms limit clear --id N`. A profile that was not sent (exit 12) names no id: there is
+none to look for. Mistakes in the flags or the file exit 1 before
 anything is sent.
 
 **Profile file** for `cpms profile set -f`. The id is not part of it; cpms allocates one.
@@ -991,7 +993,8 @@ If the station answers anything but `Accepted`, or does not answer within
 matching code (4–7). After a timeout or a failure the station may still have received the
 request, so `cpms run` sends a `CancelReservation` in the background and the reservation shows
 as `state: cancelling` in `cpms status` until that has an answer; the EVSE refuses a new
-reservation (exit 9) meanwhile. It is not persisted, like a pending one. `core` only shows `RESERVED` when the station reports it; the
+reservation (exit 9) meanwhile. A reservation that was never sent (exit 12) has nothing to
+cancel: it ends at once and no `CancelReservation` follows. It is not persisted, like a pending one. `core` only shows `RESERVED` when the station reports it; the
 reservation record sits next to the status rather than overwriting it.
 
 #### Redeeming the reservation: start and stop
@@ -1170,10 +1173,18 @@ framing and correlation rather than keeping two that can drift apart.
 
 Per connection, `ocppj.Conn.Call` keeps one CALL in flight, as OCPP-J 1.6 §4.1.1 asks of a CSMS:
 a second caller (two socket commands, or a command and the on-connect `TriggerMessage`) waits
-until the first has an answer, a CALLERROR or a timeout. The wait counts against the caller's
-own context, so its deadline covers queue time plus wire time; the call timeout only starts
-once the frame is sent. Closing the connection releases everyone queued with `ErrNotConnected`.
-Calls from the station are not affected.
+until the first has an answer, a CALLERROR or a timeout. The wait for a turn is capped at
+`charger.call_timeout`: a call that has not got its turn by then fails with `ErrNotSent` and
+nothing goes out. The call timeout itself only starts once the frame is sent, so a call lives
+at most twice `charger.call_timeout`.
+
+For the CLI that means every command ends in one of two ways it can tell apart: not sent
+(exit 12, safe to repeat), or sent, and then answered (exit 0, 4–6, 8 or 11) or unanswered
+(exit 7, where the station may have acted). `cpms` waits for `cpms run` for
+`2 × call_timeout + 5 s`, so the daemon always answers first: the CLI never gives up on a
+command that is still queued, which would report a failure while the daemon went on to send
+it. Closing the connection releases everyone queued with `ErrNotConnected`. Calls from the
+station are not affected.
 
 The charge point identity is taken from the **last** path segment of the WebSocket URL, so
 `/ocpp/<id>`, `/<id>` and `/steve/websocket/CentralSystemService/<id>` all work — vendors

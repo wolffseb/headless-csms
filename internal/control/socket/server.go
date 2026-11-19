@@ -362,6 +362,8 @@ func classify(err error) *Error {
 		e.CallError = string(callErr.Code)
 	case errors.Is(err, ocpp.ErrTimeout):
 		e.Code = CodeTimeout
+	case errors.Is(err, ocpp.ErrNotSent):
+		e.Code = CodeBusy
 	case errors.Is(err, ocpp.ErrNotConnected):
 		e.Code = CodeNotConnected
 	case errors.Is(err, control.ErrAlreadyReserved),

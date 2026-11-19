@@ -112,7 +112,7 @@ type wirePeer struct {
 	ws *websocket.Conn
 }
 
-func newWirePeer(t *testing.T, callTimeout time.Duration) *wirePeer {
+func newWirePeer(t *testing.T, callTimeout time.Duration, tune ...func(*Options)) *wirePeer {
 	t.Helper()
 
 	p := &wirePeer{t: t, frames: make(chan Frame, 16)}
@@ -147,12 +147,16 @@ func newWirePeer(t *testing.T, callTimeout time.Duration) *wirePeer {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	p.conn = New(ws, Options{
+	opts := Options{
 		ID:          "CP",
 		Version:     ocpp.Version16,
 		CallTimeout: callTimeout,
 		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
-	})
+	}
+	for _, m := range tune {
+		m(&opts)
+	}
+	p.conn = New(ws, opts)
 	done := make(chan struct{})
 	go func() { defer close(done); p.conn.Run(context.Background(), nopHandler{}) }()
 	t.Cleanup(func() { p.conn.Close(); <-done })
@@ -296,7 +300,9 @@ func TestSecondCallGoesOutAfterACallError(t *testing.T) {
 func TestSecondCallGoesOutWhenTheFirstTimesOut(t *testing.T) {
 	t.Parallel()
 
-	p := newWirePeer(t, 200*time.Millisecond)
+	// The queue cap is far off, so that the second call's own timer cannot
+	// race the first one's timeout for the slot.
+	p := newWirePeer(t, 200*time.Millisecond, func(o *Options) { o.QueueTimeout = time.Minute })
 	ctx := context.Background()
 
 	first := p.callAsync(ctx, "GetConfiguration")
@@ -316,6 +322,65 @@ func TestSecondCallGoesOutWhenTheFirstTimesOut(t *testing.T) {
 	p.answer(f2, map[string]any{"ok": true})
 	if o := outcome(t, second, "second call"); o.err != nil {
 		t.Fatalf("second call: %v", o.err)
+	}
+}
+
+// A call that waited the whole queue timeout for its turn comes back as "not
+// sent". That is a promise the layers above pass on to the person who typed
+// the command (nothing happened, ask again), so it is shown the hard way:
+// the frame never reaches the peer, not then and not later, however the call
+// in front of it ends.
+func TestQueuedCallPastTheCapIsNotSent(t *testing.T) {
+	t.Parallel()
+
+	const queue = 150 * time.Millisecond
+	p := newWirePeer(t, 10*time.Second, func(o *Options) { o.QueueTimeout = queue })
+
+	first := p.callAsync(context.Background(), "GetConfiguration")
+	f1 := p.next()
+
+	start := time.Now()
+	o := outcome(t, p.callAsync(context.Background(), "UnlockConnector"), "queued call")
+	if !errors.Is(o.err, ErrNotSent) || !errors.Is(o.err, ocpp.ErrNotSent) {
+		t.Fatalf("queued call err = %v, want ErrNotSent (and ocpp.ErrNotSent)", o.err)
+	}
+	if errors.Is(o.err, ocpp.ErrTimeout) || errors.Is(o.err, ocpp.ErrNotConnected) {
+		t.Errorf("err %v also matches a timeout or not-connected, which say the command may have gone out", o.err)
+	}
+	if waited := time.Since(start); waited < queue {
+		t.Errorf("gave up after %s, before the %s cap", waited, queue)
+	}
+	p.quiet(settle, "a call that was reported as not sent went out anyway")
+
+	// The first call is untouched, and answering it neither sends the call
+	// that gave up nor leaves the slot taken.
+	third := p.callAsync(context.Background(), "ClearCache")
+	p.answer(f1, map[string]any{})
+	if o := outcome(t, first, "first call"); o.err != nil {
+		t.Fatalf("first call: %v", o.err)
+	}
+	f3 := p.next()
+	if f3.Action != "ClearCache" {
+		t.Fatalf("next frame = %s, want ClearCache: the call that gave up must stay unsent", f3.Action)
+	}
+	p.answer(f3, map[string]any{})
+	if o := outcome(t, third, "third call"); o.err != nil {
+		t.Fatalf("third call: %v", o.err)
+	}
+	if n := p.conn.PendingCount(); n != 0 {
+		t.Errorf("PendingCount = %d after every call ended", n)
+	}
+}
+
+// The queue cap follows the call timeout unless told otherwise, so a call's
+// whole life is under twice the call timeout: the bound the CLI's wait is
+// built on.
+func TestQueueCapDefaultsToTheCallTimeout(t *testing.T) {
+	t.Parallel()
+
+	p := newWirePeer(t, 123*time.Millisecond)
+	if got := p.conn.queueTimeout; got != 123*time.Millisecond {
+		t.Errorf("queue timeout = %s, want the call timeout", got)
 	}
 }
 

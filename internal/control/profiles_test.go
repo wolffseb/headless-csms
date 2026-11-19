@@ -278,6 +278,25 @@ func TestScheduleRefusedIsAnError(t *testing.T) {
 	}
 }
 
+// A profile that never went out (the station stayed busy for the whole queue
+// timeout) is not "unconfirmed": there is no id to look for, and telling the
+// operator to check for one would send them after a profile that does not
+// exist.
+func TestUnsentProfileIsNotUnconfirmed(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.station.fail["set-profile"] = ocpp.ErrNotSent
+
+	_, err := r.ctl.SetLimit(context.Background(), control.LimitParams{EVSEUID: "EVSE-1", KW: f64(20)})
+	if !errors.Is(err, ocpp.ErrNotSent) {
+		t.Fatalf("err = %v, want ErrNotSent", err)
+	}
+	var unconfirmed *control.UnconfirmedProfileError
+	if errors.As(err, &unconfirmed) {
+		t.Errorf("err = %v, want no UnconfirmedProfileError for a profile that was not sent", err)
+	}
+}
+
 // A profile that went out but got no answer may be held by the station
 // although cpms records nothing. The error names the id it was sent with, so
 // the operator can check for it and clear exactly that one.

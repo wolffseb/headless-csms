@@ -21,10 +21,23 @@ import (
 // It sits next to the state file, which sits next to the config file.
 const DefaultSocketFile = "cpms.sock"
 
-// socketGrace is how much longer than charger.call_timeout a one-shot command
-// waits for `cpms run`. The daemon reports a slow station as a timeout of its
-// own; this margin only exists so that a hung daemon cannot hang the CLI.
+// socketGrace is the margin a one-shot command adds to the longest the daemon
+// can take (see socketWait). The daemon reports a slow or busy station as an
+// error of its own; this margin only exists so that a hung daemon cannot hang
+// the CLI.
 const socketGrace = 5 * time.Second
+
+// socketWait is how long a one-shot command waits for `cpms run`.
+//
+// A command that was sent to the station must never be reported as failed,
+// so the daemon has to answer before the CLI gives up. The daemon holds a
+// command for at most charger.call_timeout waiting for its turn on the
+// station (after that it answers "busy, not sent") plus charger.call_timeout
+// waiting for the station's answer (after that, "timeout"), and every socket
+// command makes one such call. The margin covers the daemon's own work.
+func socketWait(callTimeout time.Duration) time.Duration {
+	return 2*callTimeout + socketGrace
+}
 
 // resolvedSocketPath is --socket if given, otherwise cpms.sock next to the
 // state file.
@@ -214,8 +227,7 @@ func newStationEnv(cmd *cobra.Command, opts *options) (*stationEnv, error) {
 }
 
 func (e *stationEnv) call(cmd *cobra.Command, req socket.Request) (json.RawMessage, error) {
-	timeout := e.cfg.Charger.CallTimeout.Duration() + socketGrace
-	raw, err := socket.Call(cmd.Context(), e.socketPath, req, timeout)
+	raw, err := socket.Call(cmd.Context(), e.socketPath, req, socketWait(e.cfg.Charger.CallTimeout.Duration()))
 	if err != nil {
 		subject := req.EVSE
 		if req.Op == socket.OpConfigSet {

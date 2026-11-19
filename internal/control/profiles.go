@@ -142,6 +142,8 @@ func (s *Service) setProfile(ctx context.Context, p ocpp.ChargingProfile, source
 	p.ID = id
 
 	res, err := cp.SetChargingProfile(ctx, p)
+	// ErrNotSent is neither: the profile never went out, so there is no id to
+	// look for.
 	if errors.Is(err, ocpp.ErrTimeout) || errors.Is(err, ocpp.ErrNotConnected) {
 		// It may have arrived: say which id to look for, since nothing is
 		// recorded for it.

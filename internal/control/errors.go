@@ -15,6 +15,9 @@ import (
 //   - *RefusedError: the station answered, and the answer was no;
 //   - ocpp.ErrTimeout: the station did not answer in time;
 //   - ocpp.ErrNotConnected: the station is not connected;
+//   - ocpp.ErrNotSent: the station stayed busy with an earlier command, so
+//     this one was never sent (the one thing every other error here may
+//     not promise);
 //   - ocpp.ErrUnknownEVSE: the EVSE is not in config;
 //   - *ocpp.RPCError: the station answered with a CALLERROR.
 //

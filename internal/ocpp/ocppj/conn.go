@@ -53,6 +53,19 @@ func (connClosedError) Error() string { return "ocpp: connection closed" }
 // Is makes errors.Is(err, ocpp.ErrNotConnected) hold.
 func (connClosedError) Is(target error) bool { return target == ocpp.ErrNotConnected }
 
+// ErrNotSent is returned by Call when it waited the whole queue timeout for the
+// call slot and never got it: an earlier call was still on the wire. Nothing
+// was sent, so the peer has not seen the call and never will. It matches
+// ocpp.ErrNotSent under errors.Is.
+var ErrNotSent error = notSentError{}
+
+type notSentError struct{}
+
+func (notSentError) Error() string { return "ocpp: station busy, call not sent" }
+
+// Is makes errors.Is(err, ocpp.ErrNotSent) hold.
+func (notSentError) Is(target error) bool { return target == ocpp.ErrNotSent }
+
 // timeoutError is returned by Call when the peer does not answer in time. It
 // matches ocpp.ErrTimeout under errors.Is and names the action and the
 // timeout, which is what an operator needs to read in a log line.
@@ -102,6 +115,8 @@ type Conn struct {
 	// It is a channel and not a mutex so that waiting for it can be given up
 	// when the caller's ctx ends or the connection closes.
 	callSlot chan struct{}
+	// queueTimeout is the longest a caller waits for callSlot.
+	queueTimeout time.Duration
 
 	pendingMu sync.Mutex
 	pending   map[string]chan callResult
@@ -121,6 +136,10 @@ type Options struct {
 	Version ocpp.Version
 	// CallTimeout bounds an outbound request.
 	CallTimeout time.Duration
+	// QueueTimeout bounds how long a call waits behind the one on the wire
+	// before it gives up with ErrNotSent. It defaults to CallTimeout, so a
+	// call's whole life, queue and wire, is under twice the call timeout.
+	QueueTimeout time.Duration
 	// IdleTimeout drops a connection with no inbound traffic for this long.
 	IdleTimeout time.Duration
 	Log         *slog.Logger
@@ -134,21 +153,25 @@ func New(ws *websocket.Conn, opts Options) *Conn {
 	if opts.CallTimeout <= 0 {
 		opts.CallTimeout = 30 * time.Second
 	}
+	if opts.QueueTimeout <= 0 {
+		opts.QueueTimeout = opts.CallTimeout
+	}
 	if opts.IdleTimeout <= 0 {
 		opts.IdleTimeout = 90 * time.Second
 	}
 	return &Conn{
-		id:          opts.ID,
-		version:     opts.Version,
-		ws:          ws,
-		log:         opts.Log,
-		callTimeout: opts.CallTimeout,
-		idleTimeout: opts.IdleTimeout,
-		send:        make(chan []byte, sendBuffer),
-		calls:       make(chan Frame, callBuffer),
-		callSlot:    make(chan struct{}, 1),
-		pending:     make(map[string]chan callResult),
-		done:        make(chan struct{}),
+		id:           opts.ID,
+		version:      opts.Version,
+		ws:           ws,
+		log:          opts.Log,
+		callTimeout:  opts.CallTimeout,
+		idleTimeout:  opts.IdleTimeout,
+		send:         make(chan []byte, sendBuffer),
+		calls:        make(chan Frame, callBuffer),
+		callSlot:     make(chan struct{}, 1),
+		queueTimeout: opts.QueueTimeout,
+		pending:      make(map[string]chan callResult),
+		done:         make(chan struct{}),
 	}
 }
 
@@ -165,9 +188,14 @@ func (c *Conn) Done() <-chan struct{} { return c.done }
 //
 // Only one CALL of ours is outstanding per connection: a second caller waits
 // until the first has an answer, has timed out, or the connection is gone.
-// The wait counts against ctx, so a caller's deadline covers its time in the
-// queue plus its time on the wire. The call timeout only starts once the
-// frame has been handed to the writer.
+// That wait is bounded twice. It counts against ctx, and it ends after the
+// queue timeout (the call timeout, unless Options say otherwise) with
+// ErrNotSent: nothing was sent, so the caller may tell its own caller that
+// the command did not go out. Once the slot is won there is no way back: the
+// frame is sent, and a caller that stops waiting for the answer (ctx, the
+// call timeout) leaves a command the peer may carry out. The call timeout
+// only starts once the frame has been handed to the writer, so a call lives
+// at most queue timeout plus call timeout.
 //
 // It returns when the peer answers, when ctx is cancelled, when the call
 // timeout expires, or when the connection drops — and in every one of those
@@ -185,12 +213,8 @@ func (c *Conn) Call(ctx context.Context, action string, payload any) (json.RawMe
 		return nil, err
 	}
 
-	select {
-	case c.callSlot <- struct{}{}:
-	case <-c.done:
-		return nil, ErrConnClosed
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	if err := c.acquireSlot(ctx); err != nil {
+		return nil, err
 	}
 	defer func() { <-c.callSlot }()
 
@@ -225,6 +249,31 @@ func (c *Conn) Call(ctx context.Context, action string, payload any) (json.RawMe
 		return nil, ErrConnClosed
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+}
+
+// acquireSlot waits for the call slot for at most the queue timeout. It
+// returns ErrNotSent when that runs out, ErrConnClosed when the connection
+// ends first and ctx.Err() when ctx does.
+func (c *Conn) acquireSlot(ctx context.Context) error {
+	select {
+	case c.callSlot <- struct{}{}:
+		return nil
+	default:
+	}
+
+	timer := time.NewTimer(c.queueTimeout)
+	defer timer.Stop()
+
+	select {
+	case c.callSlot <- struct{}{}:
+		return nil
+	case <-timer.C:
+		return ErrNotSent
+	case <-c.done:
+		return ErrConnClosed
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

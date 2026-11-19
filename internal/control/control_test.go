@@ -459,6 +459,38 @@ func TestReserveRefusalDoesNotCancel(t *testing.T) {
 	}
 }
 
+// A ReserveNow that was never sent (the station stayed busy with an earlier
+// command for the whole queue timeout) cannot be held by the station, so no
+// CancelReservation follows: it would be one more command for a station that
+// is already busy, undoing nothing. The record ends at once, and the EVSE is
+// free for the next attempt without waiting for a cancel.
+func TestReserveNotSentDoesNotCancel(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.station.fail["reserve"] = ocpp.ErrNotSent
+
+	_, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1"})
+	if !errors.Is(err, ocpp.ErrNotSent) {
+		t.Fatalf("err = %v, want ErrNotSent", err)
+	}
+	// A cancel would run in the background; Close waits for it, so the check
+	// below cannot pass just because it has not started yet.
+	r.ctl.Close()
+
+	r.station.mu.Lock()
+	cancels := append([]int(nil), r.station.cancels...)
+	r.station.mu.Unlock()
+	if len(cancels) != 0 {
+		t.Errorf("cancelled %v although the ReserveNow never went out", cancels)
+	}
+	if got := r.reservations(); len(got) != 0 {
+		t.Errorf("reservations = %+v, want none: nothing is left to cancel", got)
+	}
+	if got := endedAs(drain(r.events)); len(got) != 1 || got[0] != core.ReservationFailed {
+		t.Errorf("ended = %v, want [failed]", got)
+	}
+}
+
 func TestSecondReservationIsRefusedLocally(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
