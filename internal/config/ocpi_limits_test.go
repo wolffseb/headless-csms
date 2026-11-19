@@ -162,6 +162,30 @@ func TestLocationFieldLimitsAndCharacters(t *testing.T) {
 					t.Errorf("%s: message %q does not say what is wrong", bad.name, msgs[0])
 				}
 			}
+
+			// The edges of the allowed range. A CiString runs from the space
+			// (U+0020) to the tilde (U+007E), both included.
+			if f.ci {
+				if paths, _ := f.check(t, "A B~"); len(paths) != 0 {
+					t.Errorf("space and tilde are printable ASCII and must pass, flagged %v", paths)
+				}
+			}
+
+			// A literal U+FFFD is a valid character, not broken UTF-8: a
+			// string allows it, and a CiString names it rather than calling
+			// the value invalid UTF-8.
+			paths, msgs = f.check(t, "ab�cd")
+			switch {
+			case !f.ci && len(paths) != 0:
+				t.Errorf("a literal U+FFFD is printable and must pass, flagged %v", paths)
+			case f.ci && !reflect.DeepEqual(paths, wantOne):
+				t.Errorf("U+FFFD in a CiString: flagged %v, want %v", paths, wantOne)
+			case f.ci && strings.Contains(msgs[0], "invalid UTF-8"):
+				t.Errorf("a literal U+FFFD is reported as invalid UTF-8: %q", msgs[0])
+			}
+			if _, msgs := f.check(t, "ab\xffcd"); len(msgs) == 0 || !strings.Contains(msgs[0], "invalid UTF-8") {
+				t.Errorf("a stray byte must be reported as invalid UTF-8, got %v", msgs)
+			}
 		})
 	}
 }
