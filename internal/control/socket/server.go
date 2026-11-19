@@ -16,6 +16,7 @@ import (
 	"github.com/wolffseb/cli-cpms/internal/control"
 	"github.com/wolffseb/cli-cpms/internal/core"
 	"github.com/wolffseb/cli-cpms/internal/ocpi/credentials"
+	"github.com/wolffseb/cli-cpms/internal/ocpi/push"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
 	"github.com/wolffseb/cli-cpms/internal/state"
 )
@@ -47,6 +48,9 @@ type Options struct {
 	// OCPI is the OCPI registration, supplied with AttachOCPI. Without it,
 	// status reports "not registered" and unregistering is refused.
 	OCPI OCPIRegistration
+	// Push is the status push, supplied with AttachPush. Without it, status
+	// says nothing about the push.
+	Push PushHealth
 	// UnregisterTimeout bounds OpOCPIUnregister, and must be shorter than the
 	// client's own timeout: a client that gives up first reports a failure
 	// while the server carries on and clears the registration anyway. Zero
@@ -59,6 +63,11 @@ type Options struct {
 type OCPIRegistration interface {
 	Registration() *state.OCPIRegistration
 	Unregister(ctx context.Context) (credentials.Unregistered, error)
+}
+
+// PushHealth is what the socket needs of the OCPI status push.
+type PushHealth interface {
+	Status() push.Status
 }
 
 // Server answers requests on the socket.
@@ -141,6 +150,10 @@ func (s *Server) Attach(ctl *control.Service, c *core.Service) {
 
 // AttachOCPI supplies the OCPI registration. Call it before Serve.
 func (s *Server) AttachOCPI(o OCPIRegistration) { s.opts.OCPI = o }
+
+// AttachPush supplies the status push, for the status report. Call it before
+// Serve.
+func (s *Server) AttachPush(p PushHealth) { s.opts.Push = p }
 
 // Serve answers requests until ctx is cancelled or Close is called. It
 // returns immediately; the accept loop runs in the background.
@@ -227,6 +240,9 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 		st := BuildStatus(s.opts.Core.Snapshot(), s.opts.ChargePointID)
 		if s.opts.OCPI != nil {
 			st.OCPI = BuildOCPIStatus(s.opts.OCPI.Registration())
+			if st.OCPI.Registered && s.opts.Push != nil {
+				st.OCPI.Push = BuildPushStatus(s.opts.Push.Status())
+			}
 		}
 		return ok(st)
 

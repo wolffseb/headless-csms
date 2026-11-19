@@ -19,6 +19,7 @@ import (
 	"github.com/wolffseb/cli-cpms/internal/ocpi"
 	"github.com/wolffseb/cli-cpms/internal/ocpi/credentials"
 	"github.com/wolffseb/cli-cpms/internal/ocpi/locations"
+	"github.com/wolffseb/cli-cpms/internal/ocpi/push"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
 	"github.com/wolffseb/cli-cpms/internal/ocpp/csms"
 	"github.com/wolffseb/cli-cpms/internal/ocpp/ocppj"
@@ -172,6 +173,20 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// The pusher mirrors EVSE status changes to the OCPI partner. It lives
+	// on ctx, so shutdown cancels a PATCH that is on the wire.
+	pusher, err := push.New(push.Options{Config: cfg, Core: svc, Registration: registrar, Log: logger})
+	if err != nil {
+		commands.Close()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+		defer cancel()
+		_ = ocpiServer.Shutdown(shutdownCtx)
+		_ = server.Shutdown(shutdownCtx)
+		return err
+	}
+	pusher.Start(ctx)
+	ctl.AttachPush(pusher)
 	ctl.Serve(ctx)
 
 	fmt.Fprintf(cmd.OutOrStdout(), "cpms listening for %s on ws://%s/ocpp/%s\n",
@@ -196,6 +211,11 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	ocpiCtx, cancelOCPI := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancelOCPI()
 
+	// ctx is cancelled, so the pusher is already stopping its workers and
+	// cancelling any PATCH in flight.
+	if err := pusher.Wait(ocpiCtx); err != nil {
+		logger.Warn("the OCPI status push did not stop within the grace", "error", err)
+	}
 	// Stop taking commands before the station connection goes away, so no
 	// command is half-sent into a closing socket.
 	if err := ocpiServer.Shutdown(ocpiCtx); err != nil {
