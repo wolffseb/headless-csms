@@ -20,8 +20,8 @@ import (
 //
 // A station saying no (Rejected, Occupied, ...) is not an error: the call
 // worked, and the answer is in Result. Errors are reserved for the call not
-// working at all: ErrTimeout, ErrNotConnected, ErrUnknownEVSE, or a CALLERROR
-// from the station as *RPCError.
+// working at all: ErrTimeout, ErrNotConnected, ErrNotSent, ErrUnknownEVSE, or a
+// CALLERROR from the station as *RPCError.
 type ChargePoint interface {
 	// ID is the charge point identity.
 	ID() string
@@ -146,4 +146,19 @@ var (
 	// ErrUnknownEVSE means the EVSE uid is not in config. It is returned
 	// before anything is sent.
 	ErrUnknownEVSE = errors.New("ocpp: unknown EVSE")
+	// ErrNotSent means the command never went out: the station was busy with
+	// an earlier command of ours (one CALL is in flight per connection) for
+	// the whole time the command was allowed to wait in the queue, or the
+	// connection closed while it waited. The station has not seen the command
+	// and will not: it is safe to ask again. In the second case the error
+	// matches ErrNotConnected too, so check that first when "busy" would be
+	// the wrong thing to say.
+	ErrNotSent = errors.New("ocpp: station busy, command not sent")
 )
+
+// CallBound is the longest one command lives on a connection whose calls time
+// out after callTimeout: at most callTimeout waiting for its turn behind the
+// command on the wire (ErrNotSent after that), then at most callTimeout
+// waiting for the answer (ErrTimeout after that). It is what ocppj's queue
+// timeout, which defaults to the call timeout, adds up to.
+func CallBound(callTimeout time.Duration) time.Duration { return 2 * callTimeout }

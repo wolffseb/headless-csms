@@ -142,7 +142,10 @@ func (s *Service) setProfile(ctx context.Context, p ocpp.ChargingProfile, source
 	p.ID = id
 
 	res, err := cp.SetChargingProfile(ctx, p)
-	if errors.Is(err, ocpp.ErrTimeout) || errors.Is(err, ocpp.ErrNotConnected) {
+	// A profile that never went out (ErrNotSent: the station stayed busy, or
+	// the connection closed while it was queued) is not unconfirmed: there is
+	// no id to look for.
+	if !errors.Is(err, ocpp.ErrNotSent) && (errors.Is(err, ocpp.ErrTimeout) || errors.Is(err, ocpp.ErrNotConnected)) {
 		// It may have arrived: say which id to look for, since nothing is
 		// recorded for it.
 		return core.ChargingProfile{}, &UnconfirmedProfileError{ID: p.ID, Target: target(p.EVSEUID), Err: err}

@@ -185,7 +185,9 @@ const (
 	// CodeUsage is a request the daemon cannot act on as given: an unknown
 	// EVSE, a bad duration, an unsupported protocol version.
 	CodeUsage Code = "usage"
-	// CodeNotConnected means the station is not connected to cpms.
+	// CodeNotConnected means the station is not connected to cpms, or the
+	// connection dropped while the command was waiting for its turn or for
+	// its answer. The command may or may not have reached the station.
 	CodeNotConnected Code = "not_connected"
 	// CodeRejected means the station answered Rejected, or a status the spec
 	// does not define.
@@ -196,6 +198,10 @@ const (
 	CodeFaulted Code = "faulted"
 	// CodeTimeout means the station did not answer within the call timeout.
 	CodeTimeout Code = "timeout"
+	// CodeBusy means the station stayed busy with an earlier command for the
+	// whole time this one could wait, so it was not sent. Unlike a timeout,
+	// the station has not seen the command and will not: asking again is safe.
+	CodeBusy Code = "busy"
 	// CodeUnlockFailed means the station could not release the cable, or does
 	// not support the command.
 	CodeUnlockFailed Code = "unlock_failed"

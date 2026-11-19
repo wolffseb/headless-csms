@@ -18,9 +18,12 @@ var ErrNotRunning = errors.New("cpms run is not reachable")
 
 // Call sends one request and waits for the response, at most until timeout.
 //
-// The timeout should exceed the station's call timeout, so that a slow
-// station surfaces as the daemon's CodeTimeout rather than the client giving
-// up first; it exists so that a hung daemon cannot hang the CLI forever.
+// The timeout should exceed the longest the daemon can take to answer (the
+// time a command may queue for the station plus the station's call timeout),
+// so that a slow or busy station surfaces as the daemon's CodeTimeout or
+// CodeBusy rather than the client giving up first, while the daemon still
+// sends the command. It exists so that a hung daemon cannot hang the CLI
+// forever.
 //
 // A response with ok=false is returned as *Error.
 func Call(ctx context.Context, path string, req Request, timeout time.Duration) (json.RawMessage, error) {

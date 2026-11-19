@@ -86,8 +86,8 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	// The control socket is claimed before anything else listens, so a second
 	// cpms on the same socket stops here with "already running", not later
 	// with "address in use".
-	// Unregistering gives up at call_timeout, five seconds before the CLI
-	// does (see socketGrace), so the CLI hears what happened.
+	// Unregistering gives up at call_timeout, well before the CLI does (see
+	// socketWait), so the CLI hears what happened.
 	ctl, err := socket.Listen(socket.Options{
 		Path:              socketPath,
 		ChargePointID:     cfg.Charger.ID,
@@ -206,8 +206,9 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	<-ctx.Done()
 	fmt.Fprintln(cmd.OutOrStdout(), "shutting down")
 	// Each listener gets its own grace, started when its turn comes:
-	// commands.Close below can take up to call_timeout, which would spend a
-	// shared one before the OCPP server got to use it.
+	// commands.Close below can take up to four times call_timeout (a Reserve
+	// and the cancel it starts each wait for a turn and then for an answer),
+	// which would spend a shared one before the OCPP server got to use it.
 	ocpiCtx, cancelOCPI := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancelOCPI()
 

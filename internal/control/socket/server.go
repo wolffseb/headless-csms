@@ -379,7 +379,11 @@ func classify(err error) *Error {
 	case errors.Is(err, ocpp.ErrTimeout):
 		e.Code = CodeTimeout
 	case errors.Is(err, ocpp.ErrNotConnected):
+		// Before ErrNotSent: a command released unsent by a closing
+		// connection matches both, and "busy" would be the wrong thing to say.
 		e.Code = CodeNotConnected
+	case errors.Is(err, ocpp.ErrNotSent):
+		e.Code = CodeBusy
 	case errors.Is(err, control.ErrAlreadyReserved),
 		errors.Is(err, control.ErrShuttingDown),
 		errors.Is(err, control.ErrNoReservation),

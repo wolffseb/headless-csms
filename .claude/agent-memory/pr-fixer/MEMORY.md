@@ -42,6 +42,9 @@ Lessons from earlier fix passes in this repo. Newest last within each section. K
 
 - A guard condition a review says is untested ("remove it, tests stay green"): the mutant check is to delete just that clause and see the new test fail on its side effects (events, profiles, reading, log text), not only on the headline one (#74).
 
+- A client that waits for a daemon must wait longer than the daemon's longest path (queue cap + call timeout + margin), and the daemon needs a distinct "not sent" error: only then can the client promise "failed" means "nothing happened". To show a CLI-wait test fails, put the old wait formula back in place (not `git stash`, which also drops the new test) and run it; keep the scenario in whole seconds (call_timeout 9s, station answers after 7.5s, two concurrent commands) so it stays ~15 s and `testing.Short()` can skip it (2026-11-19, #76).
+- Before sizing such a wait, grep every op the daemon serves for how many outbound calls it makes (here each makes one; Reserve's cancel is background).
+
 ## Known flakes (rerun, don't fix in unrelated PRs)
 
 - `TestShutdownWaitsForTheOrphanCancel` (#43): two 1 s timers race. Rerun the failed job.
@@ -64,5 +67,9 @@ Lessons from earlier fix passes in this repo. Newest last within each section. K
 - Stop a background `cpms run` by its PID (`kill -INT`), not `pkill -f`, which also hits other agents' runs.
 - Run `go test -race -timeout 240s ./...`: a run with no timeout hung once for 15 min under load and named nothing. With the timeout, a real hang fails with a stack dump (#61).
 
+- Queue-aware timeouts (2026-11-19, #76): once a call can wait for a slot, every ctx deadline sized "call_timeout + slack" for a send that never waits is wrong. Size per attempt with `ocpp.CallBound`, and when a background action (orphan cancel) must reach the station, retry on `ErrNotSent` instead of ending its record. A queue-cap error also caps *other* queued calls in the test: a second command queued early is itself dropped as not-sent before it gets the slot. Queue it late (0.75 T) in the scenario.
+- An error that matches two sentinels (`ErrClosedUnsent` is both not-sent and not-connected) makes `errors.Is` order matter in every switch: check the more specific/terminal one (not-connected) before the retry/"busy" one, in `classify`, `setProfile` and the retry loop, and test each.
+- A select with two ready cases (free buffer vs closed `done`) is random: a "closed before send" guarantee needs a non-blocking pre-check of `done` first, and the test needs a loop (200 calls) because a single call passes half the time. Keep the leftover race (close after the check) classified as the honest "may have been sent" and say so in a comment (2026-11-19, #76).
+- revive wants a doc comment on every exported method, even tiny `Is` helpers: copy the sibling type's comment. Run golangci-lint before the first push, since the lint job is the first CI check to go red (#76).
 - A "must fail when X is removed" test for a retry or timer loop should fail fast, not by `eventually` timing out: wait on "retry armed OR round ended" and assert which one happened, so the mutant gives a clear message in milliseconds (2026-11-19, #78).
 - Transport errors from `client.Do` wrap a `*url.Error` and open with the full URL twice. Anything shown cut to a width (`cpms status`) should store `errors.As(*url.Error).Err` instead (#78).

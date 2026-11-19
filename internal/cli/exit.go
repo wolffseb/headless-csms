@@ -29,6 +29,11 @@ const (
 	// or profile: it answered NotSupported, or a NotImplemented or
 	// NotSupported CALLERROR.
 	ExitNotSupported = 11
+	// ExitBusy means the station was busy with an earlier command for as long
+	// as this one could wait, so it was not sent. Nothing happened and asking
+	// again is safe, which no other failure promises: after a timeout the
+	// station may still have acted.
+	ExitBusy = 12
 )
 
 // ExitStatus is an error that carries the process exit code. main exits with
@@ -104,6 +109,9 @@ func exitFor(op socket.Op, evse string, err error) error {
 		return &ExitStatus{Code: ExitFaulted, Err: msg("the station says it is faulted or unavailable%s", answer(se))}
 	case socket.CodeTimeout:
 		return &ExitStatus{Code: ExitTimeout, Err: msg("the station did not answer within charger.call_timeout%s", unconfirmed(se))}
+	case socket.CodeBusy:
+		return &ExitStatus{Code: ExitBusy, Err: msg(
+			"the station was busy with an earlier command for the whole of charger.call_timeout, so this one was not sent. Nothing changed; try again")}
 	case socket.CodeUnlockFailed:
 		if se.Status == "UnlockFailed" {
 			return &ExitStatus{Code: ExitUnlockFailed, Err: msg("the station could not release the cable lock%s", answer(se))}

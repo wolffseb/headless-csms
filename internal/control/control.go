@@ -73,6 +73,9 @@ type Service struct {
 	inflight sync.WaitGroup
 	mu       sync.Mutex
 	closed   bool
+	// closing is closed by Close. A cancel that was not sent stops trying
+	// again when it sees it.
+	closing chan struct{}
 }
 
 // New builds a Service.
@@ -97,6 +100,7 @@ func New(opts Options) *Service {
 		log:       opts.Log,
 		bootGrace: opts.BootGrace,
 		afterFunc: opts.AfterFunc,
+		closing:   make(chan struct{}),
 	}
 }
 
@@ -121,13 +125,19 @@ type ReserveParams struct {
 }
 
 // Close refuses further reservations (ErrShuttingDown), then waits for the
-// Reserve calls in flight and the background cancels they started (each is
-// bounded by the call timeout). Call it after no more commands are accepted
-// and before the station connection is closed, so the cancels can still be
-// sent. It is safe to call more than once.
+// Reserve calls in flight and the background cancels they started. A Reserve
+// takes at most ocpp.CallBound of the call timeout (a turn in the queue, then
+// the wait for the answer), and its cancel, which is not tried again once
+// Close has been called, takes the same again, so Close can take up to four
+// call timeouts when the station is silent and busy. Call it after no more
+// commands are accepted and before the station connection is closed, so the
+// cancels can still be sent. It is safe to call more than once.
 func (s *Service) Close() {
 	s.mu.Lock()
-	s.closed = true
+	if !s.closed {
+		s.closed = true
+		close(s.closing)
+	}
 	s.mu.Unlock()
 	s.inflight.Wait()
 }
@@ -142,8 +152,12 @@ func (s *Service) Close() {
 // original error at once and the record in core is ended, so nothing in
 // status or events claims a reservation we hold. The record stays in core as
 // cancelling, which keeps the EVSE occupied (ErrAlreadyReserved) until the
-// cancel has an answer. If the connection dropped, that cancel cannot reach
-// the station, and the reservation it may hold is left to expire there.
+// station has answered the cancel, the connection dropped, or the cancel
+// itself got no answer within the call timeout (a timed-out call is over, and
+// it is not sent again). In the last two cases the cancel did not get through,
+// and the reservation the station may hold is left to expire there, at the
+// reservation's expiryDate, so a new reserve on that EVSE can be answered
+// Occupied until then.
 func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservation, error) {
 	s.mu.Lock()
 	if s.closed {
@@ -190,6 +204,13 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		IDTag:         r.IDTag,
 		ExpiresAt:     r.ExpiresAt,
 	})
+	if errors.Is(err, ocpp.ErrNotSent) {
+		// The station never saw the ReserveNow, so there is nothing to
+		// cancel, and a cancel for a reservation that never went out would
+		// only be a second command for a station that is already busy.
+		s.core.EndReservation(r.ID, core.ReservationFailed)
+		return core.Reservation{}, err
+	}
 	if err != nil {
 		// Ending the record before the cancel has an answer would free the
 		// EVSE for a second ReserveNow that overtakes it and is answered
@@ -220,22 +241,34 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 	return active, nil
 }
 
-// orphanCancelSlack is how much longer than charger.call_timeout cancelOrphan
-// gives the cancel, so that the call timer, not this deadline, ends a cancel
-// the station does not answer.
+// orphanCancelSlack is how much longer than ocpp.CallBound of the call timeout
+// cancelOrphan gives one attempt, so that the connection's own timers (the
+// queue timeout, then the call timeout), not this deadline, end an attempt
+// that gets no turn or no answer.
 const orphanCancelSlack = time.Second
 
 // cancelOrphan asks the station to drop a reservation whose ReserveNow timed
 // out or failed. The request may have reached the station even though the
 // answer did not reach us, and a reservation we have forgotten would block
-// the EVSE until it expired, answering every new reserve with Occupied.
+// the EVSE until it expired, answering every new reserve with Occupied: for a
+// truck whose driver nobody can identify.
 //
 // Ids are never reused, so cancelling by id cannot hit a later reservation;
 // Rejected just means the station never held it. It is best effort: the
 // outcome is logged, and the caller still gets the original error. It runs
 // in the background (see Reserve and Close) and outlives the caller's
-// context, which is typically what ended the wait, but is bounded by the
-// call timeout. The caller ends the cancelling record once it returns.
+// context, which is typically what ended the wait. The caller ends the
+// cancelling record once it returns, so it returns when the station has
+// answered, when the connection dropped, when the cancel itself got no answer
+// within the call timeout, or once Close has been called. In the last three
+// cases the station may still hold the reservation until its expiryDate.
+//
+// The cancel waits for the call slot behind whatever else is on the wire,
+// and a command that waited the whole queue timeout is not sent
+// (ocpp.ErrNotSent): the station may still be holding the reservation, so
+// the cancel is tried again, queued afresh, until it is sent or one of the
+// above happens. Each attempt is bounded by ocpp.CallBound: a turn in the
+// queue plus the wait for the answer.
 //
 // Known limitation: cp stays bound to the connection that carried the
 // ReserveNow. If that connection dropped, the cancel fails at once and is not
@@ -245,25 +278,49 @@ const orphanCancelSlack = time.Second
 // orphan ids persisted (see docs/IDEAS.md).
 func (s *Service) cancelOrphan(ctx context.Context, cp ocpp.ChargePoint, r core.Reservation) {
 	ctx = context.WithoutCancel(ctx)
-	if timeout := s.cfg.Charger.CallTimeout.Duration(); timeout > 0 {
-		// The connection's own call timer is what bounds a silent station,
-		// and its error names the action and the timeout for the log. This
-		// deadline only backstops a send that never gets out, so it must not
-		// tie with that timer, or the log would read "context deadline
-		// exceeded" whenever it wins the race.
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout+orphanCancelSlack)
-		defer cancel()
-	}
-
-	res, err := cp.CancelReservation(ctx, r.ID)
-	if err != nil {
+	for {
+		res, err := s.cancelAttempt(ctx, cp, r.ID)
+		switch {
+		case err == nil:
+			s.log.Info("cancelled a reservation whose ReserveNow got no answer",
+				"reservation_id", r.ID, "evse", r.EVSEUID, "status", res.Raw)
+			return
+		case errors.Is(err, ocpp.ErrNotConnected):
+			// Also matches a cancel that was released unsent by the close.
+		case errors.Is(err, ocpp.ErrNotSent) && !s.isClosed():
+			s.log.Warn("the station stayed busy and the cancel of a reservation it may hold was not sent; trying again",
+				"reservation_id", r.ID, "evse", r.EVSEUID, "error", err)
+			continue
+		}
 		s.log.Warn("could not cancel a reservation that may be held at the station",
 			"reservation_id", r.ID, "evse", r.EVSEUID, "error", err)
 		return
 	}
-	s.log.Info("cancelled a reservation whose ReserveNow got no answer",
-		"reservation_id", r.ID, "evse", r.EVSEUID, "status", res.Raw)
+}
+
+// cancelAttempt sends one CancelReservation and waits for it.
+func (s *Service) cancelAttempt(ctx context.Context, cp ocpp.ChargePoint, id int) (ocpp.Result, error) {
+	if timeout := s.cfg.Charger.CallTimeout.Duration(); timeout > 0 {
+		// The connection's own timers are what bound a busy or silent
+		// station, and their errors name the action and the timeout for the
+		// log. This deadline only backstops an implementation without them,
+		// so it must not tie with them, or the log would read "context
+		// deadline exceeded" whenever it wins the race.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, ocpp.CallBound(timeout)+orphanCancelSlack)
+		defer cancel()
+	}
+	return cp.CancelReservation(ctx, id)
+}
+
+// isClosed reports whether Close has been called.
+func (s *Service) isClosed() bool {
+	select {
+	case <-s.closing:
+		return true
+	default:
+		return false
+	}
 }
 
 // Cancel releases the active reservation on an EVSE.
@@ -452,10 +509,12 @@ func (s *Service) TriggerStatus(ctx context.Context, evseUID string) error {
 // reports a change. Each call is bounded by the call timeout of the
 // connection.
 //
-// The requests go out one at a time, but nothing serialises them against
-// other callers: a command sent over the socket in the seconds after a
-// reconnect can overlap a TriggerMessage, against OCPP-J's one-call-in-flight
-// rule. That was already true of any two concurrent commands (#63).
+// The requests go out one at a time, and ocppj.Conn.Call keeps them to one in
+// flight against other callers too (#63): a command sent over the socket in
+// the seconds after a reconnect waits for the TriggerMessage in flight, and
+// the other way round. A TriggerMessage that does not get its turn within the
+// call timeout is not sent (ocpp.ErrNotSent); it is logged like any other
+// failure here and not retried.
 func (s *Service) RefreshStatusOnConnect(ctx context.Context, cp ocpp.ChargePoint) {
 	if cp.ID() != s.cfg.Charger.ID {
 		return
