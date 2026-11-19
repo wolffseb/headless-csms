@@ -65,6 +65,8 @@ type closedUnsentError struct{}
 
 func (closedUnsentError) Error() string { return "ocpp: connection closed before the call was sent" }
 
+// Is makes errors.Is hold for ErrConnClosed, ocpp.ErrNotConnected and
+// ocpp.ErrNotSent.
 func (closedUnsentError) Is(target error) bool {
 	return target == ErrConnClosed || target == ocpp.ErrNotConnected || target == ocpp.ErrNotSent
 }
