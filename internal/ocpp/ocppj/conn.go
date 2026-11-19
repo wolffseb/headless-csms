@@ -95,6 +95,14 @@ type Conn struct {
 	send  chan []byte
 	calls chan Frame
 
+	// callSlot is held by the one outbound CALL that is on the wire. OCPP-J
+	// 1.6 §4.1.1 says a CSMS SHOULD NOT send a CALL until the ones it sent
+	// before are answered or timed out, and stations that get two do odd
+	// things (answer out of order, drop one, or answer with a CALLERROR).
+	// It is a channel and not a mutex so that waiting for it can be given up
+	// when the caller's ctx ends or the connection closes.
+	callSlot chan struct{}
+
 	pendingMu sync.Mutex
 	pending   map[string]chan callResult
 
@@ -138,6 +146,7 @@ func New(ws *websocket.Conn, opts Options) *Conn {
 		idleTimeout: opts.IdleTimeout,
 		send:        make(chan []byte, sendBuffer),
 		calls:       make(chan Frame, callBuffer),
+		callSlot:    make(chan struct{}, 1),
 		pending:     make(map[string]chan callResult),
 		done:        make(chan struct{}),
 	}
@@ -154,10 +163,20 @@ func (c *Conn) Done() <-chan struct{} { return c.done }
 
 // Call sends a CALL and waits for the matching CALLRESULT or CALLERROR.
 //
+// Only one CALL of ours is outstanding per connection: a second caller waits
+// until the first has an answer, has timed out, or the connection is gone.
+// The wait counts against ctx, so a caller's deadline covers its time in the
+// queue plus its time on the wire. The call timeout only starts once the
+// frame has been handed to the writer.
+//
 // It returns when the peer answers, when ctx is cancelled, when the call
 // timeout expires, or when the connection drops — and in every one of those
-// cases it removes its pending entry, so a slow or silent charger cannot leak
-// entries or goroutines.
+// cases it frees the call slot and removes its pending entry, so a slow or
+// silent charger cannot leak entries or goroutines, nor block the next call.
+//
+// Answers are delivered by the read loop, which never takes the slot, so a
+// call cannot wait on itself. A handler of an inbound CALL may make a Call
+// too: the handle loop only blocks the next inbound CALL, not the answers.
 func (c *Conn) Call(ctx context.Context, action string, payload any) (json.RawMessage, error) {
 	id := strconv.FormatUint(c.nextID.Add(1), 10)
 
@@ -166,6 +185,17 @@ func (c *Conn) Call(ctx context.Context, action string, payload any) (json.RawMe
 		return nil, err
 	}
 
+	select {
+	case c.callSlot <- struct{}{}:
+	case <-c.done:
+		return nil, ErrConnClosed
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	defer func() { <-c.callSlot }()
+
+	// Registered once the slot is ours, so PendingCount counts calls on the
+	// wire and not the ones still queued behind them.
 	ch := make(chan callResult, 1)
 	c.pendingMu.Lock()
 	c.pending[id] = ch
@@ -204,7 +234,8 @@ func (c *Conn) forget(id string) {
 	c.pendingMu.Unlock()
 }
 
-// PendingCount reports how many calls are awaiting an answer.
+// PendingCount reports how many calls are awaiting an answer. With one CALL
+// in flight at a time that is 0 or 1; callers queued behind it are not counted.
 func (c *Conn) PendingCount() int {
 	c.pendingMu.Lock()
 	defer c.pendingMu.Unlock()

@@ -1168,6 +1168,13 @@ when the station does: the reservation record sits next to the status, it does n
 differ only in who performs the handshake, so both ends share one implementation of the
 framing and correlation rather than keeping two that can drift apart.
 
+Per connection, `ocppj.Conn.Call` keeps one CALL in flight, as OCPP-J 1.6 §4.1.1 asks of a CSMS:
+a second caller (two socket commands, or a command and the on-connect `TriggerMessage`) waits
+until the first has an answer, a CALLERROR or a timeout. The wait counts against the caller's
+own context, so its deadline covers queue time plus wire time; the call timeout only starts
+once the frame is sent. Closing the connection releases everyone queued with `ErrNotConnected`.
+Calls from the station are not affected.
+
 The charge point identity is taken from the **last** path segment of the WebSocket URL, so
 `/ocpp/<id>`, `/<id>` and `/steve/websocket/CentralSystemService/<id>` all work — vendors
 disagree, and a charger that dials in and is silently rejected is miserable to debug on site.
