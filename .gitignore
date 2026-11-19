@@ -13,3 +13,6 @@ state.json.lock
 # Claude Code: agent worktrees and machine-local agent memory are not shared.
 .claude/worktrees/
 .claude/agent-memory-local/
+
+# The documentation site, built by mkdocs.
+/site/

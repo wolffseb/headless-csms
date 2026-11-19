@@ -258,7 +258,7 @@ func newProfileCommand(opts *options) *cobra.Command {
 	var file string
 	set := &cobra.Command{
 		Use:   "set",
-		Short: "Install a charging profile from a JSON file (shape in the README)",
+		Short: "Install a charging profile from a JSON file (shape in docs/guides/smart-charging.md)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if file == "" {
