@@ -42,6 +42,9 @@ Lessons from earlier fix passes in this repo. Newest last within each section. K
 
 - A guard condition a review says is untested ("remove it, tests stay green"): the mutant check is to delete just that clause and see the new test fail on its side effects (events, profiles, reading, log text), not only on the headline one (#74).
 
+- A client that waits for a daemon must wait longer than the daemon's longest path (queue cap + call timeout + margin), and the daemon needs a distinct "not sent" error: only then can the client promise "failed" means "nothing happened". To show a CLI-wait test fails, put the old wait formula back in place (not `git stash`, which also drops the new test) and run it; keep the scenario in whole seconds (call_timeout 9s, station answers after 7.5s, two concurrent commands) so it stays ~15 s and `testing.Short()` can skip it (2026-11-19, #76).
+- Before sizing such a wait, grep every op the daemon serves for how many outbound calls it makes (here each makes one; Reserve's cancel is background).
+
 ## Known flakes (rerun, don't fix in unrelated PRs)
 
 - `TestShutdownWaitsForTheOrphanCancel` (#43): two 1 s timers race. Rerun the failed job.
