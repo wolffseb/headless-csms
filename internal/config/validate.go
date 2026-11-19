@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -44,8 +45,25 @@ const maxTokenLen = 64
 // maxBusinessNameLen is OCPI BusinessDetails.name, a string(100).
 const maxBusinessNameLen = 100
 
-// maxLocationNameLen is OCPI Location.name, a string(255).
-const maxLocationNameLen = 255
+// The OCPI 2.3.0 limits on the Location data we send (mod_locations.asciidoc,
+// Location, EVSE and Connector tables). string(n) counts characters, not
+// bytes, and CiString(n) is printable ASCII, so there a character is a byte.
+const (
+	// maxLocationNameLen is Location.name, a string(255).
+	maxLocationNameLen = 255
+	// maxLocationIDLen is Location.id, a CiString(36).
+	maxLocationIDLen = 36
+	// maxAddressLen is Location.address, a string(255).
+	maxAddressLen = 255
+	// maxCityLen is Location.city, a string(45).
+	maxCityLen = 45
+	// maxPostalCodeLen is Location.postal_code, a string(10).
+	maxPostalCodeLen = 10
+	// maxEVSEUIDLen is EVSE.uid, a CiString(36).
+	maxEVSEUIDLen = 36
+	// maxConnectorIDLen is Connector.id, a CiString(36).
+	maxConnectorIDLen = 36
+)
 
 // Validate checks the whole config and returns every problem it finds as
 // ValidationErrors, or nil if the config is usable.
@@ -181,6 +199,10 @@ func (c *Config) validateOCPI(v *validator) {
 			v.add("ocpi.public_base_url", "%q must use http or https", o.PublicBaseURL)
 		case u.Host == "":
 			v.add("ocpi.public_base_url", "%q is missing a host", o.PublicBaseURL)
+		default:
+			// url.Parse refuses ASCII control characters but lets other
+			// non-printable ones through, and we send this URL as it is.
+			v.printable("ocpi.public_base_url", o.PublicBaseURL)
 		}
 	}
 
@@ -195,6 +217,12 @@ func (c *Config) validateOCPI(v *validator) {
 	if name, key := c.businessName(); key != "" {
 		if n := utf8.RuneCountInString(name); n > maxBusinessNameLen {
 			v.add(key, "must be at most %d characters to serve as the OCPI business name (BusinessDetails.name), got %d", maxBusinessNameLen, n)
+		}
+		// location.name is checked as a Location field below, and more
+		// strictly: it is sent untrimmed. ocpi.business_name is sent trimmed,
+		// so a trailing newline from a YAML block scalar is harmless.
+		if key == "ocpi.business_name" {
+			v.printable(key, name)
 		}
 	}
 
@@ -232,15 +260,18 @@ func validateToken(v *validator, path, token string) {
 func (c *Config) validateLocation(v *validator) {
 	l := c.Location
 
-	if v.required("location.id", l.ID) && len(l.ID) > 36 {
-		v.add("location.id", "must be at most 36 characters (OCPI CiString36), got %d", len(l.ID))
+	if v.required("location.id", l.ID) {
+		v.ciString("location.id", l.ID, maxLocationIDLen)
 	}
-	// Optional, but sent as-is in our Location, so it must fit there.
-	if n := utf8.RuneCountInString(l.Name); n > maxLocationNameLen {
-		v.add("location.name", "must be at most %d characters (OCPI Location.name), got %d", maxLocationNameLen, n)
+	// Sent as they are in our Location, so they must fit and be printable there.
+	v.ocpiString("location.name", l.Name, "Location.name", maxLocationNameLen)
+	if v.required("location.address", l.Address) {
+		v.ocpiString("location.address", l.Address, "Location.address", maxAddressLen)
 	}
-	v.required("location.address", l.Address)
-	v.required("location.city", l.City)
+	if v.required("location.city", l.City) {
+		v.ocpiString("location.city", l.City, "Location.city", maxCityLen)
+	}
+	v.ocpiString("location.postal_code", l.PostalCode, "Location.postal_code", maxPostalCodeLen)
 	if v.required("location.country", l.Country) && !alpha3Re.MatchString(l.Country) {
 		v.add("location.country", "%q must be an ISO 3166-1 alpha-3 code, e.g. \"DEU\"", l.Country)
 	}
@@ -269,9 +300,7 @@ func (c *Config) validateLocation(v *validator) {
 		base := fmt.Sprintf("location.evses[%d]", i)
 
 		if v.required(base+".uid", e.UID) {
-			if len(e.UID) > 36 {
-				v.add(base+".uid", "must be at most 36 characters (OCPI CiString36), got %d", len(e.UID))
-			}
+			v.ciString(base+".uid", e.UID, maxEVSEUIDLen)
 			if first, dup := seenUID[strings.ToUpper(e.UID)]; dup {
 				v.add(base+".uid", "%q is already used by location.evses[%d]", e.UID, first)
 			} else {
@@ -279,6 +308,8 @@ func (c *Config) validateLocation(v *validator) {
 			}
 		}
 
+		// evse_id is a CiString(48), but evseIDRe is ASCII-only and allows at
+		// most 38 characters, so it needs no check of its own.
 		if v.required(base+".evse_id", e.EVSEID) {
 			if !evseIDRe.MatchString(e.EVSEID) {
 				v.add(base+".evse_id", "%q does not look like an eMI3 EVSE ID, e.g. \"DE*EXA*E001*1\"", e.EVSEID)
@@ -315,6 +346,7 @@ func validateConnectors(v *validator, base string, connectors []Connector) {
 		path := fmt.Sprintf("%s.connectors[%d]", base, j)
 
 		if v.required(path+".id", conn.ID) {
+			v.ciString(path+".id", conn.ID, maxConnectorIDLen)
 			if first, dup := seen[strings.ToUpper(conn.ID)]; dup {
 				v.add(path+".id", "%q is already used by %s.connectors[%d]", conn.ID, base, first)
 			} else {
@@ -400,4 +432,56 @@ func isHostname(s string) bool {
 		}
 	}
 	return true
+}
+
+// maxChars reports a value longer than max characters. what names the OCPI
+// field or type the limit comes from.
+func (v *validator) maxChars(path, value, what string, max int) {
+	if n := utf8.RuneCountInString(value); n > max {
+		v.add(path, "must be at most %d characters (OCPI %s), got %d", max, what, n)
+	}
+}
+
+// printable reports a character that OCPI's string type does not allow:
+// "Only printable UTF-8" (types.asciidoc). unicode.IsPrint is the test, so
+// newlines, tabs, other control and format characters, and every space but
+// U+0020 are out.
+func (v *validator) printable(path, value string) {
+	if bad := firstBadChar(value, unicode.IsPrint); bad != "" {
+		v.add(path, "must contain only printable characters (OCPI string), found %s", bad)
+	}
+}
+
+// ocpiString checks a value sent as an OCPI string(max).
+func (v *validator) ocpiString(path, value, what string, max int) {
+	v.maxChars(path, value, what, max)
+	v.printable(path, value)
+}
+
+// ciString checks a value sent as an OCPI CiString(max): printable ASCII,
+// types.asciidoc, U+0020 to U+007E.
+func (v *validator) ciString(path, value string, max int) {
+	v.maxChars(path, value, fmt.Sprintf("CiString%d", max), max)
+	if bad := firstBadChar(value, func(r rune) bool { return r >= 0x20 && r <= 0x7E }); bad != "" {
+		v.add(path, "must contain only printable ASCII characters (OCPI CiString), found %s", bad)
+	}
+}
+
+// firstBadChar describes the first character ok rejects, as "U+000A at
+// character 5", or returns "" when there is none. Bytes that are not UTF-8
+// are always bad, and are not mistaken for a literal U+FFFD.
+func firstBadChar(s string, ok func(rune) bool) string {
+	n := 0
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		n++
+		if r == utf8.RuneError && size == 1 {
+			return fmt.Sprintf("invalid UTF-8 at character %d", n)
+		}
+		if !ok(r) {
+			return fmt.Sprintf("%U at character %d", r, n)
+		}
+		i += size
+	}
+	return ""
 }

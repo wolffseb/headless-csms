@@ -158,6 +158,10 @@ func TestSimulateChargerReconnectsWhenRunComesBack(t *testing.T) {
 
 	simOut, simDone := startRun(t, simCtx, "simulate", "charger", "-c", path, "--reconnect")
 	waitForOutput(t, csmsOut, "EVSE-1 UNKNOWN→AVAILABLE")
+	// The CSMS logs the status before it answers. Killing it in between drops
+	// the simulator's first connection while it is still starting, which ends
+	// it instead of making it redial; wait until it has seen every answer.
+	waitForOutput(t, simOut, "msg=online")
 
 	kill()
 	select {
@@ -177,6 +181,7 @@ func TestSimulateChargerReconnectsWhenRunComesBack(t *testing.T) {
 	waitForOutput(t, csmsOut, "charge point connected")
 	waitForOutput(t, csmsOut, "booted (Alpitronic")
 	waitForOutput(t, csmsOut, "EVSE-1 UNKNOWN→AVAILABLE")
+	waitForOutput(t, simOut, "msg=reconnected")
 
 	select {
 	case err := <-simDone:
