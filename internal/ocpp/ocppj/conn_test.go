@@ -408,6 +408,36 @@ func TestCloseReleasesAQueuedCall(t *testing.T) {
 	p.quiet(settle, "the queued call was sent after the close")
 }
 
+// A call released from the queue by a closing connection was never sent, and
+// says so; the one that was on the wire may have been acted on, and must not.
+func TestCloseTellsAQueuedCallItWasNotSent(t *testing.T) {
+	t.Parallel()
+
+	p := newWirePeer(t, 10*time.Second)
+	ctx := context.Background()
+
+	first := p.callAsync(ctx, "GetConfiguration")
+	p.next()
+	second := p.callAsync(ctx, "UnlockConnector")
+	p.quiet(settle, "a second CALL went out with the first unanswered")
+
+	p.conn.Close()
+
+	queued := outcome(t, second, "queued call")
+	for _, target := range []error{ocpp.ErrNotSent, ocpp.ErrNotConnected, ErrConnClosed} {
+		if !errors.Is(queued.err, target) {
+			t.Errorf("queued call err = %v, want one matching %v", queued.err, target)
+		}
+	}
+	sent := outcome(t, first, "call on the wire")
+	if !errors.Is(sent.err, ocpp.ErrNotConnected) {
+		t.Errorf("call on the wire err = %v, want one matching ocpp.ErrNotConnected", sent.err)
+	}
+	if errors.Is(sent.err, ocpp.ErrNotSent) {
+		t.Errorf("call on the wire err = %v, must not say it was not sent: the peer may have acted on it", sent.err)
+	}
+}
+
 func TestQueuedCallGivesUpWithItsContext(t *testing.T) {
 	t.Parallel()
 

@@ -269,7 +269,7 @@ stdout too. Logs, validation problems and `cpms: …` errors go to stderr.
 | 0 | Success |
 | 1 | Usage, config, or unexpected error (including an unknown `--evse`) |
 | 2 | `cpms run` is not reachable |
-| 3 | The charge point is not connected to cpms |
+| 3 | The charge point is not connected to cpms, or the connection dropped while the command was queued or waiting for its answer (it may or may not have reached the station) |
 | 4 | The station rejected the command (`cpms config set`: also `NotSupported`, an unknown key) |
 | 5 | The station is occupied |
 | 6 | The station is faulted or unavailable |
@@ -992,8 +992,12 @@ If the station answers anything but `Accepted`, or does not answer within
 `charger.call_timeout`, the pending reservation is ended at once and the CLI exits with the
 matching code (4–7). After a timeout or a failure the station may still have received the
 request, so `cpms run` sends a `CancelReservation` in the background and the reservation shows
-as `state: cancelling` in `cpms status` until that has an answer; the EVSE refuses a new
-reservation (exit 9) meanwhile. A reservation that was never sent (exit 12) has nothing to
+as `state: cancelling` in `cpms status` until the station has answered it; the EVSE refuses a
+new reservation (exit 9) meanwhile. The cancel waits for its turn behind any command on the
+wire, and a cancel that does not get its turn within `charger.call_timeout` is queued again,
+not dropped. The record ends when the station answers, when the connection drops, when the
+cancel itself goes unanswered for `charger.call_timeout`, or when `cpms run` shuts down. A
+reservation that was never sent (exit 12) has nothing to
 cancel: it ends at once and no `CancelReservation` follows. It is not persisted, like a pending one. `core` only shows `RESERVED` when the station reports it; the
 reservation record sits next to the status rather than overwriting it.
 
@@ -1152,7 +1156,7 @@ most one decimal place, only a `Tx` profile takes a transaction, only `StationMa
 whole station); a bad one fails with `ocpp.ErrInvalidProfile`. Callers address EVSEs by their OCPI `uid` from config and
 get back a version-agnostic status (`Accepted`, `Occupied`, `UnlockFailed`, ...) alongside the
 station's literal answer. A station saying no is a result, not an error; errors are for the
-call itself failing (`ocpp.ErrTimeout`, `ocpp.ErrNotConnected`, `ocpp.ErrUnknownEVSE`, or the
+call itself failing (`ocpp.ErrTimeout`, `ocpp.ErrNotConnected`, `ocpp.ErrNotSent`, `ocpp.ErrUnknownEVSE`, or the
 station's CALLERROR as `*ocpp.RPCError`). The exact 1.6 payloads are pinned by golden files in
 `internal/ocpp/v16/testdata/golden`; regenerate them deliberately with
 `go test ./internal/ocpp/v16 -run Golden -update`.
@@ -1178,13 +1182,17 @@ until the first has an answer, a CALLERROR or a timeout. The wait for a turn is 
 nothing goes out. The call timeout itself only starts once the frame is sent, so a call lives
 at most twice `charger.call_timeout`.
 
-For the CLI that means every command ends in one of two ways it can tell apart: not sent
-(exit 12, safe to repeat), or sent, and then answered (exit 0, 4–6, 8 or 11) or unanswered
-(exit 7, where the station may have acted). `cpms` waits for `cpms run` for
-`2 × call_timeout + 5 s`, so the daemon always answers first: the CLI never gives up on a
-command that is still queued, which would report a failure while the daemon went on to send
-it. Closing the connection releases everyone queued with `ErrNotConnected`. Calls from the
-station are not affected.
+For the CLI that means every command ends in one of three ways it can tell apart: not sent
+(exit 12, safe to repeat), sent and answered (exit 0, 4–6, 8 or 11), or sent and unanswered
+(exit 7, where the station may have acted). A fourth outcome, the connection dropped
+(exit 3), does not say which of them it was: a command still queued was never sent, while one
+on the wire may have been acted on, and the exit code is 3 for both. (`cpms limit set` only
+names the charging profile id it sent when the profile did go out.) `cpms` waits for
+`cpms run` for `2 × call_timeout + 5 s`, so the daemon always answers first: the CLI never
+gives up on a command that is still queued, which would report a failure while the daemon
+went on to send it. Closing the connection releases everyone queued with `ErrClosedUnsent`,
+which matches both `ErrNotConnected` and `ErrNotSent`, and the one on the wire with
+`ErrConnClosed`. Calls from the station are not affected.
 
 The charge point identity is taken from the **last** path segment of the WebSocket URL, so
 `/ocpp/<id>`, `/<id>` and `/steve/websocket/CentralSystemService/<id>` all work — vendors

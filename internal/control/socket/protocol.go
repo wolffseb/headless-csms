@@ -185,7 +185,9 @@ const (
 	// CodeUsage is a request the daemon cannot act on as given: an unknown
 	// EVSE, a bad duration, an unsupported protocol version.
 	CodeUsage Code = "usage"
-	// CodeNotConnected means the station is not connected to cpms.
+	// CodeNotConnected means the station is not connected to cpms, or the
+	// connection dropped while the command was waiting for its turn or for
+	// its answer. The command may or may not have reached the station.
 	CodeNotConnected Code = "not_connected"
 	// CodeRejected means the station answered Rejected, or a status the spec
 	// does not define.

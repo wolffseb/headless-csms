@@ -22,6 +22,7 @@ import (
 	"github.com/wolffseb/cli-cpms/internal/core"
 	"github.com/wolffseb/cli-cpms/internal/ocpi/credentials"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
+	"github.com/wolffseb/cli-cpms/internal/ocpp/ocppj"
 	"github.com/wolffseb/cli-cpms/internal/state"
 )
 
@@ -185,6 +186,9 @@ func TestErrorCodes(t *testing.T) {
 		{"busy, not sent", socket.OpReserve, fakeStation{err: fmt.Errorf("ReserveNow: %w", ocpp.ErrNotSent)}, socket.CodeBusy},
 		{"busy, not sent (unlock)", socket.OpUnlock, fakeStation{err: fmt.Errorf("UnlockConnector: %w", ocpp.ErrNotSent)}, socket.CodeBusy},
 		{"busy, not sent (probe)", socket.OpProbe, fakeStation{err: fmt.Errorf("GetConfiguration: %w", ocpp.ErrNotSent)}, socket.CodeBusy},
+		// Not "busy" either: the connection went while the command waited, and
+		// it was never sent.
+		{"released unsent by a closing connection", socket.OpUnlock, fakeStation{err: fmt.Errorf("UnlockConnector: %w", ocppj.ErrClosedUnsent)}, socket.CodeNotConnected},
 		{"nothing to stop", socket.OpStop, fakeStation{}, socket.CodeRefused},
 		{"nothing to cancel", socket.OpCancel, fakeStation{}, socket.CodeRefused},
 		{"call error", socket.OpReserve, fakeStation{err: ocpp.Errorf(ocpp.ErrInternalError, "boom")}, socket.CodeInternal},
@@ -462,6 +466,20 @@ func TestProfileErrorCodes(t *testing.T) {
 				t.Errorf("code = %s, want %s (message %q)", se.Code, tc.want, se.Message)
 			}
 		})
+	}
+}
+
+// A profile that was still queued when the connection closed was never sent,
+// so no id goes to the CLI: it would name a profile the station cannot hold.
+func TestUnsentProfileOnAClosedConnectionCarriesNoID(t *testing.T) {
+	t.Parallel()
+	path := serve(t, fakeStation{err: fmt.Errorf("SetChargingProfile: %w", ocppj.ErrClosedUnsent)})
+
+	kw := 20.0
+	_, err := call(t, path, socket.Request{Op: socket.OpLimitSet, EVSE: "EVSE-1", Limit: &socket.LimitRequest{KW: &kw}})
+	var se *socket.Error
+	if !errors.As(err, &se) || se.Code != socket.CodeNotConnected || se.ProfileID != 0 {
+		t.Fatalf("err = %#v, want not_connected with no profile id", err)
 	}
 }
 

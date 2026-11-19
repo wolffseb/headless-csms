@@ -146,11 +146,13 @@ var (
 	// ErrUnknownEVSE means the EVSE uid is not in config. It is returned
 	// before anything is sent.
 	ErrUnknownEVSE = errors.New("ocpp: unknown EVSE")
-	// ErrNotSent means the station was busy with an earlier command of ours
-	// (one CALL is in flight per connection) and stayed busy for the whole
-	// time the command was allowed to wait in the queue. Nothing went out, so
-	// the station has not seen the command and will not: it is safe to ask
-	// again.
+	// ErrNotSent means the command never went out: the station was busy with
+	// an earlier command of ours (one CALL is in flight per connection) for
+	// the whole time the command was allowed to wait in the queue, or the
+	// connection closed while it waited. The station has not seen the command
+	// and will not: it is safe to ask again. In the second case the error
+	// matches ErrNotConnected too, so check that first when "busy" would be
+	// the wrong thing to say.
 	ErrNotSent = errors.New("ocpp: station busy, command not sent")
 )
 

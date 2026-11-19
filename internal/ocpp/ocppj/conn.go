@@ -53,6 +53,22 @@ func (connClosedError) Error() string { return "ocpp: connection closed" }
 // Is makes errors.Is(err, ocpp.ErrNotConnected) hold.
 func (connClosedError) Is(target error) bool { return target == ocpp.ErrNotConnected }
 
+// ErrClosedUnsent is returned by Call when the connection closed before the
+// call was handed to the writer: it waited in the queue, or was about to be
+// sent, when the connection went. The peer has not seen it and never will. It
+// matches ErrConnClosed, ocpp.ErrNotConnected and ocpp.ErrNotSent under
+// errors.Is. A call that was already on the wire when the connection closed
+// gets plain ErrConnClosed: the peer may have acted on it.
+var ErrClosedUnsent error = closedUnsentError{}
+
+type closedUnsentError struct{}
+
+func (closedUnsentError) Error() string { return "ocpp: connection closed before the call was sent" }
+
+func (closedUnsentError) Is(target error) bool {
+	return target == ErrConnClosed || target == ocpp.ErrNotConnected || target == ocpp.ErrNotSent
+}
+
 // ErrNotSent is returned by Call when it waited the whole queue timeout for the
 // call slot and never got it: an earlier call was still on the wire. Nothing
 // was sent, so the peer has not seen the call and never will. It matches
@@ -195,7 +211,9 @@ func (c *Conn) Done() <-chan struct{} { return c.done }
 // frame is sent, and a caller that stops waiting for the answer (ctx, the
 // call timeout) leaves a command the peer may carry out. The call timeout
 // only starts once the frame has been handed to the writer, so a call lives
-// at most queue timeout plus call timeout.
+// at most queue timeout plus call timeout. If the connection closes first, a
+// call still in the queue gets ErrClosedUnsent, which says it was never sent,
+// and one on the wire gets ErrConnClosed, which does not.
 //
 // It returns when the peer answers, when ctx is cancelled, when the call
 // timeout expires, or when the connection drops — and in every one of those
@@ -229,7 +247,7 @@ func (c *Conn) Call(ctx context.Context, action string, payload any) (json.RawMe
 	select {
 	case c.send <- data:
 	case <-c.done:
-		return nil, ErrConnClosed
+		return nil, ErrClosedUnsent
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -253,7 +271,7 @@ func (c *Conn) Call(ctx context.Context, action string, payload any) (json.RawMe
 }
 
 // acquireSlot waits for the call slot for at most the queue timeout. It
-// returns ErrNotSent when that runs out, ErrConnClosed when the connection
+// returns ErrNotSent when that runs out, ErrClosedUnsent when the connection
 // ends first and ctx.Err() when ctx does.
 func (c *Conn) acquireSlot(ctx context.Context) error {
 	select {
@@ -271,7 +289,7 @@ func (c *Conn) acquireSlot(ctx context.Context) error {
 	case <-timer.C:
 		return ErrNotSent
 	case <-c.done:
-		return ErrConnClosed
+		return ErrClosedUnsent
 	case <-ctx.Done():
 		return ctx.Err()
 	}

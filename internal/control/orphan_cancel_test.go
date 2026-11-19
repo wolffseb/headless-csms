@@ -341,3 +341,46 @@ func TestOrphanCancelThatIsNotSentStopsAtClose(t *testing.T) {
 		t.Errorf("reservations after Close = %+v, want none", got)
 	}
 }
+
+// A cancel released unsent by a closing connection matches ErrNotSent too, but
+// the connection is gone: trying again would never end.
+func TestOrphanCancelOnAClosedConnectionIsNotTriedAgain(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.station.fail["reserve"] = ocpp.ErrTimeout
+	r.station.fail["cancel"] = ocppj.ErrClosedUnsent
+
+	if _, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1"}); !errors.Is(err, ocpp.ErrTimeout) {
+		t.Fatalf("Reserve = %v, want ErrTimeout", err)
+	}
+	// Without Close: the record has to end on its own, not because shutdown
+	// stopped the retries.
+	waitFor(t, "the record to end with the connection", func() bool { return len(r.reservations()) == 0 })
+	r.ctl.Close()
+	r.station.mu.Lock()
+	defer r.station.mu.Unlock()
+	if len(r.station.cancels) != 1 {
+		t.Errorf("cancels = %v, want one attempt", r.station.cancels)
+	}
+}
+
+// A ReserveNow released unsent by a closing connection never reached the
+// station: nothing to cancel.
+func TestReserveQueuedWhenTheConnectionClosedSendsNoCancel(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.station.fail["reserve"] = ocppj.ErrClosedUnsent
+
+	if _, err := r.ctl.Reserve(context.Background(), control.ReserveParams{EVSEUID: "EVSE-1"}); !errors.Is(err, ocpp.ErrNotConnected) {
+		t.Fatalf("Reserve = %v, want ErrNotConnected", err)
+	}
+	r.ctl.Close()
+	r.station.mu.Lock()
+	defer r.station.mu.Unlock()
+	if len(r.station.cancels) != 0 {
+		t.Errorf("cancels = %v, want none for a ReserveNow that was never sent", r.station.cancels)
+	}
+	if got := r.reservations(); len(got) != 0 {
+		t.Errorf("reservations = %+v, want none", got)
+	}
+}

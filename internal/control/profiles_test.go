@@ -3,6 +3,7 @@ package control_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/wolffseb/cli-cpms/internal/control"
 	"github.com/wolffseb/cli-cpms/internal/core"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
+	"github.com/wolffseb/cli-cpms/internal/ocpp/ocppj"
 )
 
 func f64(v float64) *float64 { return &v }
@@ -294,6 +296,23 @@ func TestUnsentProfileIsNotUnconfirmed(t *testing.T) {
 	var unconfirmed *control.UnconfirmedProfileError
 	if errors.As(err, &unconfirmed) {
 		t.Errorf("err = %v, want no UnconfirmedProfileError for a profile that was not sent", err)
+	}
+}
+
+// A profile still queued when the connection closed was not sent either: it
+// is a dropped connection, but there is no id to look for.
+func TestProfileQueuedWhenTheConnectionClosedIsNotUnconfirmed(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.station.fail["set-profile"] = fmt.Errorf("SetChargingProfile: %w", ocppj.ErrClosedUnsent)
+
+	_, err := r.ctl.SetLimit(context.Background(), control.LimitParams{EVSEUID: "EVSE-1", KW: f64(20)})
+	if !errors.Is(err, ocpp.ErrNotConnected) {
+		t.Fatalf("err = %v, want ErrNotConnected", err)
+	}
+	var unconfirmed *control.UnconfirmedProfileError
+	if errors.As(err, &unconfirmed) || strings.Contains(err.Error(), "#1") {
+		t.Errorf("err = %v, want no claim that the profile was sent", err)
 	}
 }
 
