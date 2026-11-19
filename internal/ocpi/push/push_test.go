@@ -153,7 +153,7 @@ func TestRetryBacksOffThenSucceeds(t *testing.T) {
 
 // A partner that always answers 500: max_retries retries after the first
 // attempt, one error log naming the EVSE and the status, nothing left
-// pending, and a later change goes out as usual.
+// pending, and a later change gets its own full retry budget.
 func TestGiveUpAfterMaxRetries(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, func(c *config.Config) { c.OCPI.Push.MaxRetries = 3 })
@@ -183,15 +183,42 @@ func TestGiveUpAfterMaxRetries(t *testing.T) {
 		t.Errorf("%d error logs, want 1:\n%s", n, r.logs.String())
 	}
 
-	// cpms is fine, and the next change is pushed on its own merits.
-	r.emsp.setAnswers(nil)
+	// The partner is back, but fails the next change once first. Giving up
+	// used up the old change's retries, not the new one's: this one gets its
+	// full budget, and its first retry is retry 1 again.
+	r.emsp.setAnswers(func(n int) answer {
+		if n == 5 {
+			return answer{httpStatus: http.StatusInternalServerError}
+		}
+		return answer{}
+	})
 	r.setStatus(0, core.StatusAvailable)
 	r.pushRound(1)
-	got := r.emsp.waitPatches(5)
-	if got[4].status() != "AVAILABLE" {
-		t.Errorf("the later change was pushed as %s", got[4].status())
+	r.emsp.waitPatches(5)
+	// Either a retry is armed, or the pusher has given up on the first failure.
+	eventually(t, "the later change's first failure to be handled", func() bool {
+		return r.clk.Pending() == 1 || r.pusher.Status().Pending == 0
+	})
+	if r.clk.Pending() != 1 {
+		t.Fatalf("no retry after the later change's first failure; the old change's count was kept:\n%s", r.logs.String())
 	}
+	r.clk.Advance(time.Second)
+	got := r.emsp.waitPatches(6)
 	eventually(t, "the push to settle", func() bool { return r.pusher.Status().Pending == 0 })
+	if len(got) != 6 {
+		t.Errorf("%d attempts, want 4 for the first change and 2 for the later one", len(got))
+	}
+	for i := 4; i < len(got); i++ {
+		if got[i].status() != "AVAILABLE" {
+			t.Errorf("attempt %d of the later change was pushed as %s", i-3, got[i].status())
+		}
+	}
+	if b := r.backoffCalls(); len(b) != 4 || b[3] != 1 {
+		t.Errorf("backoff asked for retries %v, want [1 2 3 1]", b)
+	}
+	if n := r.logs.count("level=ERROR"); n != 1 {
+		t.Errorf("%d error logs, want only the first change's:\n%s", n, r.logs.String())
+	}
 }
 
 // What is retried and what is not. 4xx is the partner refusing the request,
