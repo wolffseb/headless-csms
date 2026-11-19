@@ -62,6 +62,8 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - Core keeps each EVSE's last *reported* status through a disconnect and restores it on reconnect (`recompute`), so in-process the EVSEs are stale, not UNKNOWN; UNKNOWN only after a cpms restart. Write reconnect tests for the case you mean. OCPP 1.6 spec PDF: the OCA zip (openchargealliance.org/download-ocpp) has `ocpp-1.6 edition 2.pdf`; `pdftotext -layout` reads it.
 - Core profile records replace on same EVSE + purpose + stack level, like the station does, so two test profiles on one EVSE need different `StackLevel`s or the first silently vanishes (2026-11-18).
 
+- OCPI field limits (#59, 2026-11-19): config validation has `ocpiString` (string(n): runes + `unicode.IsPrint`) and `ciString` (CiString(n): U+0020–U+007E) on the `validator`; use them for any new text sent over OCPI. Limits from `mod_locations.asciidoc`: Location id 36 (Ci), name/address 255, city 45, postal_code 10, state 45 (cpms has no `state` key and sends none); EVSE uid 36 (Ci), evse_id 48 (Ci), connector id 36 (Ci), BusinessDetails.name 100. Values sent trimmed (`business_name`) are checked trimmed; `location.name` doubles as the business name, so skip the second check for it or one bad char is reported twice.
+
 ## Process that worked
 
 - Script the fail-without checks: apply one breaking change to production code, run the matching test, restore. List them in the PR as a table (#36 did 16, #40 did 33). Mutations that survive point at weak tests, so fix the tests.
@@ -82,5 +84,7 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 
 - golangci-lint v2.6.2 in `~/go/bin` (not on PATH) fails under Go 1.27. Run `GOTOOLCHAIN=go1.26.0 ~/go/bin/golangci-lint run ./...`. GitHub CI is the authority.
 - The worktree sandbox refuses compound commands (heredocs mixed with other commands, `$(...)`/`$VAR`-built commands, `for` loops, `&&`/`;` chains with git/gh, pipes into `base64`). Use one plain command per call and the Write/Edit tools for files. Run scratchpad scripts as `bash <path>`, and give them unique names.
+- The Write tool turns `​`-style escapes in file content into the literal character, and staticcheck ST1018 then fails lint. After writing a test with such characters, rewrite them with a one-line Python replace (`'​'` -> `'\\u200b'`) and grep for the escapes (2026-11-19).
+- Validation tests that need control characters or invalid UTF-8 are simpler as `config.Parse(baseYAML)` then mutate the struct and call `Validate()` than as YAML text; keep one YAML-text row to cover the whole path (#59).
 - BSD sed has no `\|`, and `sed -i '' -n '/a\|b/p'` silently empties the file. Prefer the Edit tool.
 - Two timers with the same duration race, and Go's select picks at random when both are ready (#43, 2026-11-16). A backstop context around `Conn.Call` needs slack past `call_timeout`, or the log flips between "no answer within" and "context deadline exceeded". Prove a flake with `-race -count=50 -cpu 1,2,4` on a clean `origin/main` worktree, and run it before and after the fix one after the other, because both use the same test port.
