@@ -504,6 +504,42 @@ func TestUnregisterDuringDebounceStopsTheSend(t *testing.T) {
 	}
 }
 
+// The same while backing off: the partner unregisters after a failed attempt,
+// and the retry reads the registration afresh, so it sends nothing. A pusher
+// that kept the registration from the first attempt would go on PATCHing the
+// old partner through the whole backoff.
+func TestUnregisterDuringBackoffStopsTheRetry(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.register()
+	r.emsp.setAnswers(func(int) answer { return answer{httpStatus: http.StatusInternalServerError} })
+	r.core.Connected(r.cfg.Charger.ID)
+	r.setStatus(0, core.StatusCharging)
+
+	r.pushRound(1)
+	r.emsp.waitPatches(1)
+	r.waitTimer(1)
+	if st := r.pusher.Status(); st.Pending != 1 {
+		t.Fatalf("after the failure: %+v, want the change pending", st)
+	}
+
+	r.unregister()
+	r.clk.Advance(time.Second)
+	// Either the retry ends the round without sending, or it sends and fails.
+	eventually(t, "the retry to run", func() bool {
+		return r.pusher.Status().Pending == 0 || len(r.emsp.got()) > 1
+	})
+	if n := len(r.emsp.got()); n != 1 {
+		t.Errorf("%d PATCHes, want only the one before unregistering", n)
+	}
+	if r.clk.Pending() != 0 {
+		t.Error("a retry is still scheduled after the unregistration")
+	}
+	if n := r.logs.count("level=ERROR"); n != 0 {
+		t.Errorf("an error log for a push the partner no longer wants:\n%s", r.logs.String())
+	}
+}
+
 // If the bus lost events for the pusher, every EVSE is pushed once. Drops is
 // cumulative, so only a rise counts: the same total seen again is nothing.
 func TestDropsPushEveryEVSEOncePerRise(t *testing.T) {
