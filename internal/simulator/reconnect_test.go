@@ -3,6 +3,7 @@ package simulator_test
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -257,10 +258,12 @@ func TestReconnectAgainstTheCSMS(t *testing.T) {
 	t.Parallel()
 
 	var p *ocpptest.Proxy
+	logs := &lockedBuffer{}
 	clk := clocktest.New(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
 	r := newRig(t, reconnecting(clk, &backoffLog{wait: time.Second}), func(o *simulator.Options) {
 		p = ocpptest.NewProxy(t, strings.TrimPrefix(o.URL, "ws://"))
 		o.URL = p.URL()
+		o.Log = slog.New(slog.NewTextHandler(logs, nil))
 	})
 	waitFor(t, "both EVSEs to report available", func() bool { return evsesAre(r, core.StatusAvailable) })
 
@@ -292,7 +295,11 @@ func TestReconnectAgainstTheCSMS(t *testing.T) {
 	waitFor(t, "the station to come back", func() bool {
 		return r.core.IsOnline(testCP) && r.core.BootedSinceConnect(testCP) && evsesAre(r, core.StatusAvailable)
 	})
-	// A duplicate boot on this connection would be queued by now.
+	// The simulator logs "reconnected" only after the whole bring-up on the
+	// new connection has been answered, and core publishes Booted before it
+	// answers. So once the line is there, a duplicate boot on this
+	// connection would be queued, and the drain below sees it.
+	waitFor(t, "the redial to finish", func() bool { return strings.Contains(logs.String(), "msg=reconnected") })
 	for drained := false; !drained; {
 		select {
 		case e := <-events:
