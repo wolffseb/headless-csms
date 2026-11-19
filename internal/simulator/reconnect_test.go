@@ -273,18 +273,35 @@ func TestReconnectAgainstTheCSMS(t *testing.T) {
 	p.Restore()
 	clk.Advance(time.Second)
 
-	waitFor(t, "the station to come back", func() bool { return r.core.IsOnline(testCP) && evsesAre(r, core.StatusAvailable) })
+	// Core restores each EVSE's last status the moment the socket is up
+	// (Connected), before the simulator's BootNotification has been handled,
+	// so "online and available" says nothing about the boot. Wait for the
+	// boot event itself.
 	boots := 0
-	for {
+	timeout := time.After(3 * time.Second)
+	for boots == 0 {
 		select {
 		case e := <-events:
 			if e.Kind == core.EventBootNotified {
 				boots++
 			}
-			continue
-		default:
+		case <-timeout:
+			t.Fatal("no BootNotification after the reconnect")
 		}
-		break
+	}
+	waitFor(t, "the station to come back", func() bool {
+		return r.core.IsOnline(testCP) && r.core.BootedSinceConnect(testCP) && evsesAre(r, core.StatusAvailable)
+	})
+	// A duplicate boot on this connection would be queued by now.
+	for drained := false; !drained; {
+		select {
+		case e := <-events:
+			if e.Kind == core.EventBootNotified {
+				boots++
+			}
+		default:
+			drained = true
+		}
 	}
 	if boots != 1 {
 		t.Errorf("%d BootNotifications after the reconnect, want 1", boots)
