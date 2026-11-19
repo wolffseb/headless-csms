@@ -56,6 +56,7 @@ nav:
       - Read power and current: guides/metering.md
       - Limit charging power: guides/smart-charging.md
       - Register an OCPI partner: guides/ocpi-partner.md
+      - Push status to the partner: guides/ocpi-push.md
       - "Runbook: HYC50 limit while reserved": guides/hyc50-runbook.md
   - Reference:
       - CLI: reference/cli.md

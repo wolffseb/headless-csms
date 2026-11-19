@@ -44,7 +44,7 @@ Stable, so scripts can branch on them.
 | 0 | Success |
 | 1 | Usage, config, or unexpected error (including an unknown `--evse`) |
 | 2 | `cpms run` is not reachable |
-| 3 | The charge point is not connected to cpms |
+| 3 | The charge point is not connected to cpms, or the connection dropped while the command was queued or waiting for its answer (it may or may not have reached the station) |
 | 4 | The station rejected the command (`config set`: also `NotSupported`) |
 | 5 | The station is occupied |
 | 6 | The station is faulted or unavailable |
@@ -53,6 +53,12 @@ Stable, so scripts can branch on them.
 | 9 | Refused by cpms before sending: already reserved, no reservation to cancel, nothing to stop, a `tx` limit with no session (without `--force`), shutting down, nothing registered |
 | 10 | `probe`: the station reported that it lacks a capability cpms requires |
 | 11 | `limit` / `profile`: the station does not support this charging profile or request |
+| 12 | The command was **not sent**: the station stayed busy with an earlier command for the whole of `charger.call_timeout`. Nothing happened, so repeating it is safe |
+
+!!! tip "7 or 12?"
+    One command is in flight at a time. **12** means yours never went out: repeat it.
+    **7** means it went out and got no answer: the station may have acted, so check
+    `cpms status` first.
 
 ## Output
 

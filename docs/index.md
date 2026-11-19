@@ -52,7 +52,7 @@ The [quickstart](quickstart.md) walks through it, output included.
 | Limit charging power | [`cpms limit`, `cpms profile`](guides/smart-charging.md) | :material-check: |
 | Test without hardware | [`cpms simulate charger`](guides/simulator.md) | :material-check: |
 | OCPI versions, credentials, locations | [OCPI API](reference/ocpi-api.md) | :material-check: |
-| Push status changes to the partner (OCPI `PATCH`) | | planned |
+| Push status changes to the partner | [OCPI `PATCH`](guides/ocpi-push.md) | :material-check: |
 | OCPI commands (`RESERVE_NOW`, ...) | | planned |
 | OCPP 2.0.1, terminal UI | | planned |
 

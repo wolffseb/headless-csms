@@ -64,7 +64,7 @@ ocpi:
 # filled in live from the OCPP connection.
 #
 # Everything below is sent as it is, so it has to fit OCPI's limits; see the
-# table in the README. Text may use printable characters only (no newline or
+# table in docs/reference/configuration.md. Text may use printable characters only (no newline or
 # tab), and the ids only printable ASCII.
 location:
   # At most 36 characters, printable ASCII.

@@ -66,7 +66,9 @@ Every failure has its own [exit code](../reference/cli.md#exit-codes).
 | `Rejected` | 4 | It refused the command. |
 | `Occupied` | 5 | The connector is in use. |
 | `Faulted` or `Unavailable` | 6 | The connector cannot be reserved now. |
-| (nothing within `charger.call_timeout`) | 7 | No answer. |
+| (nothing within `charger.call_timeout`) | 7 | No answer. The station may have acted. |
+| (never sent: the station was busy with an earlier command) | 12 | Nothing happened. Safe to repeat. |
+| (the connection dropped) | 3 | It may or may not have reached the station. |
 | `UnlockFailed`, `NotSupported` | 8 | The lock did not release, or the station cannot do it. |
 
 cpms refuses some commands itself, before anything is sent (exit 9): the EVSE is already
@@ -76,6 +78,10 @@ reserved, there is no reservation to cancel, or no session to stop.
     When `ReserveNow` gets no answer, cpms drops the reservation and sends a
     `CancelReservation` in the background. Until that is answered the reservation shows as
     `cancelling` in `cpms status`, and the EVSE refuses a new one (exit 9).
+
+    If the cancel goes unanswered too, or the connection drops, the station may hold the
+    reservation until its expiry and answer a new reserve with `Occupied` until then. A
+    reservation that was never sent (exit 12) has nothing to cancel.
 
 ## Expiry and restarts
 

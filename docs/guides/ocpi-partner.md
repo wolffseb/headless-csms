@@ -54,6 +54,8 @@ sequenceDiagram
     OCPI  registered with NL*ABC since 10:05:28, push: http://emsp.example/ocpi/2.3.0/locations
     ```
 
+    `push:` is the partner's Locations receiver, where [status changes are sent](ocpi-push.md).
+
 From then on the partner uses `TOKEN_C`, and `TOKEN_A` gets HTTP 401. The registration
 survives a restart.
 
@@ -115,5 +117,6 @@ If the registration it waited for succeeds, that brand-new registration is the o
 
 ## Next
 
+- What cpms sends the partner: [Push status to the partner](ocpi-push.md)
 - What the partner can call: [OCPI API reference](../reference/ocpi-api.md)
 - Token rules: [Configuration](../reference/configuration.md#ocpi)

@@ -52,8 +52,8 @@ randomly chosen port.
 | `token_a` | yes | | Handed to the partner out of band to start [registration](../guides/ocpi-partner.md). |
 | `token_c` | yes | | What the partner authenticates with once registered. |
 | `business_name` | | `location.name` | The name in our OCPI credentials. At most 100 characters. |
-| `push.debounce` | | `500ms` | Coalesces rapid status changes into one `PATCH` (push is planned). |
-| `push.max_retries` | | `5` | |
+| `push.debounce` | | `500ms` | How long to wait after an EVSE's status changes before [pushing it](../guides/ocpi-push.md). Changes inside the wait become one `PATCH`. |
+| `push.max_retries` | | `5` | Retries after the first attempt, with backoff, before the change is dropped. |
 
 Both tokens must be 8 to 64 printable ASCII characters without whitespace, and they must differ.
 
@@ -69,10 +69,11 @@ data. It is served verbatim. Only the per-EVSE status is filled in live.
 
 | Field | Required | Default | |
 |---|---|---|---|
-| `id` | yes | | At most 36 characters. |
+| `id` | yes | | At most 36 characters, printable ASCII. |
 | `name` | | | At most 255 characters. |
-| `address`, `city` | yes | | |
-| `postal_code` | | | |
+| `address` | yes | | At most 255 characters. |
+| `city` | yes | | At most 45 characters. |
+| `postal_code` | | | At most 10 characters. |
 | `country` | yes | | ISO 3166-1 alpha-3, for example `DEU`. |
 | `coordinates.latitude`, `.longitude` | yes | | Decimal degrees as strings with 5 to 7 decimal places: `"52.520000"`. |
 | `time_zone` | yes | | An IANA name such as `Europe/Berlin`. The zone database is built into the binary. |
@@ -83,8 +84,8 @@ data. It is served verbatim. Only the per-EVSE status is filled in live.
 
 | Field | Required | Default | |
 |---|---|---|---|
-| `uid` | yes | | The EVSE's OCPI `uid`, and what `--evse` takes. Unique, at most 36 characters. |
-| `evse_id` | yes | | An eMI3 EVSE ID, for example `DE*EXA*E001*1`. Unique. |
+| `uid` | yes | | The EVSE's OCPI `uid`, and what `--evse` takes. Unique, at most 36 characters, printable ASCII. |
+| `evse_id` | yes | | An eMI3 EVSE ID, for example `DE*EXA*E001*1`. Unique, at most 38 ASCII characters. |
 | `ocpp_connector_id` | yes | | The OCPP 1.6 connector this EVSE is. `1` or greater (`0` is the station itself). Unique. |
 | `reservable` | | `true` | Advertises the OCPI `RESERVABLE` capability. Set it to `false` if [`cpms probe`](probe.md) reports no Reservation profile. |
 | `connectors` | yes | | At least one. |
@@ -93,13 +94,24 @@ data. It is served verbatim. Only the per-EVSE status is filled in live.
 
 | Field | Required | |
 |---|---|---|
-| `id` | yes | Unique within the EVSE. |
+| `id` | yes | Unique within the EVSE. At most 36 characters, printable ASCII. |
 | `standard` | yes | An OCPI [`ConnectorType`](https://github.com/ocpi/ocpi/blob/release-2.3.0-bugfixes/mod_locations.asciidoc), for example `IEC_62196_T2_COMBO`. |
 | `format` | yes | `SOCKET` or `CABLE`. |
 | `power_type` | yes | `AC_1_PHASE`, `AC_2_PHASE`, `AC_2_PHASE_SPLIT`, `AC_3_PHASE` or `DC`. |
 | `max_voltage` | yes | V, greater than zero. |
 | `max_amperage` | yes | A, greater than zero. |
 | `max_electric_power` | | W. |
+
+## Text limits
+
+Everything under `location` goes out over OCPI as it is, so it must fit OCPI 2.3.0's
+limits. A partner may reject a whole Location over one bad field, so
+`cpms config validate` names the key that does not fit.
+
+- Lengths count characters, not bytes: `Müller` is 6.
+- Text fields take printable characters only: no newline, tab, zero-width or no-break space.
+- Ids (`location.id`, `uid`, connector `id`) take printable ASCII only, so no umlauts.
+- `ocpi.business_name` is sent trimmed.
 
 ## A minimal file
 

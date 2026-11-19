@@ -37,7 +37,7 @@ Start with the [architecture overview](architecture/overview.md). The short vers
 | A CLI command or its output | `internal/cli` |
 | What happens on reserve, start, stop | `internal/control` |
 | An OCPP 1.6 message | `internal/ocpp/v16` |
-| An OCPI endpoint | `internal/ocpi/...` |
+| An OCPI endpoint, or the status push | `internal/ocpi/...` |
 | A config field | `internal/config`, and `config.example.yaml` |
 | The simulator | `internal/simulator` |
 
@@ -68,7 +68,7 @@ Built in tracked steps. Each lands as its own pull request.
 | 4 | Outbound OCPP commands, reservation lifecycle, one-shot CLI | in progress: commands and `cpms probe` done, [on-site hardware check](https://github.com/wolffseb/headless-csms/issues/11) next |
 | 5 | OCPI foundation: versions + credentials handshake | :material-check: done |
 | 6 | OCPI Locations module (sender) | :material-check: done |
-| 7 | PATCH location on status change | |
+| 7 | PATCH location on status change | :material-check: done |
 | 8 | OCPI Commands module (receiver) | |
 | 9 | Terminal UI | |
 | 10 | OCPP 2.0.1 | |

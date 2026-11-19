@@ -70,6 +70,7 @@ In `status --json` they are `charging_profiles`, on `charge_point` and on each E
 | `Unknown` (on clear) | 4 | The station holds no matching profile. cpms drops its records anyway. |
 | `NotSupported`, or a `NotImplemented` CALLERROR | 11 | The station does not support this request. |
 | (no answer) | 7 | See the warning below. |
+| (not sent) | 12 | The station was busy. Nothing went out, so there is no id to look for. |
 
 Mistakes in the flags or the file exit 1 before anything is sent.
 

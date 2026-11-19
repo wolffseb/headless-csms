@@ -25,9 +25,12 @@ served cannot disagree. There is no TLS: this is a LAN tool, by decision.
 | `GET` | [`/2.3.0/locations/{location_id}/{evse_uid}`](#get-an-evse) | C | One EVSE |
 | `GET` | [`/2.3.0/locations/{location_id}/{evse_uid}/{connector_id}`](#get-an-evse) | C | One Connector |
 
+cpms also **calls the partner**: it sends every EVSE status change as a `PATCH` to the
+partner's Locations receiver. See [Push status to the partner](../guides/ocpi-push.md).
+
 !!! note "Planned"
-    The Commands module (`RESERVE_NOW`, ...) and pushing status changes to the partner
-    with `PATCH` are not built yet. See the [status](../development.md#status).
+    The Commands module (`RESERVE_NOW`, ...) is not built yet. See the
+    [status](../development.md#status).
 
 ## Authentication
 

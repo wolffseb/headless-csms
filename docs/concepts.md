@@ -29,7 +29,7 @@ flowchart LR
     end
 
     cli -- "Unix socket" --> sock
-    partner -- "HTTP :8080" --> ocpi
+    partner <-- "HTTP :8080" --> ocpi
     station -- "WebSocket :9000" --> csms
     sock --> core
     ocpi --> core
@@ -40,7 +40,7 @@ flowchart LR
 |---|---|---|
 | The station | OCPP 1.6-J over WebSocket | Its only connection is to `cpms run`. |
 | You | `cpms <command>` over a Unix socket | Commands need a running `cpms run`. They send one request, print the answer and exit. |
-| An OCPI partner | OCPI 2.3.0 over HTTP | Must [register](guides/ocpi-partner.md) first. |
+| An OCPI partner | OCPI 2.3.0 over HTTP | Must [register](guides/ocpi-partner.md) first. cpms then [pushes status changes](guides/ocpi-push.md) to it. |
 
 ## Vocabulary
 

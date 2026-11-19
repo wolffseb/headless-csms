@@ -13,7 +13,7 @@ flowchart LR
 
     subgraph run ["cpms run (one process)"]
         sock["Control socket<br/>control/socket"]
-        ocpi["OCPI server<br/>ocpi (versions, credentials, locations)"]
+        ocpi["OCPI server + push<br/>ocpi (versions, credentials,<br/>locations, push)"]
         ctrl["control<br/>the one way to act<br/>on the station"]
         csms["OCPP server<br/>ocpp/csms + ocpp/v16"]
         core["core<br/>state + event bus"]
@@ -22,25 +22,26 @@ flowchart LR
     end
 
     cli -- "Unix socket" --> sock
-    partner <-. "OCPI 2.3.0<br/>(commands in, PATCHes out)" .-> ocpi
+    partner <-- "OCPI 2.3.0<br/>(requests in, status PATCHes out)" --> ocpi
     sock --> ctrl
     ocpi -.-> ctrl
     ctrl -- "commands" --> csms
     csms <-- "OCPP 1.6-J over WebSocket<br/>(the station dials in)" --> station
     ctrl -- "reservations, ids" --> core
     csms -- "station reports" --> core
-    ocpi -. "subscribes to status changes" .-> core
+    ocpi -- "reads status, subscribes to changes" --> core
     core <--> store
     core --> log
 ```
 
-Dotted lines are planned: OCPI commands in and status `PATCH`es out.
+The dotted line is planned: OCPI commands, which will end in the same `control` layer as
+the terminal.
 
 ## Four rules
 
 | Rule | Meaning |
 |---|---|
-| **`core` is the single source of truth.** | It holds the station, every EVSE's status, reservations and sessions, and publishes an event for every change. The event log (and later the TUI and the OCPI push) subscribe. Nothing else keeps charger state. |
+| **`core` is the single source of truth.** | It holds the station, every EVSE's status, reservations and sessions, and publishes an event for every change. The event log and the OCPI push subscribe, and later the TUI. Nothing else keeps charger state. |
 | **`control` is the single way to act on the station.** | It validates the EVSE, allocates and persists ids, sends the command, interprets the answer and records the outcome in `core`. The socket (and later OCPI and the TUI) are thin transports in front of it. |
 | **Protocol versions stay in their adapters.** | `ocpp/csms` routes raw messages by the negotiated subprotocol and never learns a message name. `ocpp/v16` translates between 1.6 messages and the version-agnostic `core`. OCPP 2.0.1 will be a sibling adapter, not a rewrite. |
 | **`config.yaml` is read, `state.json` is written.** | See [Configuration](../reference/configuration.md#statejson). |
@@ -62,6 +63,7 @@ All under [`internal/`](https://github.com/wolffseb/headless-csms/tree/main/inte
 | `ocpi/client` | Calls to the partner's OCPI API |
 | `ocpi/credentials` | The credentials module and registration handshake |
 | `ocpi/locations` | The Locations module (sender): config plus live status, paginated |
+| `ocpi/push` | Pushes EVSE status changes to the partner's Locations receiver: dirty flag per EVSE, debounce, retries |
 | `config` | Loads and validates `config.yaml` |
 | `state` | `state.json`: the persisted DTOs and the atomic-write store |
 | `simulator` | A charge point: dials a CSMS and behaves like a station |
@@ -96,7 +98,7 @@ Nothing calls `ChargePoint` directly except `internal/control`.
 |---|---|---|
 | The station's answer | `Rejected`, `Occupied` | `*control.RefusedError` |
 | cpms refusing | `control.ErrAlreadyReserved`, `ErrNoReservation`, `ErrNoActiveTransaction` | Exit 9 |
-| The call failing | `ocpp.ErrTimeout`, `ocpp.ErrNotConnected`, `ocpp.ErrUnknownEVSE`, `*ocpp.RPCError` | Exit 7, 3, 1, ... |
+| The call failing | `ocpp.ErrTimeout`, `ocpp.ErrNotConnected`, `ocpp.ErrNotSent`, `ocpp.ErrUnknownEVSE`, `*ocpp.RPCError` | Exit 7, 3, 12, 1, ... |
 
 Typed errors let the CLI turn them into [exit codes](../reference/cli.md#exit-codes), and
 later OCPI into command results.
@@ -112,6 +114,23 @@ EVSE as `RESERVED` only when the station does.
 Periods from 0 and strictly increasing, limits with at most one decimal place, only a `Tx`
 profile takes a transaction, only `StationMax` may address the whole station. A bad one
 fails with `ocpp.ErrInvalidProfile`.
+
+### One CALL in flight per connection
+
+`ocppj.Conn.Call` keeps one CALL in flight, as OCPP-J 1.6 §4.1.1 asks of a CSMS. A second
+caller (two socket commands, or a command and the on-connect `TriggerMessage`) waits until
+the first has an answer, a CALLERROR or a timeout.
+
+| Outcome | Error | Exit |
+|---|---|---|
+| Never got its turn within `charger.call_timeout` | `ErrNotSent` | 12, safe to repeat |
+| Sent and answered | | 0, 4-6, 8 or 11 |
+| Sent, no answer within `charger.call_timeout` | `ErrTimeout` | 7, the station may have acted |
+| The connection dropped | `ErrClosedUnsent` (queued) or `ErrConnClosed` (on the wire) | 3, either may be the case |
+
+The call timeout starts once the frame is sent, so a call lives at most twice
+`charger.call_timeout`. The CLI waits for `cpms run` for `2 × call_timeout + 5 s`, so the
+daemon always answers first. Calls from the station are not affected.
 
 ### `ocppj` is direction-agnostic
 

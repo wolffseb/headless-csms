@@ -79,8 +79,15 @@ If the station answers anything but `Accepted`, or does not answer within
 `charger.call_timeout`, the pending reservation is ended at once and the CLI exits with the
 matching code (4–7). After a timeout or a failure the station may still have received the
 request, so `cpms run` sends a `CancelReservation` in the background and the reservation shows
-as `state: cancelling` in `cpms status` until that has an answer; the EVSE refuses a new
-reservation (exit 9) meanwhile. It is not persisted, like a pending one. `core` only shows `RESERVED` when the station reports it; the
+as `state: cancelling` in `cpms status` until the station has answered it; the EVSE refuses a
+new reservation (exit 9) meanwhile. The cancel waits for its turn behind any command on the
+wire, and a cancel that does not get its turn within `charger.call_timeout` is queued again,
+not dropped. The record ends when the station answers, when the connection drops, when the
+cancel itself goes unanswered for `charger.call_timeout`, or when `cpms run` shuts down. In the
+last three cases the station may still hold the reservation until its expiry, and answers a new
+reserve on that EVSE `Occupied` until then. A
+reservation that was never sent (exit 12) has nothing to
+cancel: it ends at once and no `CancelReservation` follows. It is not persisted, like a pending one. `core` only shows `RESERVED` when the station reports it; the
 reservation record sits next to the status rather than overwriting it.
 
 ## Redeeming the reservation: start and stop
@@ -203,7 +210,8 @@ INFO line in the log and stays connected; its EVSEs then wait for its next statu
 
 ## Planned: an OCPI partner reserves
 
-[Roadmap](../development.md#status) steps 7 and 8, not built yet. The OCPI side ends in the same `control.Reserve` as the terminal.
+[Roadmap](../development.md#status) step 8, not built yet. The status `PATCH` at the end is
+[already sent](../guides/ocpi-push.md). The OCPI side ends in the same `control.Reserve` as the terminal.
 
 ```mermaid
 sequenceDiagram
