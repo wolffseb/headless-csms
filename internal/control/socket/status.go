@@ -5,6 +5,7 @@ import (
 
 	"github.com/wolffseb/cli-cpms/internal/core"
 	"github.com/wolffseb/cli-cpms/internal/ocpi/credentials"
+	"github.com/wolffseb/cli-cpms/internal/ocpi/push"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
 	"github.com/wolffseb/cli-cpms/internal/state"
 )
@@ -107,6 +108,16 @@ func BuildOCPIStatus(reg *state.OCPIRegistration) OCPIStatus {
 		out.PushEndpoint = url
 	}
 	return out
+}
+
+// BuildPushStatus renders the status push's health for status.
+func BuildPushStatus(st push.Status) *PushStatus {
+	return &PushStatus{
+		LastSuccess: utcOrNil(st.LastSuccess),
+		LastError:   st.LastError,
+		LastErrorAt: utcOrNil(st.LastErrorAt),
+		Pending:     st.Pending,
+	}
 }
 
 func utcOrNil(t time.Time) *time.Time {

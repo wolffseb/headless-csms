@@ -52,8 +52,12 @@ ocpi:
   # always the company's name and then has to fit in 100 characters too.
   # business_name: Example CPO GmbH
   push:
-    # Coalesce rapid status flapping into a single PATCH.
+    # How long to wait after an EVSE's status changes before pushing it to the
+    # partner. Changes inside the wait coalesce into one PATCH with the status
+    # at the end of it. The wait is fixed: it does not restart on every change.
     debounce: 500ms
+    # Retries after the first attempt, with exponential backoff (1s, 2s, 4s…,
+    # at most 30s), before the change is dropped with an error log.
     max_retries: 5
 
 # Static OCPI Location data. Served verbatim; only the per-EVSE status is
