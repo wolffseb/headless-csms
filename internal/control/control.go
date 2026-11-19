@@ -459,10 +459,12 @@ func (s *Service) TriggerStatus(ctx context.Context, evseUID string) error {
 // reports a change. Each call is bounded by the call timeout of the
 // connection.
 //
-// The requests go out one at a time, but nothing serialises them against
-// other callers: a command sent over the socket in the seconds after a
-// reconnect can overlap a TriggerMessage, against OCPP-J's one-call-in-flight
-// rule. That was already true of any two concurrent commands (#63).
+// The requests go out one at a time, and ocppj.Conn.Call keeps them to one in
+// flight against other callers too (#63): a command sent over the socket in
+// the seconds after a reconnect waits for the TriggerMessage in flight, and
+// the other way round. A TriggerMessage that does not get its turn within the
+// call timeout is not sent (ocpp.ErrNotSent); it is logged like any other
+// failure here and not retried.
 func (s *Service) RefreshStatusOnConnect(ctx context.Context, cp ocpp.ChargePoint) {
 	if cp.ID() != s.cfg.Charger.ID {
 		return
