@@ -153,3 +153,10 @@ var (
 	// again.
 	ErrNotSent = errors.New("ocpp: station busy, command not sent")
 )
+
+// CallBound is the longest one command lives on a connection whose calls time
+// out after callTimeout: at most callTimeout waiting for its turn behind the
+// command on the wire (ErrNotSent after that), then at most callTimeout
+// waiting for the answer (ErrTimeout after that). It is what ocppj's queue
+// timeout, which defaults to the call timeout, adds up to.
+func CallBound(callTimeout time.Duration) time.Duration { return 2 * callTimeout }

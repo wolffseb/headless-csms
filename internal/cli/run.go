@@ -191,8 +191,9 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	<-ctx.Done()
 	fmt.Fprintln(cmd.OutOrStdout(), "shutting down")
 	// Each listener gets its own grace, started when its turn comes:
-	// commands.Close below can take up to call_timeout, which would spend a
-	// shared one before the OCPP server got to use it.
+	// commands.Close below can take up to four times call_timeout (a Reserve
+	// and the cancel it starts each wait for a turn and then for an answer),
+	// which would spend a shared one before the OCPP server got to use it.
 	ocpiCtx, cancelOCPI := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancelOCPI()
 
