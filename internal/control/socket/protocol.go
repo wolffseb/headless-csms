@@ -293,6 +293,20 @@ type OCPIStatus struct {
 	// PushEndpoint is its Locations receiver, which status changes are pushed
 	// to. Empty when it lists none, or when not registered.
 	PushEndpoint string `json:"push_endpoint,omitempty"`
+	// Push is how the status push is doing. Nil when not registered.
+	Push *PushStatus `json:"push,omitempty"`
+}
+
+// PushStatus is the health of the OCPI status push.
+type PushStatus struct {
+	// LastSuccess is when the partner last accepted a PATCH; nil if none yet.
+	LastSuccess *time.Time `json:"last_success,omitempty"`
+	// LastError is why the last failing attempt failed, and LastErrorAt when.
+	// A later success does not clear them: compare the two times.
+	LastError   string     `json:"last_error,omitempty"`
+	LastErrorAt *time.Time `json:"last_error_at,omitempty"`
+	// Pending is how many EVSEs have a change waiting to be sent or retried.
+	Pending int `json:"pending"`
 }
 
 // UnregisterResult is the result of OpOCPIUnregister.

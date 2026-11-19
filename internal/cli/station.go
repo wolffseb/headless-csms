@@ -419,11 +419,44 @@ func ocpiLine(o socket.OCPIStatus) string {
 	if o.Since != nil {
 		line += " since " + localTime(*o.Since)
 	}
-	push := o.PushEndpoint
-	if push == "" {
-		push = "no locations receiver"
+	endpoint := o.PushEndpoint
+	if endpoint == "" {
+		return line + ", push: no locations receiver"
 	}
-	return line + ", push: " + push
+	line += ", push: " + endpoint
+	if p := o.Push; p != nil {
+		line += pushHealth(*p)
+	}
+	return line
+}
+
+// pushHealth is what the status push has been doing, to follow the endpoint
+// on the OCPI line: when it last got through, why it last did not, and how
+// much is waiting.
+func pushHealth(p socket.PushStatus) string {
+	var parts []string
+	failing := p.LastErrorAt != nil && (p.LastSuccess == nil || p.LastErrorAt.After(*p.LastSuccess))
+	switch {
+	case failing:
+		parts = append(parts, "last push failed "+localTime(*p.LastErrorAt)+": "+truncate(p.LastError, 60))
+	case p.LastSuccess != nil:
+		parts = append(parts, "last push "+localTime(*p.LastSuccess))
+	default:
+		parts = append(parts, "nothing pushed yet")
+	}
+	if p.Pending > 0 {
+		parts = append(parts, fmt.Sprintf("%d pending", p.Pending))
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
+}
+
+// truncate shortens s to at most n characters, marking the cut.
+func truncate(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
 }
 
 // localTime shows a timestamp the way a person at the station reads a clock:

@@ -774,8 +774,10 @@ replaces `TOKEN_B` and the endpoints; `DELETE` unregisters, after which `TOKEN_A
 again. `cpms status` shows the registration:
 
 ```
-OCPI  registered with NL*ABC since 14:02:11, push: https://emsp.example/ocpi/2.3.0/locations
+OCPI  registered with NL*ABC since 14:02:11, push: https://emsp.example/ocpi/2.3.0/locations (last push 14:31:07)
 ```
+
+How the push is doing follows the endpoint; see [Status push](#status-push).
 
 **Starting over.** To re-run the handshake (the partner lost its token, or you changed
 `token_c`), run `cpms ocpi unregister` while `cpms run` is running. It clears the registration
@@ -792,6 +794,67 @@ generate a new token when the partner `PUT`s its credentials. cpms answers with 
 generated one in `state.json` would be a second source of truth for our own token. To
 rotate it, change `ocpi.token_c`, restart, `cpms ocpi unregister`, and have the partner
 register again.
+
+### Status push
+
+The partner should learn about a status change without polling it, whether it came from
+`cpms reserve` or from someone plugging in a car. Every EVSE status change that core records
+is pushed to the partner as a `PATCH` on its Locations receiver:
+
+```
+PATCH {locations RECEIVER url}/{our country_code}/{our party_id}/{location.id}/{evse uid}
+Authorization: Token <base64 of TOKEN_B>
+
+{"status":"CHARGING","last_updated":"2026-11-19T14:31:05Z"}
+```
+
+**When it pushes.**
+
+- After a short wait, `ocpi.push.debounce` (default `500ms`), which opens when an EVSE changes
+  and ends at a fixed time. What is sent is the EVSE's status *at the end of the wait*, not the
+  status of any single event, so five changes inside it make one `PATCH` carrying the last, and
+  an older status can never overwrite a newer one. The window does not restart on every change:
+  an EVSE that flaps for minutes is still sent once per window.
+- `last_updated` is when the status changed in core, not when the `PATCH` went out, and a retried
+  `PATCH` keeps it.
+- When the station disconnects, every EVSE becomes `UNKNOWN` in core, and so each gets its own
+  `PATCH`.
+- The registration is read when the `PATCH` is about to go out. Without one, or when the partner
+  lists no `locations` receiver (a valid pull-only integration), cpms makes no call and logs
+  nothing above debug level. A partner that registers while cpms runs gets the next change;
+  after a `DELETE` of the credentials, it gets none.
+- Not pushed: an initial full state after registration (the partner reads it with `GET`
+  `locations`), anything but EVSE status, and anything unsent when cpms stops. After a restart the
+  station connects again and statuses change anyway.
+
+**Retries.** A `PATCH` the partner does not accept is tried again after 1s, 2s, 4s and so on,
+at most 30s, each with up to a quarter more as jitter, so that several EVSEs do not retry in
+step. `ocpi.push.max_retries` (default `5`) is the number of retries after the first attempt.
+
+- Retried: HTTP `5xx`, `408` and `429`, timeouts and connection errors, and an answer whose
+  `status_code` is not 1000.
+- Not retried: any other `4xx`. The partner refused the request itself, and sending it again would
+  not change that.
+- If the EVSE changes again while a retry is waiting, the retry sends the new state. Retries do not
+  stack, and the old status is never sent after the new one.
+- When the retries run out, the change is dropped with an error log, and the next change starts
+  afresh.
+
+**Where failures show up.** A change that is dropped, or refused as not retryable, is an error in
+the log that names the EVSE and the last HTTP status or OCPI code. Retries in between are debug
+lines. `cpms status` shows the push at the end of the OCPI line: when it last got through, or
+when and why it last failed, and how many EVSEs have a change waiting:
+
+```
+OCPI  registered with NL*ABC since 14:02:11, push: https://emsp.example/ocpi/2.3.0/locations (last push failed 14:31:07: ocpi: HTTP 500: Internal Server Error, 1 pending)
+```
+
+`cpms status --json` has the same under `ocpi.push` (`last_success`, `last_error`, `last_error_at`,
+`pending`). The key is there while registered. A failing push never stops `cpms run` or holds up the
+station. When cpms stops, a `PATCH` on its way is cancelled and is not logged as a failure.
+
+cpms reads events from the bus without ever doing HTTP while it reads, so a slow partner cannot make
+it miss any. If it does lose some anyway, it logs a warning and pushes every EVSE once.
 
 ## Configuration
 
@@ -835,6 +898,26 @@ The zone database is built into the binary, so this works on hosts without one. 
 drivers, and in public apps if it forwards it. `false` limits it to the tokens in
 `publish_allowed_to`, which cpms does not send, so it would be hidden from every driver. Each EVSE's `reservable` (default `true`) controls the
 OCPI `RESERVABLE` capability: set it to `false` if `cpms probe` shows no Reservation profile.
+
+Text that goes out over OCPI must fit OCPI 2.3.0's limits, and `cpms config validate` names
+the key that does not. A partner may reject a whole Location over one bad field.
+
+| Key | Limit (OCPI field) |
+|---|---|
+| `location.name`, `location.address` | 255 characters (`string(255)`); `name` is also the business name unless `ocpi.business_name` is set |
+| `location.city` | 45 characters (`string(45)`) |
+| `location.postal_code` | 10 characters (`string(10)`) |
+| `ocpi.business_name` | 100 characters (`string(100)`, `BusinessDetails.name`) |
+| `location.id`, `location.evses[].uid`, `location.evses[].connectors[].id` | 36 characters of printable ASCII (`CiString(36)`) |
+| `location.evses[].evse_id` | an eMI3 EVSE ID, at most 38 characters of ASCII (OCPI allows 48) |
+
+Lengths count characters, not bytes: `Müller` is 6. A `string` may hold any printable UTF-8
+(what Go's `unicode.IsPrint` accepts), so a newline, a tab, a zero-width or no-break space, and
+the rest of the control and format characters are refused, in these keys and in
+`ocpi.public_base_url`. A `CiString` may hold only the ASCII characters U+0020 to U+007E, so
+`location.id` cannot contain an umlaut. `ocpi.business_name` is sent trimmed, so the newline a
+YAML block scalar leaves at its end is harmless there. OCPI's optional Location `state` is not
+sent, so there is no key for it.
 
 Two listener rules worth knowing, both enforced at validation time:
 `heartbeat_timeout` must exceed `heartbeat_interval` (otherwise a punctual station gets
@@ -912,6 +995,7 @@ internal/ocpi            the OCPI transport: HTTP server, envelope, token auth, 
 internal/ocpi/client     calls to the partner's OCPI API: token, request ids, envelope decoding, typed errors
 internal/ocpi/credentials the credentials module and registration handshake; decides what each token grants
 internal/ocpi/locations  the OCPI Locations module (sender): config plus live status, paginated
+internal/ocpi/push       pushes EVSE status changes to the partner's Locations receiver: dirty flag per EVSE, debounce, retries
 internal/ocpp            version-agnostic RPC errors, versions, the Handler and ChargePoint interfaces, ProbeReport
 internal/ocpp/ocppj      the OCPP-J RPC layer: framing, correlation, connection goroutines
 internal/ocpp/csms       the WebSocket server a charge point dials into
@@ -1220,7 +1304,7 @@ Built in tracked steps; each lands as its own PR.
 | 4 | Outbound OCPP commands, reservation lifecycle, one-shot CLI | in progress: commands and `cpms probe` done, on-site hardware check next |
 | 5 | OCPI foundation: versions + credentials handshake | done |
 | 6 | OCPI Locations module (sender) | done |
-| 7 | PATCH location on status change | |
+| 7 | PATCH location on status change | done |
 | 8 | OCPI Commands module (receiver) | |
 | 9 | Terminal UI | |
 | 10 | OCPP 2.0.1 | |

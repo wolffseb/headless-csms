@@ -3,6 +3,7 @@ package simulator_test
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -257,10 +258,12 @@ func TestReconnectAgainstTheCSMS(t *testing.T) {
 	t.Parallel()
 
 	var p *ocpptest.Proxy
+	logs := &lockedBuffer{}
 	clk := clocktest.New(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
 	r := newRig(t, reconnecting(clk, &backoffLog{wait: time.Second}), func(o *simulator.Options) {
 		p = ocpptest.NewProxy(t, strings.TrimPrefix(o.URL, "ws://"))
 		o.URL = p.URL()
+		o.Log = slog.New(slog.NewTextHandler(logs, nil))
 	})
 	waitFor(t, "both EVSEs to report available", func() bool { return evsesAre(r, core.StatusAvailable) })
 
@@ -273,18 +276,39 @@ func TestReconnectAgainstTheCSMS(t *testing.T) {
 	p.Restore()
 	clk.Advance(time.Second)
 
-	waitFor(t, "the station to come back", func() bool { return r.core.IsOnline(testCP) && evsesAre(r, core.StatusAvailable) })
+	// Core restores each EVSE's last status the moment the socket is up
+	// (Connected), before the simulator's BootNotification has been handled,
+	// so "online and available" says nothing about the boot. Wait for the
+	// boot event itself.
 	boots := 0
-	for {
+	timeout := time.After(3 * time.Second)
+	for boots == 0 {
 		select {
 		case e := <-events:
 			if e.Kind == core.EventBootNotified {
 				boots++
 			}
-			continue
-		default:
+		case <-timeout:
+			t.Fatal("no BootNotification after the reconnect")
 		}
-		break
+	}
+	waitFor(t, "the station to come back", func() bool {
+		return r.core.IsOnline(testCP) && r.core.BootedSinceConnect(testCP) && evsesAre(r, core.StatusAvailable)
+	})
+	// The simulator logs "reconnected" only after the whole bring-up on the
+	// new connection has been answered, and core publishes Booted before it
+	// answers. So once the line is there, a duplicate boot on this
+	// connection would be queued, and the drain below sees it.
+	waitFor(t, "the redial to finish", func() bool { return strings.Contains(logs.String(), "msg=reconnected") })
+	for drained := false; !drained; {
+		select {
+		case e := <-events:
+			if e.Kind == core.EventBootNotified {
+				boots++
+			}
+		default:
+			drained = true
+		}
 	}
 	if boots != 1 {
 		t.Errorf("%d BootNotifications after the reconnect, want 1", boots)

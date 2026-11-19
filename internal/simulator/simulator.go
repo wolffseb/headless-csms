@@ -447,6 +447,9 @@ func (s *Simulator) Connect(ctx context.Context) error {
 		s.Close()
 		return err
 	}
+	// The peer of "reconnected": the CSMS has answered the boot and every
+	// status, so a drop from here on is a redial and not a failed start.
+	s.log.Info("online")
 
 	// The scenario holds the first redial until its offline part is done.
 	scripted := make(chan struct{})

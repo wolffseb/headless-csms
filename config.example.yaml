@@ -52,18 +52,30 @@ ocpi:
   # always the company's name and then has to fit in 100 characters too.
   # business_name: Example CPO GmbH
   push:
-    # Coalesce rapid status flapping into a single PATCH.
+    # How long to wait after an EVSE's status changes before pushing it to the
+    # partner. Changes inside the wait coalesce into one PATCH with the status
+    # at the end of it. The wait is fixed: it does not restart on every change.
     debounce: 500ms
+    # Retries after the first attempt, with exponential backoff (1s, 2s, 4s…,
+    # at most 30s), before the change is dropped with an error log.
     max_retries: 5
 
 # Static OCPI Location data. Served verbatim; only the per-EVSE status is
 # filled in live from the OCPP connection.
+#
+# Everything below is sent as it is, so it has to fit OCPI's limits; see the
+# table in the README. Text may use printable characters only (no newline or
+# tab), and the ids only printable ASCII.
 location:
+  # At most 36 characters, printable ASCII.
   id: SITE-01
-  # At most 255 characters (OCPI Location.name).
+  # Optional, at most 255 characters (OCPI Location.name).
   name: Example Site
+  # At most 255 characters.
   address: Example Street 1
+  # At most 45 characters.
   city: Berlin
+  # Optional, at most 10 characters.
   postal_code: "10115"
   country: DEU
   # Served verbatim over OCPI, so a roaming partner maps the station here.
@@ -81,6 +93,7 @@ location:
   # Optional, default true.
   publish: true
   evses:
+    # uid and the connector ids: at most 36 characters, printable ASCII.
     - uid: ALP-HYC-001-1
       evse_id: DE*EXA*E001*1
       # OCPP 1.6 addresses this outlet by connector id. 0 is reserved for the
