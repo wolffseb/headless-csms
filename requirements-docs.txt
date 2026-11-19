@@ -1,0 +1,4 @@
+# The documentation site (mkdocs.yml, docs/). Build it with:
+#   pip install -r requirements-docs.txt && mkdocs serve
+mkdocs==1.6.1
+mkdocs-material==9.8.1

@@ -115,7 +115,7 @@ type ScheduleRequest struct {
 }
 
 // Profile is a charging profile in cpms's neutral JSON shape: what `cpms
-// profile set -f` reads, documented in the README. Its id is not part of
+// profile set -f` reads, documented in docs/guides/smart-charging.md. Its id is not part of
 // it; cpms allocates one.
 type Profile struct {
 	// Purpose is "tx-default", "station-max" or "tx".

@@ -19,7 +19,7 @@ The PR's merge-risk light is set by the reviewer (`docs/merge-risk.md`), not by 
 
 1. `gh issue view <n> -R wolffseb/headless-csms --comments`. **Comments override the body.** Also read the plan-update comments on #5.
 2. Read #5's "Working agreement" in full and follow it: branch from the base you are given, one PR per issue, PR body starts with `Closes #<n>`, suggested reading order, decisions made, verification output, "Found, not fixed".
-3. Read `README.md` ("How it is put together") and every file under the issue's "Read first".
+3. Read `docs/architecture/overview.md` and every file under the issue's "Read first".
 4. Where the issue points at the OCPI 2.3.0 spec (https://github.com/ocpi/ocpi/tree/release-2.3.0-bugfixes) or OCPP schemas, read the actual text rather than working from memory. Fetch raw files from raw.githubusercontent.com.
 
 ## While working
@@ -29,7 +29,7 @@ The PR's merge-risk light is set by the reviewer (`docs/merge-risk.md`), not by 
 - Tests use only the issue's assigned port range when they go through `cpms run`. Never hardcode values from `config.example.yaml`.
 - Write each acceptance test so it fails without the change it covers, and check that it does. Say in the PR how you checked.
 - Anything marked **"Decision for review"**: implement the recommended option unless a comment says otherwise, and call it out in the PR.
-- User-facing changes go into `README.md` (and `config.example.yaml` with comments for config). Tick the step in the README status table.
+- User-facing changes go into the matching page under `docs/` (the site, see `mkdocs.yml`; `README.md` is only a summary), and into `config.example.yaml` with comments for config. Check with `mkdocs build --strict`. Tick the step in the status table in `docs/development.md`.
 - Commits: imperative subject lines in the repo's style (`git log --oneline -20`), ending with
   `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 
