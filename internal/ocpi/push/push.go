@@ -403,9 +403,22 @@ func (w *worker) send(ctx context.Context, retries int) outcome {
 
 func (p *Pusher) recordError(err error) {
 	p.mu.Lock()
-	p.status.LastError = err.Error()
+	p.status.LastError = shortReason(err)
 	p.status.LastErrorAt = p.now()
 	p.mu.Unlock()
+}
+
+// shortReason is why an attempt failed, for Status and so for the one line of
+// `cpms status`, which cuts it short. The client's transport error opens with
+// the full PATCH URL, twice, which would be all of the line; the cause is the
+// innermost part ("dial tcp …: connect: connection refused"). The error log
+// names the EVSE, so the URL is not lost.
+func shortReason(err error) string {
+	var ue *url.Error
+	if errors.As(err, &ue) && ue.Err != nil {
+		return ue.Err.Error()
+	}
+	return err.Error()
 }
 
 // permanent reports whether retrying cannot help: the partner refused the

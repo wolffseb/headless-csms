@@ -266,6 +266,16 @@ func TestUnreachablePartnerIsRetried(t *testing.T) {
 	if n := r.logs.count("level=ERROR"); n != 0 {
 		t.Errorf("an error log before the retries ran out:\n%s", r.logs.String())
 	}
+
+	// `cpms status` cuts this at 60 characters, so it has to open with the
+	// reason: the client's own error opens with the URL, twice.
+	reason := r.pusher.Status().LastError
+	if !strings.Contains(reason, "connection refused") {
+		t.Errorf("LastError = %q, want the reason (connection refused)", reason)
+	}
+	if strings.Contains(reason, r.emsp.srv.URL) || strings.Contains(reason, "/locations/") {
+		t.Errorf("LastError = %q, want no URL in it", reason)
+	}
 }
 
 // While backing off after a 500 the EVSE changes again. The retry carries the
