@@ -834,6 +834,26 @@ drivers, and in public apps if it forwards it. `false` limits it to the tokens i
 `publish_allowed_to`, which cpms does not send, so it would be hidden from every driver. Each EVSE's `reservable` (default `true`) controls the
 OCPI `RESERVABLE` capability: set it to `false` if `cpms probe` shows no Reservation profile.
 
+Text that goes out over OCPI must fit OCPI 2.3.0's limits, and `cpms config validate` names
+the key that does not. A partner may reject a whole Location over one bad field.
+
+| Key | Limit (OCPI field) |
+|---|---|
+| `location.name`, `location.address` | 255 characters (`string(255)`); `name` is also the business name unless `ocpi.business_name` is set |
+| `location.city` | 45 characters (`string(45)`) |
+| `location.postal_code` | 10 characters (`string(10)`) |
+| `ocpi.business_name` | 100 characters (`string(100)`, `BusinessDetails.name`) |
+| `location.id`, `location.evses[].uid`, `location.evses[].connectors[].id` | 36 characters of printable ASCII (`CiString(36)`) |
+| `location.evses[].evse_id` | an eMI3 EVSE ID, at most 38 characters of ASCII (OCPI allows 48) |
+
+Lengths count characters, not bytes: `Müller` is 6. A `string` may hold any printable UTF-8
+(what Go's `unicode.IsPrint` accepts), so a newline, a tab, a zero-width or no-break space, and
+the rest of the control and format characters are refused, in these keys and in
+`ocpi.public_base_url`. A `CiString` may hold only the ASCII characters U+0020 to U+007E, so
+`location.id` cannot contain an umlaut. `ocpi.business_name` is sent trimmed, so the newline a
+YAML block scalar leaves at its end is harmless there. OCPI's optional Location `state` is not
+sent, so there is no key for it.
+
 Two listener rules worth knowing, both enforced at validation time:
 `heartbeat_timeout` must exceed `heartbeat_interval` (otherwise a punctual station gets
 marked offline between two beats), and neither listener may use port 0 (a charger cannot
