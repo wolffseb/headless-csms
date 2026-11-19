@@ -66,3 +66,6 @@ Lessons from earlier fix passes in this repo. Newest last within each section. K
 - A branch already checked out in another worktree can't be checked out again: use a local branch of another name tracking it, and push with `HEAD:<branch>` (#66).
 - Stop a background `cpms run` by its PID (`kill -INT`), not `pkill -f`, which also hits other agents' runs.
 - Run `go test -race -timeout 240s ./...`: a run with no timeout hung once for 15 min under load and named nothing. With the timeout, a real hang fails with a stack dump (#61).
+
+- Queue-aware timeouts (2026-11-19, #76): once a call can wait for a slot, every ctx deadline sized "call_timeout + slack" for a send that never waits is wrong. Size per attempt with `ocpp.CallBound`, and when a background action (orphan cancel) must reach the station, retry on `ErrNotSent` instead of ending its record. A queue-cap error also caps *other* queued calls in the test: a second command queued early is itself dropped as not-sent before it gets the slot. Queue it late (0.75 T) in the scenario.
+- An error that matches two sentinels (`ErrClosedUnsent` is both not-sent and not-connected) makes `errors.Is` order matter in every switch: check the more specific/terminal one (not-connected) before the retry/"busy" one, in `classify`, `setProfile` and the retry loop, and test each.
