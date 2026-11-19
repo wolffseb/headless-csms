@@ -152,9 +152,12 @@ func (s *Service) Close() {
 // original error at once and the record in core is ended, so nothing in
 // status or events claims a reservation we hold. The record stays in core as
 // cancelling, which keeps the EVSE occupied (ErrAlreadyReserved) until the
-// station has answered the cancel or the connection dropped. If the
-// connection dropped, that cancel cannot reach the station, and the
-// reservation it may hold is left to expire there.
+// station has answered the cancel, the connection dropped, or the cancel
+// itself got no answer within the call timeout (a timed-out call is over, and
+// it is not sent again). In the last two cases the cancel did not get through,
+// and the reservation the station may hold is left to expire there, at the
+// reservation's expiryDate, so a new reserve on that EVSE can be answered
+// Occupied until then.
 func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservation, error) {
 	s.mu.Lock()
 	if s.closed {
@@ -255,9 +258,10 @@ const orphanCancelSlack = time.Second
 // outcome is logged, and the caller still gets the original error. It runs
 // in the background (see Reserve and Close) and outlives the caller's
 // context, which is typically what ended the wait. The caller ends the
-// cancelling record once it returns, so it returns only when the station has
-// answered, when the connection dropped (or the call ran out of time on the
-// wire, which is the end of any call), or once Close has been called.
+// cancelling record once it returns, so it returns when the station has
+// answered, when the connection dropped, when the cancel itself got no answer
+// within the call timeout, or once Close has been called. In the last three
+// cases the station may still hold the reservation until its expiryDate.
 //
 // The cancel waits for the call slot behind whatever else is on the wire,
 // and a command that waited the whole queue timeout is not sent

@@ -996,7 +996,9 @@ as `state: cancelling` in `cpms status` until the station has answered it; the E
 new reservation (exit 9) meanwhile. The cancel waits for its turn behind any command on the
 wire, and a cancel that does not get its turn within `charger.call_timeout` is queued again,
 not dropped. The record ends when the station answers, when the connection drops, when the
-cancel itself goes unanswered for `charger.call_timeout`, or when `cpms run` shuts down. A
+cancel itself goes unanswered for `charger.call_timeout`, or when `cpms run` shuts down. In the
+last three cases the station may still hold the reservation until its expiry, and answers a new
+reserve on that EVSE `Occupied` until then. A
 reservation that was never sent (exit 12) has nothing to
 cancel: it ends at once and no `CancelReservation` follows. It is not persisted, like a pending one. `core` only shows `RESERVED` when the station reports it; the
 reservation record sits next to the status rather than overwriting it.
