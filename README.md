@@ -56,10 +56,10 @@ With a real station, set its CSMS URL to `ws://<host running cpms>:9000/ocpp/<ch
 | [OCPI API](https://wolffseb.github.io/headless-csms/reference/ocpi-api/) | Endpoints, auth, examples |
 | [Architecture](https://wolffseb.github.io/headless-csms/architecture/overview/) | Packages, rules, sequence diagrams |
 
-The sources are Markdown under [`docs/`](docs/), built with MkDocs:
+The sources are Markdown under [`docs/`](docs/), built with [Zensical](https://zensical.org):
 
 ```sh
-pip install -r requirements-docs.txt && mkdocs serve
+pip install -r requirements-docs.txt && zensical serve
 ```
 
 ## Development

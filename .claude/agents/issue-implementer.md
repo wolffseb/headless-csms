@@ -29,7 +29,7 @@ The PR's merge-risk light is set by the reviewer (`docs/merge-risk.md`), not by 
 - Tests use only the issue's assigned port range when they go through `cpms run`. Never hardcode values from `config.example.yaml`.
 - Write each acceptance test so it fails without the change it covers, and check that it does. Say in the PR how you checked.
 - Anything marked **"Decision for review"**: implement the recommended option unless a comment says otherwise, and call it out in the PR.
-- User-facing changes go into the matching page under `docs/` (the site, see `mkdocs.yml`; `README.md` is only a summary), and into `config.example.yaml` with comments for config. Check with `mkdocs build --strict`. Tick the step in the status table in `docs/development.md`.
+- User-facing changes go into the matching page under `docs/` (the site, see `zensical.toml`; `README.md` is only a summary), and into `config.example.yaml` with comments for config. Check with `zensical build --strict`. Tick the step in the status table in `docs/development.md`.
 - Commits: imperative subject lines in the repo's style (`git log --oneline -20`), ending with
   `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 

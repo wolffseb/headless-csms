@@ -1,0 +1,105 @@
+# The documentation site, built with Zensical (https://zensical.org) from docs/.
+#   pip install -r requirements-docs.txt && zensical serve
+
+[project]
+site_name = "headless-csms"
+site_description = "A terminal charge point management system for one OCPP charging station, with a minimal OCPI 2.3.0 CPO interface."
+site_url = "https://wolffseb.github.io/headless-csms/"
+repo_url = "https://github.com/wolffseb/headless-csms"
+repo_name = "wolffseb/headless-csms"
+edit_uri = "edit/main/docs/"
+
+# docs/ also holds working papers that are not part of the site.
+exclude_docs = """
+/ROADMAP.md
+/IDEAS.md
+/merge-risk.md
+"""
+
+nav = [
+  { "Home" = "index.md" },
+  { "Get started" = [
+    { "Quickstart" = "quickstart.md" },
+    { "Concepts" = "concepts.md" },
+    { "Connect a real station" = "guides/connect-station.md" },
+  ] },
+  { "Guides" = [
+    { "Run a charging session" = "guides/charging-session.md" },
+    { "Test with the simulator" = "guides/simulator.md" },
+    { "Read power and current" = "guides/metering.md" },
+    { "Limit charging power" = "guides/smart-charging.md" },
+    { "Register an OCPI partner" = "guides/ocpi-partner.md" },
+    { "Push status to the partner" = "guides/ocpi-push.md" },
+    { "Runbook: HYC50 limit while reserved" = "guides/hyc50-runbook.md" },
+  ] },
+  { "Reference" = [
+    { "CLI" = "reference/cli.md" },
+    { "Configuration" = "reference/configuration.md" },
+    { "OCPI API" = "reference/ocpi-api.md" },
+    { "Probe report" = "reference/probe.md" },
+    { "Tested hardware" = "reference/hardware.md" },
+  ] },
+  { "Architecture" = [
+    { "Overview" = "architecture/overview.md" },
+    { "Sequences" = "architecture/sequences.md" },
+  ] },
+  { "Development" = "development.md" },
+]
+
+[project.theme]
+language = "en"
+features = [
+  "content.action.edit",
+  "content.code.copy",
+  "content.code.select",
+  "content.tabs.link",
+  "navigation.footer",
+  "navigation.instant",
+  "navigation.instant.prefetch",
+  "navigation.path",
+  "navigation.sections",
+  "navigation.tabs",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+  "toc.follow",
+]
+
+[project.theme.icon]
+logo = "material/ev-station"
+repo = "fontawesome/brands/github"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to system preference"
+
+[project.markdown_extensions]
+admonition = {}
+attr_list = {}
+md_in_html = {}
+tables = {}
+toc.permalink = true
+pymdownx.details = {}
+pymdownx.emoji.emoji_generator = "zensical.extensions.emoji.to_svg"
+pymdownx.emoji.emoji_index = "zensical.extensions.emoji.twemoji"
+pymdownx.highlight.anchor_linenums = true
+pymdownx.highlight.line_spans = "__span"
+pymdownx.highlight.pygments_lang_class = true
+pymdownx.inlinehilite = {}
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
+pymdownx.tabbed.alternate_style = true

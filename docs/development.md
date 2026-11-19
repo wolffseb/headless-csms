@@ -43,14 +43,13 @@ Start with the [architecture overview](architecture/overview.md). The short vers
 
 ## These docs
 
-The site is [MkDocs](https://www.mkdocs.org/) with
-[Material](https://squidfunk.github.io/mkdocs-material/). Pages are Markdown under `docs/`,
-the navigation is in `mkdocs.yml`.
+The site is built with [Zensical](https://zensical.org). Pages are Markdown under `docs/`,
+the navigation is in `zensical.toml`.
 
 ```sh
 pip install -r requirements-docs.txt
-mkdocs serve            # http://127.0.0.1:8000, reloads on save
-mkdocs build --strict   # what CI runs: a broken link fails the build
+zensical serve            # http://localhost:8000, reloads on save
+zensical build --strict   # what CI runs: a broken link fails the build
 ```
 
 A push to `main` that touches the docs publishes them to GitHub Pages
