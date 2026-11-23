@@ -110,7 +110,7 @@ const (
 // modification time). It does no I/O, so its output can be golden-tested.
 func Build(cfg *config.Config, staticAt time.Time, snap core.Snapshot) Location {
 	live := map[string]core.EVSESnapshot{}
-	if cp, ok := snap.ChargePoint(cfg.Charger.ID); ok {
+	if cp, ok := snap.ChargePoint(cfg.Chargers[0].ID); ok { // TODO(#85 B1)
 		for _, e := range cp.EVSEs {
 			live[e.UID] = e
 		}

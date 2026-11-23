@@ -300,7 +300,7 @@ func (s *Service) cancelOrphan(ctx context.Context, cp ocpp.ChargePoint, r core.
 
 // cancelAttempt sends one CancelReservation and waits for it.
 func (s *Service) cancelAttempt(ctx context.Context, cp ocpp.ChargePoint, id int) (ocpp.Result, error) {
-	if timeout := s.cfg.Charger.CallTimeout.Duration(); timeout > 0 {
+	if timeout := s.cfg.Chargers[0].CallTimeout.Duration(); timeout > 0 { // TODO(#85 B2)
 		// The connection's own timers are what bound a busy or silent
 		// station, and their errors name the action and the timeout for the
 		// log. This deadline only backstops an implementation without them,
@@ -516,7 +516,7 @@ func (s *Service) TriggerStatus(ctx context.Context, evseUID string) error {
 // call timeout is not sent (ocpp.ErrNotSent); it is logged like any other
 // failure here and not retried.
 func (s *Service) RefreshStatusOnConnect(ctx context.Context, cp ocpp.ChargePoint) {
-	if cp.ID() != s.cfg.Charger.ID {
+	if cp.ID() != s.cfg.Chargers[0].ID { // TODO(#85 B2)
 		return
 	}
 	if !s.sleep(ctx, s.bootGrace) {
@@ -614,7 +614,7 @@ func (s *Service) checkEVSE(evseUID string) error {
 }
 
 func (s *Service) chargePoint() (ocpp.ChargePoint, error) {
-	return s.commands.Command(s.cfg.Charger.ID)
+	return s.commands.Command(s.cfg.Chargers[0].ID) // TODO(#85 B2)
 }
 
 func (s *Service) tagOrDefault(tag string) string {

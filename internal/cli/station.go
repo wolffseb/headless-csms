@@ -227,7 +227,7 @@ func newStationEnv(cmd *cobra.Command, opts *options) (*stationEnv, error) {
 }
 
 func (e *stationEnv) call(cmd *cobra.Command, req socket.Request) (json.RawMessage, error) {
-	raw, err := socket.Call(cmd.Context(), e.socketPath, req, socketWait(e.cfg.Charger.CallTimeout.Duration()))
+	raw, err := socket.Call(cmd.Context(), e.socketPath, req, socketWait(e.cfg.Chargers[0].CallTimeout.Duration())) // TODO(#85 B2)
 	if err != nil {
 		subject := req.EVSE
 		if req.Op == socket.OpConfigSet {

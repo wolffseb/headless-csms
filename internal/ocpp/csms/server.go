@@ -54,7 +54,12 @@ type Options struct {
 	// IdleTimeout is the heartbeat watchdog: a connection with no inbound
 	// traffic for this long is dropped.
 	IdleTimeout time.Duration
-	Log         *slog.Logger
+	// CallTimeoutFor and IdleTimeoutFor override the two fields above per
+	// charge point id, for stations configured with their own timeouts. A
+	// nil func, or a result <= 0, falls back to the field.
+	CallTimeoutFor func(chargePointID string) time.Duration
+	IdleTimeoutFor func(chargePointID string) time.Duration
+	Log            *slog.Logger
 }
 
 // Server accepts OCPP WebSocket connections from charge points.
@@ -258,12 +263,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
+// perID resolves a per-charge-point timeout, falling back to def.
+func perID(f func(string) time.Duration, id string, def time.Duration) time.Duration {
+	if f != nil {
+		if d := f(id); d > 0 {
+			return d
+		}
+	}
+	return def
+}
+
 func (s *Server) serveConn(id string, version ocpp.Version, ws *websocket.Conn, urlPath, remote string) {
 	conn := ocppj.New(ws, ocppj.Options{
 		ID:          id,
 		Version:     version,
-		CallTimeout: s.opts.CallTimeout,
-		IdleTimeout: s.opts.IdleTimeout,
+		CallTimeout: perID(s.opts.CallTimeoutFor, id, s.opts.CallTimeout),
+		IdleTimeout: perID(s.opts.IdleTimeoutFor, id, s.opts.IdleTimeout),
 		Log:         s.log,
 	})
 

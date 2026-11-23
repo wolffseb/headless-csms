@@ -216,7 +216,7 @@ func (p *Pusher) Status() Status {
 // let a slow partner back the bus up, which is the very drop the dirty flag
 // exists to make harmless.
 func (p *Pusher) subscribe(ctx context.Context, events <-chan core.Event) {
-	cpID := p.opts.Config.Charger.ID
+	cpID := p.opts.Config.Chargers[0].ID // TODO(#85 B1)
 	var seenDrops uint64
 	for {
 		select {
@@ -352,7 +352,7 @@ func (w *worker) send(ctx context.Context, retries int) outcome {
 		return sent
 	}
 
-	cp, ok := p.opts.Core.Snapshot().ChargePoint(cfg.Charger.ID)
+	cp, ok := p.opts.Core.Snapshot().ChargePoint(cfg.Chargers[0].ID) // TODO(#85 B1)
 	if !ok {
 		return sent
 	}

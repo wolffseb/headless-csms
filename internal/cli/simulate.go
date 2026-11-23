@@ -69,7 +69,7 @@ func newSimulateChargerCommand(opts *options) *cobra.Command {
 					csmsURL = csmsURLFromBind(cfg.Server.OCPPBind)
 				}
 				if id == "" {
-					id = cfg.Charger.ID
+					id = cfg.Chargers[0].ID // TODO(#85 B2)
 				}
 				if idTag == "" {
 					idTag = cfg.Auth.DefaultIDTag

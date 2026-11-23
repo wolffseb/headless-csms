@@ -100,7 +100,7 @@ func (h *Handler) bootNotification(cpID string, payload json.RawMessage) (any, *
 	return BootNotificationConf{
 		Status:      "Accepted",
 		CurrentTime: formatTime(h.now()),
-		Interval:    int(h.cfg.Charger.HeartbeatInterval.Duration().Seconds()),
+		Interval:    h.heartbeatSeconds(cpID),
 	}, nil
 }
 
@@ -133,18 +133,12 @@ func (h *Handler) authorize(cpID string, payload json.RawMessage) (any, *ocpp.RP
 
 	h.core.Seen(cpID)
 	status := AuthInvalid
-	if h.knownTag(req.IDTag) {
+	if h.cfg.AcceptsIDTag(req.IDTag) {
 		status = AuthAccepted
 	} else {
 		h.log.Warn("rejecting unknown id tag", "charge_point", cpID, "id_tag", req.IDTag)
 	}
 	return AuthorizeConf{IDTagInfo: IDTagInfo{Status: status}}, nil
-}
-
-// knownTag reports whether a tag is the one we are configured to accept.
-// OCPP idTags are case-insensitive.
-func (h *Handler) knownTag(tag string) bool {
-	return strings.EqualFold(tag, h.cfg.Auth.DefaultIDTag)
 }
 
 func (h *Handler) startTransaction(cpID string, payload json.RawMessage) (any, *ocpp.RPCError) {
@@ -158,7 +152,7 @@ func (h *Handler) startTransaction(cpID string, payload json.RawMessage) (any, *
 
 	// An unknown tag is refused with an Invalid idTagInfo rather than a
 	// CALLERROR: the message was perfectly well formed, the answer is just no.
-	if !h.knownTag(req.IDTag) {
+	if !h.cfg.AcceptsIDTag(req.IDTag) {
 		h.core.Seen(cpID)
 		h.log.Warn("refusing transaction for unknown id tag", "charge_point", cpID, "id_tag", req.IDTag)
 		return StartTransactionConf{
@@ -270,4 +264,15 @@ func (h *Handler) statusOnly(cpID, action string, payload json.RawMessage) (any,
 	h.core.Seen(cpID)
 	h.log.Info("status notification", "charge_point", cpID, "action", action, "status", req.Status)
 	return emptyConf{}, nil
+}
+
+// heartbeatSeconds is the interval the booting charger's own config asks for.
+// The csms server only accepts configured ids, so the default is for a
+// handler driven directly.
+func (h *Handler) heartbeatSeconds(cpID string) int {
+	d := config.DefaultHeartbeatInterval
+	if ch, ok := h.cfg.ChargerByID(cpID); ok {
+		d = ch.HeartbeatInterval.Duration()
+	}
+	return int(d.Seconds())
 }

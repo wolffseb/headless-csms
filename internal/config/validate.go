@@ -73,7 +73,7 @@ const (
 func (c *Config) Validate() error {
 	v := &validator{}
 
-	c.validateCharger(v)
+	c.validateChargers(v)
 	c.validateServer(v)
 	c.validateAuth(v)
 	c.validateOCPI(v)
@@ -86,33 +86,68 @@ func (c *Config) Validate() error {
 	return v.errs
 }
 
-func (c *Config) validateCharger(v *validator) {
-	if v.required("charger.id", c.Charger.ID) && !chargePointIDRe.MatchString(c.Charger.ID) {
-		v.add("charger.id", "%q is not usable as a URL path segment; allowed: letters, digits and . _ : ~ - (max 48)", c.Charger.ID)
+// chargerPath is the config path of charger i: `charger` in the singular
+// form (so single-charger messages are unchanged), `chargers[i]` otherwise.
+func (c *Config) chargerPath(i int) string {
+	if c.singular {
+		return "charger"
+	}
+	return fmt.Sprintf("chargers[%d]", i)
+}
+
+func (c *Config) validateChargers(v *validator) {
+	switch {
+	case c.LegacyCharger != nil && len(c.Chargers) > 0:
+		v.add("chargers", "cannot be combined with charger; use chargers for several stations or charger for one, not both")
+		return
+	case len(c.Chargers) == 0:
+		v.add("chargers", "at least one charger is required: set charger (one station) or chargers (a list)")
+		return
+	}
+
+	seen := map[string]int{}
+	for i := range c.Chargers {
+		c.validateCharger(v, i)
+		if id := c.Chargers[i].ID; id != "" {
+			if first, dup := seen[id]; dup {
+				v.add(c.chargerPath(i)+".id", "%q is already used by %s", id, c.chargerPath(first))
+			} else {
+				seen[id] = i
+			}
+		}
+	}
+}
+
+func (c *Config) validateCharger(v *validator, i int) {
+	ch := &c.Chargers[i]
+	p := c.chargerPath(i)
+
+	if v.required(p+".id", ch.ID) && !chargePointIDRe.MatchString(ch.ID) {
+		v.add(p+".id", "%q is not usable as a URL path segment; allowed: letters, digits and . _ : ~ - (max 48)", ch.ID)
 	}
 
 	// IP is optional: it is only used for the reachability pre-check. When it
 	// is given it has to be an address or a resolvable-looking hostname.
-	if ip := strings.TrimSpace(c.Charger.IP); ip != "" {
+	if ip := strings.TrimSpace(ch.IP); ip != "" {
 		if net.ParseIP(ip) == nil && !isHostname(ip) {
-			v.add("charger.ip", "%q is neither an IP address nor a hostname", ip)
+			v.add(p+".ip", "%q is neither an IP address nor a hostname", ip)
 		}
 	}
 
-	if _, ok := ocppVersions[c.Charger.OCPPVersion]; !ok {
-		v.add("charger.ocpp_version", "%q is not supported; want one of %s",
-			c.Charger.OCPPVersion, strings.Join(sorted(ocppVersions), ", "))
+	if _, ok := ocppVersions[ch.OCPPVersion]; !ok {
+		v.add(p+".ocpp_version", "%q is not supported; want one of %s",
+			ch.OCPPVersion, strings.Join(sorted(ocppVersions), ", "))
 	}
 
-	intervalOK := positiveDuration(v, "charger.heartbeat_interval", &c.Charger.HeartbeatInterval)
-	timeoutOK := positiveDuration(v, "charger.heartbeat_timeout", &c.Charger.HeartbeatTimeout)
-	positiveDuration(v, "charger.call_timeout", &c.Charger.CallTimeout)
+	intervalOK := positiveDuration(v, p+".heartbeat_interval", &ch.HeartbeatInterval)
+	timeoutOK := positiveDuration(v, p+".heartbeat_timeout", &ch.HeartbeatTimeout)
+	positiveDuration(v, p+".call_timeout", &ch.CallTimeout)
 
 	// A timeout at or below the interval we ask the station to keep guarantees
 	// it will be marked offline between two perfectly punctual heartbeats.
-	if intervalOK && timeoutOK && c.Charger.HeartbeatTimeout.dur <= c.Charger.HeartbeatInterval.dur {
-		v.add("charger.heartbeat_timeout", "must be greater than charger.heartbeat_interval (%s), got %s",
-			c.Charger.HeartbeatInterval, c.Charger.HeartbeatTimeout)
+	if intervalOK && timeoutOK && ch.HeartbeatTimeout.dur <= ch.HeartbeatInterval.dur {
+		v.add(p+".heartbeat_timeout", "must be greater than %s.heartbeat_interval (%s), got %s",
+			p, ch.HeartbeatInterval, ch.HeartbeatTimeout)
 	}
 }
 
@@ -177,6 +212,24 @@ func (c *Config) validateAuth(v *validator) {
 	if v.required("auth.default_id_tag", c.Auth.DefaultIDTag) && !idTagRe.MatchString(c.Auth.DefaultIDTag) {
 		v.add("auth.default_id_tag",
 			"%q is not a valid OCPP idTag; want 1-20 printable ASCII characters without spaces", c.Auth.DefaultIDTag)
+	}
+
+	// OCPP idTags compare case-insensitively, so "a" and "A" are one tag.
+	seen := map[string]string{}
+	if t := c.Auth.DefaultIDTag; t != "" {
+		seen[strings.ToUpper(t)] = "auth.default_id_tag"
+	}
+	for i, t := range c.Auth.IDTags {
+		path := fmt.Sprintf("auth.id_tags[%d]", i)
+		if !idTagRe.MatchString(t) {
+			v.add(path, "%q is not a valid OCPP idTag; want 1-20 printable ASCII characters without spaces", t)
+			continue
+		}
+		if first, dup := seen[strings.ToUpper(t)]; dup {
+			v.add(path, "%q is already accepted by %s (idTags are case-insensitive)", t, first)
+		} else {
+			seen[strings.ToUpper(t)] = path
+		}
 	}
 }
 
@@ -293,7 +346,7 @@ func (c *Config) validateLocation(v *validator) {
 	// uid, evse_id and connector id are OCPI CiStrings: "a" and "A" name the
 	// same object, so the maps are keyed on the upper-cased value.
 	seenUID := map[string]int{}
-	seenConnectorID := map[int]int{}
+	seenConnectorID := map[string]int{}
 	seenEVSEID := map[string]int{}
 
 	for i, e := range l.EVSEs {
@@ -321,18 +374,50 @@ func (c *Config) validateLocation(v *validator) {
 			}
 		}
 
+		chargerOK := c.validateEVSECharger(v, base, e)
+
 		if e.OCPPConnectorID < 1 {
 			// OCPP 1.6 reserves connector 0 for the charge point as a whole,
 			// so an EVSE must map to 1 or higher.
 			v.add(base+".ocpp_connector_id", "must be 1 or greater (0 addresses the charge point itself), got %d", e.OCPPConnectorID)
-		} else if first, dup := seenConnectorID[e.OCPPConnectorID]; dup {
-			v.add(base+".ocpp_connector_id", "%d is already mapped by location.evses[%d]", e.OCPPConnectorID, first)
-		} else {
-			seenConnectorID[e.OCPPConnectorID] = i
+		} else if chargerOK {
+			key := fmt.Sprintf("%s/%d", e.Charger, e.OCPPConnectorID)
+			if first, dup := seenConnectorID[key]; dup {
+				v.add(base+".ocpp_connector_id", "%d is already mapped by location.evses[%d]", e.OCPPConnectorID, first)
+			} else {
+				seenConnectorID[key] = i
+			}
 		}
 
 		validateConnectors(v, base, e.Connectors)
 	}
+}
+
+// validateEVSECharger checks evse.charger names a configured charger. It
+// reports whether the EVSE's charger is usable for the connector-id check.
+func (c *Config) validateEVSECharger(v *validator, base string, e EVSE) bool {
+	path := base + ".charger"
+	if e.Charger == "" {
+		// Only reachable with several chargers (one is filled in by the
+		// loader), or with none, which is reported elsewhere.
+		if len(c.Chargers) > 1 {
+			v.add(path, "required with more than one charger; name one of: %s", c.chargerIDs())
+		}
+		return len(c.Chargers) <= 1
+	}
+	if _, ok := c.ChargerByID(e.Charger); !ok {
+		v.add(path, "%q is not a configured charger; want one of: %s", e.Charger, c.chargerIDs())
+		return false
+	}
+	return true
+}
+
+func (c *Config) chargerIDs() string {
+	ids := make([]string, len(c.Chargers))
+	for i, ch := range c.Chargers {
+		ids[i] = ch.ID
+	}
+	return strings.Join(ids, ", ")
 }
 
 func validateConnectors(v *validator, base string, connectors []Connector) {

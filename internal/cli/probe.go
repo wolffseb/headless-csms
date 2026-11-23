@@ -196,8 +196,8 @@ func configChecks(cfg *config.Config, r socket.ProbeResult) []check {
 		return append(out, check{markUnknown, "the station did not report its heartbeat interval; cannot check it against config"})
 	}
 	got := time.Duration(*r.HeartbeatIntervalSeconds) * time.Second
-	want := cfg.Charger.HeartbeatInterval.Duration()
-	timeout := cfg.Charger.HeartbeatTimeout.Duration()
+	want := cfg.Chargers[0].HeartbeatInterval.Duration()   // TODO(#85 B2)
+	timeout := cfg.Chargers[0].HeartbeatTimeout.Duration() // TODO(#85 B2)
 	switch {
 	case got >= timeout:
 		out = append(out, check{markWarn, fmt.Sprintf(
@@ -382,8 +382,8 @@ func supportMark(support string) string {
 // has to be configured with, and when it was last seen leaving.
 func notConnected(cmd *cobra.Command, env *stationEnv) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s is not connected to cpms, so there is nothing to probe.\n", env.cfg.Charger.ID)
-	fmt.Fprintf(&b, "Set the station's CSMS URL to:\n  %s\n", csmsURL(env.cfg))
+	fmt.Fprintf(&b, "%s is not connected to cpms, so there is nothing to probe.\n", env.cfg.Chargers[0].ID) // TODO(#85 B2)
+	fmt.Fprintf(&b, "Set the station's CSMS URL to:\n  %s\n", csmsURL(env.cfg, env.cfg.Chargers[0].ID))     // TODO(#85 B2)
 
 	// Best effort: the probe already failed for the reason that matters.
 	if data, err := env.call(cmd, socket.Request{Op: socket.OpStatus}); err == nil {
