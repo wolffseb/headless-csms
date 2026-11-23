@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -414,13 +415,40 @@ func TestStartupLinesAndWarningsReachTheLog(t *testing.T) {
 	logger.Warn("OCPI push retrying", "evse", "ALP-HYC-002-1", "error", "503 Service Unavailable")
 	l := <-sink.ch
 	r.send(logMsg(l))
-	if !strings.Contains(r.view(), `WARN OCPI push retrying evse=ALP-HYC-002-1 error="503 Service Unavailable"`) {
-		t.Errorf("warning missing:\n%s", r.view())
+	// The subject first and no key=value tail: the pane is narrow, and the
+	// tail is what got cut off. The file has the attributes.
+	if !strings.Contains(r.view(), "WARN ALP-HYC-002-1: OCPI push retrying\n") {
+		t.Errorf("warning missing, or not subject first:\n%s", r.view())
+	}
+	if strings.Contains(r.view(), "error=") || strings.Contains(r.view(), "503") {
+		t.Errorf("the attribute tail is in the pane:\n%s", r.view())
 	}
 	select {
 	case l := <-sink.ch:
 		t.Errorf("an INFO record reached the pane: %q", l.text)
 	default:
+	}
+}
+
+// The subject is the evse attribute if there is one, else the charge point's;
+// a record about neither has no prefix.
+func TestWarningSubject(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		log  func(*slog.Logger)
+		want string
+	}{
+		{"evse", func(l *slog.Logger) { l.Warn("could not cancel", "reservation_id", 2, "evse", "E-1", "error", "x y") }, "WARN E-1: could not cancel"},
+		{"evse wins over the charge point", func(l *slog.Logger) { l.Warn("m", "charge_point", "CP", "evse", "E-1") }, "WARN E-1: m"},
+		{"charge point", func(l *slog.Logger) { l.Warn("m", "error", "boom", "charge_point", "CP-1") }, "WARN CP-1: m"},
+		{"from With", func(l *slog.Logger) { l.With("evse", "E-2").Warn("m", "k", "v") }, "WARN E-2: m"},
+		{"neither", func(l *slog.Logger) { l.Error("shutdown did not complete cleanly", "error", "x") }, "ERROR shutdown did not complete cleanly"},
+	} {
+		sink := NewLogSink()
+		tc.log(newTestLogger(sink))
+		if got := (<-sink.ch).text; got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 

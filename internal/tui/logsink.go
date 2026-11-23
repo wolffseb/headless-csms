@@ -1,10 +1,9 @@
 package tui
 
 import (
+	"cmp"
 	"context"
-	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 )
 
@@ -41,32 +40,41 @@ type sinkHandler struct {
 // Enabled takes WARN and above.
 func (h *sinkHandler) Enabled(_ context.Context, l slog.Level) bool { return l >= slog.LevelWarn }
 
-// Handle renders the record as "WARN message key=value", the shape the pane
-// shows, with values that contain spaces quoted.
+// Handle renders the record as "WARN subject: message". The subject is the
+// record's evse attribute, or its charge_point; every other attribute is left
+// to the log file. The pane is narrow and a key=value tail is the part that
+// gets cut, so what is shown is what the operator must read first.
 func (h *sinkHandler) Handle(_ context.Context, r slog.Record) error {
-	var b strings.Builder
-	b.WriteString(r.Level.String())
-	b.WriteByte(' ')
-	b.WriteString(r.Message)
-	write := func(a slog.Attr) bool {
-		v := a.Value.Resolve().String()
-		if strings.ContainsAny(v, " \t\"=") || v == "" {
-			v = fmt.Sprintf("%q", v)
+	var evse, chargePoint string
+	pick := func(a slog.Attr) bool {
+		if h.prefix != "" {
+			return true
 		}
-		b.WriteString(" " + h.prefix + a.Key + "=" + v)
+		switch a.Key {
+		case "evse":
+			evse = a.Value.Resolve().String()
+		case "charge_point":
+			chargePoint = a.Value.Resolve().String()
+		}
 		return true
 	}
 	for _, a := range h.attrs {
-		write(a)
+		pick(a)
 	}
-	r.Attrs(write)
+	r.Attrs(pick)
+
+	text := r.Level.String() + " "
+	if subject := cmp.Or(evse, chargePoint); subject != "" {
+		text += subject + ": "
+	}
+	text += r.Message
 
 	at := r.Time
 	if at.IsZero() {
 		at = time.Now()
 	}
 	select {
-	case h.sink.ch <- logLine{at: at, text: b.String()}:
+	case h.sink.ch <- logLine{at: at, text: text}:
 	default:
 	}
 	return nil
