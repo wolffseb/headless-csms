@@ -247,8 +247,9 @@ func TestStopWithoutASessionAsksControl(t *testing.T) {
 	if got := r.ctl.Calls(); !slices.Equal(got, []string{"stop ALP-HYC-001-1 tx="}) {
 		t.Errorf("calls = %v", got)
 	}
-	if !strings.Contains(r.view(), "no active transaction") {
-		t.Errorf("control's answer is not shown:\n%s", r.view())
+	// The screen says "session" everywhere; "transaction" is OCPP's word.
+	if got := r.view(); !strings.Contains(got, "no active session") || strings.Contains(got, "ransaction") {
+		t.Errorf("control's answer is not shown, in the screen's words:\n%s", got)
 	}
 }
 

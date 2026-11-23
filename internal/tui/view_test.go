@@ -373,3 +373,24 @@ func TestHelpExampleAndLogPathHaveTheirOwnLines(t *testing.T) {
 		t.Errorf("a path wider than the screen is not cut from the left:\n%s", r.view())
 	}
 }
+
+// The log words a session as the rest of the screen does.
+func TestSessionEventsSaySession(t *testing.T) {
+	r := newRig(t)
+	r.onlineStation(cp1, "Alpitronic", "HYC300", "1.4.2", core.StatusAvailable, core.StatusAvailable)
+	r.core.StartTransaction(cp1, core.TransactionStart{ID: "12", ConnectorID: 2, IDTag: defaultTag, At: r.clk.Now()})
+	r.core.StopTransaction(cp1, "12", 0, "Local", r.clk.Now())
+	r.pump()
+	got := r.view()
+	for _, want := range []string{
+		"ALP-HYC-001 session 12 started on ALP-HYC-001-2 (tag 04A1B2C3D4)",
+		"ALP-HYC-001 session 12 stopped",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("no %q in\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "ransaction") {
+		t.Errorf("a transaction is on the screen:\n%s", got)
+	}
+}

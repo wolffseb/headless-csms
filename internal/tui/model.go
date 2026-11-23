@@ -2,8 +2,10 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/spinner"
@@ -455,7 +457,12 @@ func (m *Model) describe(a actionMsg) string {
 			return fmt.Sprintf("%s is offline (last seen %s)", c.st.ID, m.clock(*c.st.LastSeen))
 		}
 	}
-	return m.opts.Describe(a.op, a.uid, a.err)
+	text := m.opts.Describe(a.op, a.uid, a.err)
+	if errors.Is(a.err, control.ErrNoActiveTransaction) {
+		// A session on this screen, a transaction in OCPP and in the CLI.
+		text = strings.ReplaceAll(text, "transaction", "session")
+	}
+	return text
 }
 
 func truncate(s string, n int) string {
