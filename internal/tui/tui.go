@@ -13,7 +13,7 @@ import (
 	"io"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/wolffseb/cli-cpms/internal/config"
 	"github.com/wolffseb/cli-cpms/internal/control"
@@ -84,7 +84,7 @@ func Run(ctx context.Context, opts Options) error {
 	// Signals are the caller's: SIGINT and SIGTERM cancel ctx, which quits
 	// below. Bubble Tea's own handler would race that and can deadlock its
 	// shutdown (it sends a QuitMsg nobody reads any more).
-	popts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithoutSignalHandler()}
+	popts := []tea.ProgramOption{tea.WithoutSignalHandler()}
 	if opts.In != nil {
 		popts = append(popts, tea.WithInput(opts.In))
 	}

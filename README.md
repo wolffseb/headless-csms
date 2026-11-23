@@ -23,7 +23,7 @@ Planned: OCPI commands (`RESERVE_NOW`) and OCPP 2.0.1. See the
 
 ## Quickstart
 
-Needs Go 1.24 or newer.
+Needs Go 1.25 or newer.
 
 ```sh
 make build                            # -> bin/cpms

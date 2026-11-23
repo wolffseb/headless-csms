@@ -4,15 +4,13 @@ import (
 	"context"
 	"flag"
 	"log/slog"
-	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/wolffseb/cli-cpms/internal/clocktest"
 	"github.com/wolffseb/cli-cpms/internal/config"
@@ -21,17 +19,9 @@ import (
 	"github.com/wolffseb/cli-cpms/internal/core"
 )
 
-// teatest, imported for the program test, owns the -update flag.
-func updating() bool {
-	f := flag.Lookup("update")
-	return f != nil && f.Value.String() == "true"
-}
+var update = flag.Bool("update", false, "rewrite the golden files")
 
-func TestMain(m *testing.M) {
-	// Goldens hold text, not colour codes, whatever terminal runs the tests.
-	lipgloss.SetColorProfile(termenv.Ascii)
-	os.Exit(m.Run())
-}
+func updating() bool { return *update }
 
 // Two chargers with two EVSEs each. Nothing here comes from
 // config.example.yaml: the tests own their config.
@@ -268,18 +258,18 @@ func (r *rig) pressAsync(key string) <-chan *actionMsg {
 	return out
 }
 
-func keyMsg(key string) tea.KeyMsg {
+func keyMsg(key string) tea.KeyPressMsg {
 	switch key {
 	case "up":
-		return tea.KeyMsg{Type: tea.KeyUp}
+		return tea.KeyPressMsg{Code: tea.KeyUp}
 	case "down":
-		return tea.KeyMsg{Type: tea.KeyDown}
+		return tea.KeyPressMsg{Code: tea.KeyDown}
 	case "esc":
-		return tea.KeyMsg{Type: tea.KeyEsc}
+		return tea.KeyPressMsg{Code: tea.KeyEscape}
 	case "ctrl+c":
-		return tea.KeyMsg{Type: tea.KeyCtrlC}
+		return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 	}
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
+	return tea.KeyPressMsg{Code: []rune(key)[0], Text: key}
 }
 
 // deliver hands a finished command's result to Update.
@@ -291,7 +281,12 @@ func (r *rig) deliver(a *actionMsg) {
 	r.send(*a)
 }
 
-func (r *rig) view() string { return r.m.View() }
+// view is the frame as text. Goldens hold no colour codes; styles are
+// checked on raw (below).
+func (r *rig) view() string { return ansi.Strip(r.m.render()) }
+
+// raw is the frame with its escape sequences.
+func (r *rig) raw() string { return r.m.render() }
 
 // onlineStation brings a charger up the way a station does.
 func (r *rig) onlineStation(cp, vendor, model, fw string, statuses ...core.EVSEStatus) {

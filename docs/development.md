@@ -2,7 +2,7 @@
 
 ## Build and test
 
-**You need:** [Go](https://go.dev/dl/) 1.24 or newer and `make`.
+**You need:** [Go](https://go.dev/dl/) 1.25 or newer and `make`.
 
 | Command | Does |
 |---|---|

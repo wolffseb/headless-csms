@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -12,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/vt"
 	"github.com/creack/pty"
 )
 
@@ -24,7 +27,8 @@ type ptyRun struct {
 	t      *testing.T
 	cmd    *exec.Cmd
 	ptmx   *os.File
-	out    *syncBuffer // what it drew, escape sequences and all
+	out    *syncBuffer      // what it drew, escape sequences and all
+	emu    *vt.SafeEmulator // the screen those sequences make
 	stderr *syncBuffer
 	exited chan error
 }
@@ -35,7 +39,7 @@ func startPTY(t *testing.T, bin string, args ...string) *ptyRun {
 		t.Skip("needs a pseudo-terminal")
 	}
 
-	r := &ptyRun{t: t, out: &syncBuffer{}, stderr: &syncBuffer{}, exited: make(chan error, 1)}
+	r := &ptyRun{t: t, out: &syncBuffer{}, emu: vt.NewSafeEmulator(100, 30), stderr: &syncBuffer{}, exited: make(chan error, 1)}
 	r.cmd = exec.Command(bin, args...)
 	r.cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	// pty.Start would give stderr the terminal too; the point is to see that
@@ -47,6 +51,11 @@ func startPTY(t *testing.T, bin string, args ...string) *ptyRun {
 	}
 	r.ptmx = ptmx
 	go r.copyOut()
+	// The emulator answers the terminal queries Bubble Tea sends, as a real
+	// terminal does, and what it writes goes back to the process. It is never
+	// closed: Close races with Read in the emulator. The goroutine ends with the
+	// test binary.
+	go func() { _, _ = io.Copy(ptmx, r.emu) }()
 	go func() { r.exited <- r.cmd.Wait() }()
 	t.Cleanup(func() {
 		_ = ptmx.Close()
@@ -60,24 +69,37 @@ func startPTY(t *testing.T, bin string, args ...string) *ptyRun {
 	return r
 }
 
-// copyOut records what the process draws. Bubble Tea asks the terminal for
-// its background colour (OSC 11, then a cursor position report to tell "no
-// answer" from "slow") before it draws, and waits for the reply, so the
-// stand-in terminal answers like a real one.
+// copyOut records what the process draws, raw and on the emulated screen.
+// Bubble Tea redraws only the cells that changed, so the text of a frame is
+// never contiguous in the raw bytes: tests read the screen.
 func (r *ptyRun) copyOut() {
 	buf := make([]byte, 4096)
 	for {
 		n, err := r.ptmx.Read(buf)
 		if n > 0 {
 			_, _ = r.out.Write(buf[:n])
-			if strings.Contains(string(buf[:n]), "\x1b[6n") {
-				_, _ = r.ptmx.WriteString("\x1b]11;rgb:0000/0000/0000\x1b\\\x1b[1;1R")
-			}
+			_, _ = r.emu.Write(buf[:n])
 		}
 		if err != nil {
 			return
 		}
 	}
+}
+
+// screen is the text on the terminal now.
+func (r *ptyRun) screen() string { return ansi.Strip(r.emu.Render()) }
+
+// waitForScreen blocks until the text is on the screen.
+func (r *ptyRun) waitForScreen(want string) {
+	r.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(r.screen(), want) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	r.t.Fatalf("timed out waiting for %q on the screen:\n%s", want, r.screen())
 }
 
 func (r *ptyRun) press(keys string) {
@@ -147,16 +169,16 @@ func TestTUIQuitShutsDownLikeSIGINT(t *testing.T) {
 	s := tuiStation(t, port)
 	r := startPTY(t, buildCPMS(t), "run", "-c", s.configPath, "--socket", s.socketPath)
 
-	waitForOutput(t, r.out, "cpms · 0/1 chargers online")
+	r.waitForScreen("cpms · 0/1 chargers online")
 
 	// A key reaches control in-process: with no station connected, the error
 	// is the one-shot CLI's own sentence.
 	r.press("r")
-	waitForOutput(t, r.out, "EVSE-1: the charge point is not connected to cpms. Check that the station's CSMS URL points")
+	r.waitForScreen("EVSE-1: the charge point is not connected to cpms. Check that the station's CSMS URL points")
 
 	// And the screen follows the station.
 	s.connect()
-	waitForOutput(t, r.out, "cpms · 1/1 chargers online")
+	r.waitForScreen("cpms · 1/1 chargers online")
 
 	r.press("q")
 	if code := r.waitExit(); code != 0 {
@@ -192,7 +214,7 @@ func TestTUIShutsDownOnSIGTERM(t *testing.T) {
 	const port = 19652
 	s := tuiStation(t, port)
 	r := startPTY(t, buildCPMS(t), "run", "-c", s.configPath, "--socket", s.socketPath)
-	waitForOutput(t, r.out, "cpms · 0/1 chargers online")
+	r.waitForScreen("cpms · 0/1 chargers online")
 
 	if err := r.cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)

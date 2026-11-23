@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/wolffseb/cli-cpms/internal/control"
 	"github.com/wolffseb/cli-cpms/internal/control/socket"

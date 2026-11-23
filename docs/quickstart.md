@@ -3,7 +3,7 @@
 Run a CSMS, connect a simulated charging station, and take it through
 reserve → charge → stop. About five minutes, no hardware.
 
-**You need:** [Go](https://go.dev/dl/) 1.24 or newer, `make` and `git`.
+**You need:** [Go](https://go.dev/dl/) 1.25 or newer, `make` and `git`.
 
 ## 1. Build
 

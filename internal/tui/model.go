@@ -6,8 +6,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/wolffseb/cli-cpms/internal/control"
 	"github.com/wolffseb/cli-cpms/internal/control/socket"
@@ -213,7 +213,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case actionMsg:
 		m.finish(msg)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.key(msg)
 	}
 	return m, nil
@@ -281,7 +281,7 @@ func (m *Model) refreshOCPI() {
 
 func (m *Model) clock(t time.Time) string { return t.In(m.loc).Format("15:04:05") }
 
-func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	s := k.String()
 	if s == "ctrl+c" || s == "q" {
 		if m.opts.Stop != nil {

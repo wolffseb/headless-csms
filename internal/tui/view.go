@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/wolffseb/cli-cpms/internal/control/socket"
@@ -39,9 +40,17 @@ type line struct {
 	style *lipgloss.Style
 }
 
-// View renders the screen. Every line is cut to the width and the whole is
+// View is the screen, on the alternate screen: the terminal is given back
+// as it was when the program ends.
+func (m *Model) View() tea.View {
+	v := tea.NewView(m.render())
+	v.AltScreen = true
+	return v
+}
+
+// render draws the screen. Every line is cut to the width and the whole is
 // exactly the height, so a resize never leaves anything overlapping.
-func (m *Model) View() string {
+func (m *Model) render() string {
 	var lines []line
 	if m.help {
 		lines = m.helpLines()
