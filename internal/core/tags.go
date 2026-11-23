@@ -30,24 +30,51 @@ func (s *Service) AuthoriseTag(tag string, ttl time.Duration) {
 	}
 }
 
-// TagAuthorised reports whether a station may start a session for tag, which
-// is what the 1.6 handler answers Authorize and StartTransaction with. OCPP
-// idTags compare case-insensitively (§7.15). A tag is accepted if it is:
-//
-//   - one of the configured tags (auth.default_id_tag, auth.id_tags);
-//   - the tag of an active reservation, so that it can be redeemed;
-//   - the tag of a START_SESSION within TagGrantWindow of the command.
+// TagAuthorised reports whether a station may start a session for tag. It is
+// TagAuthorisation without the end.
 func (s *Service) TagAuthorised(tag string) bool {
+	ok, _ := s.TagAuthorisation(tag)
+	return ok
+}
+
+// TagAuthorisation reports whether a station may start a session for tag,
+// which is what the 1.6 handler answers Authorize and StartTransaction with,
+// and until when cpms vouches for it. OCPP idTags compare case-insensitively
+// (§7.15). A tag is accepted if it is:
+//
+//   - one of the configured tags (auth.default_id_tag, auth.id_tags), which
+//     has no end: until is the zero time;
+//   - the tag of an active reservation, so that it can be redeemed, until the
+//     reservation expires;
+//   - the tag of a START_SESSION within TagGrantWindow of the command, until
+//     the window ends.
+//
+// A station keeps what it is told in its Authorization Cache, so the answer
+// must carry the end (idTagInfo.expiryDate), or the entry would never lapse.
+// A tag that is vouched for twice has the later end.
+func (s *Service) TagAuthorisation(tag string) (ok bool, until time.Time) {
 	if s.cfg != nil && s.cfg.AcceptsIDTag(tag) {
-		return true
+		return true, time.Time{}
 	}
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	for _, r := range s.reservations {
-		if r.Status == ReservationActive && strings.EqualFold(r.IDTag, tag) {
-			return true
+	vouch := func(end time.Time) {
+		ok = true
+		if end.After(until) {
+			until = end
 		}
 	}
-	return s.tagGrants[strings.ToLower(tag)].After(s.now())
+	for _, r := range s.reservations {
+		if r.Status == ReservationActive && strings.EqualFold(r.IDTag, tag) {
+			// Accepted until its expiry timer fires, which can be a moment
+			// after the expiry itself: the end is then already past, which is
+			// what the station should be told.
+			vouch(r.ExpiresAt)
+		}
+	}
+	if end := s.tagGrants[strings.ToLower(tag)]; end.After(s.now()) {
+		vouch(end)
+	}
+	return ok, until
 }
