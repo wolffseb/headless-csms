@@ -223,6 +223,10 @@ func TestStopAsksFirst(t *testing.T) {
 		if strings.Contains(r.view(), "Stop session") {
 			t.Errorf("%q did not cancel the question", other)
 		}
+		// Not a blank line: declining says that it was heard.
+		if !strings.Contains(r.view(), "\nstop cancelled\n") {
+			t.Errorf("%q did not say the stop was cancelled:\n%s", other, r.view())
+		}
 	}
 	if got := r.ctl.Calls(); len(got) != 0 {
 		t.Fatalf("calls after declining = %v, want none", got)

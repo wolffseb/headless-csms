@@ -203,8 +203,10 @@ func (m *Model) tableLines() ([]line, int) {
 			}
 			detail := m.detail(e)
 			row := prefix + spin + " " + pad(e.UID, idW) + "  " + pad(statusText(e), statusW)
+			// Bold replaces the faint of an offline charger: terminals take
+			// one intensity, and the cursor row must stand out.
 			st := style
-			if selected && st == nil {
+			if selected {
 				st = &bold
 			}
 			if m.narrow() {

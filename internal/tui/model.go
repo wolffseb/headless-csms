@@ -299,12 +299,15 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if c := m.confirm; c != nil {
 		m.confirm = nil
-		m.msg = message{}
 		if s == "y" {
+			m.msg = message{}
 			return m, m.run(c.uid, socket.OpStop, "stop", func(ctx context.Context) (string, error) {
 				return "remote stop accepted", m.opts.Control.Stop(ctx, c.uid, c.tx)
 			})
 		}
+		// Any other key declines. Say so: a question that just vanishes
+		// leaves it unclear whether the key was heard.
+		m.msg = message{msgInfo, "stop cancelled"}
 		return m, nil
 	}
 

@@ -394,3 +394,33 @@ func TestSessionEventsSaySession(t *testing.T) {
 		t.Errorf("a transaction is on the screen:\n%s", got)
 	}
 }
+
+// The selected row is bold, and on an offline charger bold must win over the
+// faint of the rest: terminals take one intensity, and a faint selected row
+// leaves only the marker to show where the cursor is.
+func TestSelectedRowOnAnOfflineChargerIsBold(t *testing.T) {
+	r := newRig(t)
+	r.twoStations() // ALP-HYC-002 is offline
+	row := func() string {
+		for _, l := range strings.Split(r.raw(), "\n") {
+			if strings.Contains(l, "ALP-HYC-002-1") {
+				return l
+			}
+		}
+		t.Fatal("no row for ALP-HYC-002-1")
+		return ""
+	}
+
+	if l := row(); !strings.Contains(l, "\x1b[2m") || strings.Contains(l, "\x1b[1m") {
+		t.Fatalf("an unselected offline row should be faint only: %q", l)
+	}
+	r.send(keyMsg("down"))
+	r.send(keyMsg("down"))
+	l := row()
+	if !strings.Contains(l, "▸") {
+		t.Fatalf("the cursor is not on the row: %q", l)
+	}
+	if !strings.Contains(l, "\x1b[1m") || strings.Contains(l, "\x1b[2m") {
+		t.Errorf("the selected offline row should be bold, not faint: %q", l)
+	}
+}
