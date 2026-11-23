@@ -288,8 +288,9 @@ type ScheduleResult struct {
 // With one charger the JSON has charge_point and evses at the top, as it
 // always had. A status of several chargers has a chargers array instead, each
 // element holding that charger's charge_point and evses, and no top-level
-// charge_point or evses: a script that reads those fails on a multi-charger
-// setup rather than silently reading one charger of several.
+// charge_point or evses. Those keys are absent, so a script reading
+// `.charge_point.online` gets null, not an error: it must switch to
+// `.chargers[]`, or pass --charger to get the single-charger shape.
 type Status struct {
 	ChargePoint ChargePointStatus `json:"charge_point"`
 	EVSEs       []EVSEStatus      `json:"evses"`

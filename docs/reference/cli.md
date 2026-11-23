@@ -123,7 +123,10 @@ and the OCPI registration.
 With one charger the output is as below. With several, the table has one section per
 charger, in config order, with that charger's EVSEs, reservations and sessions under it, and
 the OCPI line once at the end. The JSON has a `chargers` array instead of the top-level
-`charge_point` and `evses`; each element holds those two keys for one charger.
+`charge_point` and `evses`; each element holds those two keys for one charger. Those two
+top-level keys are absent, so `jq .charge_point.online` prints `null` rather than failing,
+and a check like `[ "$(... | jq .charge_point.online)" = true ]` reports offline. Scripts
+should read `.chargers[]`, or pass `--charger ID` to get the single-charger shape.
 
 ```
 PRUESTEL_000  online  last seen 10:04:03
