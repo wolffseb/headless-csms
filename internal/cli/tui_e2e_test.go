@@ -22,7 +22,9 @@ import (
 
 // The TUI tests run the real binary: only it has a terminal to draw on, and
 // only a process can show that its ports and socket are released. Ports
-// 19650-19699 are this file's.
+// 19650-19659 and 19690-19691 are this file's (each test takes a pair: the
+// OCPP port and the next one). Its neighbours use 19660-19669 (limit_test.go)
+// and 19670-19679 (station_meter_test.go); keep clear of them.
 
 // ptyRun is `cpms run` on a pseudo-terminal.
 type ptyRun struct {
