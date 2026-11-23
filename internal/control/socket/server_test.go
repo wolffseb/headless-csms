@@ -133,7 +133,7 @@ func serveWith(t *testing.T, ctx context.Context, station ocpp.ChargePoint, tune
 	t.Helper()
 
 	cfg := &config.Config{
-		Charger:  config.Charger{ID: "CP"},
+		Chargers: []config.Charger{{ID: "CP"}},
 		Auth:     config.Auth{DefaultIDTag: "TAG"},
 		Location: config.Location{EVSEs: []config.EVSE{{UID: "EVSE-1", OCPPConnectorID: 1}}},
 	}
@@ -142,7 +142,7 @@ func serveWith(t *testing.T, ctx context.Context, station ocpp.ChargePoint, tune
 	ctl := control.New(control.Options{Core: c, Commands: commands{station}, Config: cfg, Log: discard()})
 
 	path := filepath.Join(shortDir(t), "cpms.sock")
-	opts := socket.Options{Path: path, ChargePointID: "CP", Log: discard()}
+	opts := socket.Options{Path: path, Config: cfg, Log: discard()}
 	tune(&opts)
 	srv, err := socket.Listen(opts)
 	if err != nil {
@@ -308,6 +308,25 @@ func TestBadRequestsAreUsageErrors(t *testing.T) {
 	line, _ := bufio.NewReader(conn).ReadString('\n')
 	if !strings.Contains(line, `"code":"usage"`) || !strings.Contains(line, "version 99") {
 		t.Errorf("v99 request answered %q, want a usage error naming the version", line)
+	}
+}
+
+// Version 1 daemons ignore the charger field and send station-level commands
+// to their only station, so a v1 client must be refused, not misrouted. This
+// pins the bump: a later field that changes routing needs another one.
+func TestDaemonRefusesProtocolVersion1(t *testing.T) {
+	t.Parallel()
+	path := serve(t, nil)
+
+	conn, err := net.Dial("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_, _ = conn.Write([]byte(`{"v":1,"op":"status"}` + "\n"))
+	line, _ := bufio.NewReader(conn).ReadString('\n')
+	if !strings.Contains(line, `"code":"usage"`) || !strings.Contains(line, "protocol version 1 is not supported") {
+		t.Errorf("v1 request answered %q, want a usage error naming protocol version 1", line)
 	}
 }
 

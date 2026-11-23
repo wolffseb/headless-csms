@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wolffseb/cli-cpms/internal/config"
 	"github.com/wolffseb/cli-cpms/internal/control"
 	"github.com/wolffseb/cli-cpms/internal/core"
 	"github.com/wolffseb/cli-cpms/internal/ocpi/credentials"
@@ -43,8 +44,9 @@ type Options struct {
 	// guard, before the services it serves exist.
 	Control *control.Service
 	Core    *core.Service
-	// ChargePointID is the configured station, whose state OpStatus reports.
-	ChargePointID string
+	// Config names the configured chargers, whose state OpStatus reports and
+	// among which station-level operations choose.
+	Config *config.Config
 	// OCPI is the OCPI registration, supplied with AttachOCPI. Without it,
 	// status reports "not registered" and unregistering is refused.
 	OCPI OCPIRegistration
@@ -237,7 +239,10 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 
 	switch req.Op {
 	case OpStatus:
-		st := BuildStatus(s.opts.Core.Snapshot(), s.opts.ChargePointID)
+		st, err := s.buildStatus(req.Charger)
+		if err != nil {
+			return fail(classify(err))
+		}
 		if s.opts.OCPI != nil {
 			st.OCPI = BuildOCPIStatus(s.opts.OCPI.Registration())
 			if st.OCPI.Registered && s.opts.Push != nil {
@@ -269,11 +274,15 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 		return ok(UnregisterResult{Party: res.Party, NotifyError: res.NotifyError})
 
 	case OpProbe:
-		report, err := s.opts.Control.Probe(ctx)
+		ch, err := control.ResolveCharger(s.opts.Config, req.Charger)
 		if err != nil {
 			return fail(classify(err))
 		}
-		return ok(BuildProbe(report, s.opts.Core.Snapshot(), s.opts.ChargePointID))
+		report, err := s.opts.Control.Probe(ctx, ch.ID)
+		if err != nil {
+			return fail(classify(err))
+		}
+		return ok(BuildProbe(report, s.opts.Core.Snapshot(), ch.ID))
 
 	case OpReserve:
 		var expiresIn time.Duration
@@ -296,7 +305,7 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 		if req.Key == "" {
 			return fail(&Error{Code: CodeUsage, Message: "config_set needs a key"})
 		}
-		res, err := s.opts.Control.ChangeConfiguration(ctx, req.Key, req.Value)
+		res, err := s.opts.Control.ChangeConfiguration(ctx, req.Charger, req.Key, req.Value)
 		if err != nil {
 			return fail(classify(err))
 		}
@@ -316,6 +325,28 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 	default:
 		return fail(&Error{Code: CodeUsage, Message: fmt.Sprintf("unknown operation %q", req.Op)})
 	}
+}
+
+// buildStatus is the status of the charger named, or of every charger. One
+// charger, however it was asked for, gives the single-charger shape.
+func (s *Server) buildStatus(charger string) (Status, error) {
+	snap := s.opts.Core.Snapshot()
+	if charger != "" {
+		ch, err := control.ResolveCharger(s.opts.Config, charger)
+		if err != nil {
+			return Status{}, err
+		}
+		return BuildStatus(snap, ch.ID), nil
+	}
+	if len(s.opts.Config.Chargers) == 1 {
+		return BuildStatus(snap, s.opts.Config.Chargers[0].ID), nil
+	}
+	out := Status{Chargers: make([]ChargerStatus, 0, len(s.opts.Config.Chargers))}
+	for _, ch := range s.opts.Config.Chargers {
+		one := BuildStatus(snap, ch.ID)
+		out.Chargers = append(out.Chargers, ChargerStatus{ChargePoint: one.ChargePoint, EVSEs: one.EVSEs})
+	}
+	return out, nil
 }
 
 func ok(result any) Response {
@@ -389,7 +420,10 @@ func classify(err error) *Error {
 		errors.Is(err, control.ErrNoReservation),
 		errors.Is(err, control.ErrNoActiveTransaction):
 		e.Code = CodeRefused
-	case errors.Is(err, ocpp.ErrUnknownEVSE):
+	case errors.Is(err, ocpp.ErrUnknownEVSE),
+		errors.Is(err, control.ErrChargerRequired),
+		errors.Is(err, control.ErrUnknownCharger),
+		errors.Is(err, control.ErrChargerMismatch):
 		e.Code = CodeUsage
 	}
 	return e

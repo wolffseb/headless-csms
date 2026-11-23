@@ -14,16 +14,26 @@ import (
 
 // Config is the fully parsed, validated configuration.
 type Config struct {
-	Charger  Charger  `yaml:"charger"`
-	Server   Server   `yaml:"server"`
-	Auth     Auth     `yaml:"auth"`
-	OCPI     OCPI     `yaml:"ocpi"`
-	Location Location `yaml:"location"`
+	// Chargers are the stations served on the one OCPP listener. The loader
+	// fills it from either `chargers:` or the singular `charger:`; no code
+	// outside this package reads the singular form (see LegacyCharger).
+	Chargers []Charger `yaml:"chargers"`
+	// LegacyCharger is only the parse target of the singular `charger:` key.
+	// The loader moves it into Chargers and sets it to nil.
+	LegacyCharger *Charger `yaml:"charger"`
+	Server        Server   `yaml:"server"`
+	Auth          Auth     `yaml:"auth"`
+	OCPI          OCPI     `yaml:"ocpi"`
+	Location      Location `yaml:"location"`
 
 	// ModTime is the config file's modification time, read once by Load. It
 	// is when the static Location data last changed, so OCPI stamps the
 	// connectors' last_updated with it. Parse leaves it zero.
 	ModTime time.Time `yaml:"-"`
+
+	// singular is set when Chargers came from the singular `charger:` key, so
+	// validation errors keep naming `charger.…` instead of `chargers[0].…`.
+	singular bool
 }
 
 // Charger describes the physical charging station we manage.
@@ -60,6 +70,28 @@ type Auth struct {
 	// DefaultIDTag is the RFID tag used when a command does not name one —
 	// the RFID tag that redeems reservations.
 	DefaultIDTag string `yaml:"default_id_tag"`
+	// IDTags are further tags accepted on every charger, in addition to
+	// DefaultIDTag.
+	IDTags []string `yaml:"id_tags"`
+}
+
+// AcceptsIDTag reports whether tag is accepted: default_id_tag or one of
+// id_tags, compared case-insensitively because OCPP idTags are (§7.15).
+func (c *Config) AcceptsIDTag(tag string) bool {
+	if strings.EqualFold(tag, c.Auth.DefaultIDTag) {
+		return true
+	}
+	for _, t := range c.Auth.IDTags {
+		if strings.EqualFold(tag, t) {
+			return true
+		}
+	}
+	return false
+}
+
+// AcceptedIDTags lists default_id_tag first, then id_tags, in config order.
+func (c *Config) AcceptedIDTags() []string {
+	return append([]string{c.Auth.DefaultIDTag}, c.Auth.IDTags...)
 }
 
 // OCPI configures our CPO-side OCPI 2.3.0 interface.
@@ -151,7 +183,11 @@ type Coordinates struct {
 // OCPP 1.6 addresses it by an integer connector id. The mapping is explicit
 // here so that nothing anywhere else has to guess it.
 type EVSE struct {
-	UID             string `yaml:"uid"`
+	UID string `yaml:"uid"`
+	// Charger is the id of the charger this EVSE sits on. Optional with one
+	// charger (the loader fills it in); required and must name a configured
+	// charger otherwise.
+	Charger         string `yaml:"charger"`
 	EVSEID          string `yaml:"evse_id"`
 	OCPPConnectorID int    `yaml:"ocpp_connector_id"`
 	// Reservable advertises the OCPI RESERVABLE capability. Unset means true;
@@ -197,11 +233,49 @@ func (c *Config) EVSEByUID(uid string) (EVSE, bool) {
 	return EVSE{}, false
 }
 
-// EVSEByConnectorID returns the configured EVSE mapped to the given OCPP 1.6
-// connector id.
-func (c *Config) EVSEByConnectorID(id int) (EVSE, bool) {
+// ChargerByID returns the configured charger with the given id. OCPP charge
+// point ids are case-sensitive in the URL, so this is an exact match.
+func (c *Config) ChargerByID(id string) (Charger, bool) {
+	for _, ch := range c.Chargers {
+		if ch.ID == id {
+			return ch, true
+		}
+	}
+	return Charger{}, false
+}
+
+// ChargerOf is the id of the charger e sits on. An EVSE with no charger set
+// belongs to the only charger; the loader fills that in, this keeps a Config
+// built by hand (as tests do) working the same way. With several chargers an
+// unset EVSE belongs to none, and the result is empty.
+func (c *Config) ChargerOf(e EVSE) string {
+	if e.Charger == "" && len(c.Chargers) == 1 {
+		return c.Chargers[0].ID
+	}
+	return e.Charger
+}
+
+// evseOn reports whether e sits on the charger.
+func (c *Config) evseOn(e EVSE, chargerID string) bool {
+	return c.ChargerOf(e) == chargerID
+}
+
+// EVSEsOf returns the EVSEs on the given charger, in config order.
+func (c *Config) EVSEsOf(chargerID string) []EVSE {
+	var out []EVSE
 	for _, e := range c.Location.EVSEs {
-		if e.OCPPConnectorID == id {
+		if c.evseOn(e, chargerID) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// EVSEByConnector returns the EVSE mapped to the given OCPP 1.6 connector id
+// on the given charger.
+func (c *Config) EVSEByConnector(chargerID string, connectorID int) (EVSE, bool) {
+	for _, e := range c.Location.EVSEs {
+		if c.evseOn(e, chargerID) && e.OCPPConnectorID == connectorID {
 			return e, true
 		}
 	}
@@ -211,17 +285,27 @@ func (c *Config) EVSEByConnectorID(id int) (EVSE, bool) {
 // applyDefaults fills in unset fields. It runs before validation so that
 // validation errors always describe the values that will actually be used.
 func (c *Config) applyDefaults() {
-	if c.Charger.OCPPVersion == "" {
-		c.Charger.OCPPVersion = DefaultOCPPVersion
+	for i := range c.Chargers {
+		ch := &c.Chargers[i]
+		if ch.OCPPVersion == "" {
+			ch.OCPPVersion = DefaultOCPPVersion
+		}
+		if ch.HeartbeatInterval.unset() {
+			ch.HeartbeatInterval.setDefault(DefaultHeartbeatInterval)
+		}
+		if ch.HeartbeatTimeout.unset() {
+			ch.HeartbeatTimeout.setDefault(DefaultHeartbeatTimeout)
+		}
+		if ch.CallTimeout.unset() {
+			ch.CallTimeout.setDefault(DefaultCallTimeout)
+		}
 	}
-	if c.Charger.HeartbeatInterval.unset() {
-		c.Charger.HeartbeatInterval.setDefault(DefaultHeartbeatInterval)
-	}
-	if c.Charger.HeartbeatTimeout.unset() {
-		c.Charger.HeartbeatTimeout.setDefault(DefaultHeartbeatTimeout)
-	}
-	if c.Charger.CallTimeout.unset() {
-		c.Charger.CallTimeout.setDefault(DefaultCallTimeout)
+	if len(c.Chargers) == 1 {
+		for i := range c.Location.EVSEs {
+			if c.Location.EVSEs[i].Charger == "" {
+				c.Location.EVSEs[i].Charger = c.Chargers[0].ID
+			}
+		}
 	}
 	if c.Server.OCPPBind == "" {
 		c.Server.OCPPBind = DefaultOCPPBind

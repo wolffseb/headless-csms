@@ -49,7 +49,7 @@ func TestConfigValidateAcceptsExampleConfig(t *testing.T) {
 
 	wants := []string{
 		"is valid",
-		cfg.Charger.ID,
+		cfg.Chargers[0].ID,
 		cfg.OCPI.CountryCode + "*" + cfg.OCPI.PartyID,
 		cfg.OCPI.PublicBaseURL,
 		// Prefix only: the summary pluralises, so a one-EVSE example would
@@ -58,7 +58,7 @@ func TestConfigValidateAcceptsExampleConfig(t *testing.T) {
 		// The one literal worth keeping: substituting a placeholder for a
 		// wildcard bind is summary logic, not config content, and this is the
 		// line an operator copies into the station.
-		"ws://<this-host>:9000/ocpp/" + cfg.Charger.ID,
+		"ws://<this-host>:9000/ocpp/" + cfg.Chargers[0].ID,
 	}
 	for _, evse := range cfg.Location.EVSEs {
 		wants = append(wants, evse.UID, evse.EVSEID)

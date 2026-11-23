@@ -20,7 +20,7 @@ import (
 // Version is the protocol version this build speaks. A request with any other
 // version is refused, so a mismatched CLI and daemon fail loudly rather than
 // misreading each other.
-const Version = 1
+const Version = 2
 
 // Op is the action a request asks for.
 type Op string
@@ -55,6 +55,13 @@ type Request struct {
 	V    int    `json:"v"`
 	Op   Op     `json:"op"`
 	EVSE string `json:"evse,omitempty"`
+	// Charger names the station for the operations that address one without
+	// an EVSE: probe, config_set, and the limit and profile operations with
+	// Station set or clearing by no target. It may be empty with one charger
+	// configured. For status it narrows the report to that charger; empty
+	// means every charger. Operations on an EVSE go to the EVSE's charger;
+	// the limit and profile ones refuse a Charger that is not it.
+	Charger string `json:"charger,omitempty"`
 	// IDTag is the RFID tag for reserve and start. Empty means the
 	// configured auth.default_id_tag.
 	IDTag string `json:"id_tag,omitempty"`
@@ -277,10 +284,38 @@ type ScheduleResult struct {
 
 // Status is the result of OpStatus. Its JSON is what `cpms status --json`
 // prints, so its field names are a public interface: other tools parse it.
+//
+// With one charger the JSON has charge_point and evses at the top, as it
+// always had. A status of several chargers has a chargers array instead, each
+// element holding that charger's charge_point and evses, and no top-level
+// charge_point or evses. Those keys are absent, so a script reading
+// `.charge_point.online` gets null, not an error: it must switch to
+// `.chargers[]`, or pass --charger to get the single-charger shape.
 type Status struct {
 	ChargePoint ChargePointStatus `json:"charge_point"`
 	EVSEs       []EVSEStatus      `json:"evses"`
-	OCPI        OCPIStatus        `json:"ocpi"`
+	// Chargers is set, and ChargePoint and EVSEs are not, when the status
+	// covers more than one charger.
+	Chargers []ChargerStatus `json:"chargers,omitempty"`
+	OCPI     OCPIStatus      `json:"ocpi"`
+}
+
+// ChargerStatus is one charger's part of a multi-charger Status.
+type ChargerStatus struct {
+	ChargePoint ChargePointStatus `json:"charge_point"`
+	EVSEs       []EVSEStatus      `json:"evses"`
+}
+
+// MarshalJSON leaves charge_point and evses out of a multi-charger status.
+func (s Status) MarshalJSON() ([]byte, error) {
+	if len(s.Chargers) == 0 {
+		type single Status // no methods, so no recursion
+		return json.Marshal(single(s))
+	}
+	return json.Marshal(struct {
+		Chargers []ChargerStatus `json:"chargers"`
+		OCPI     OCPIStatus      `json:"ocpi"`
+	}{s.Chargers, s.OCPI})
 }
 
 // OCPIStatus is the OCPI registration. It never carries a token.

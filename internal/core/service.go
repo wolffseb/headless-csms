@@ -282,12 +282,14 @@ func New(cfg *config.Config, opts ...Option) *Service {
 	}
 
 	if cfg != nil {
-		cp := s.newChargePoint(cfg.Charger.ID)
 		at := s.now()
-		for _, e := range cfg.Location.EVSEs {
-			cp.addEVSE(e.UID, e.OCPPConnectorID, at)
+		for _, ch := range cfg.Chargers {
+			cp := s.newChargePoint(ch.ID)
+			for _, e := range cfg.EVSEsOf(ch.ID) {
+				cp.addEVSE(e.UID, e.OCPPConnectorID, at)
+			}
+			s.cps[cp.id] = cp
 		}
-		s.cps[cp.id] = cp
 	}
 	if s.store != nil {
 		s.load()
@@ -379,8 +381,8 @@ func (s *Service) ensure(id string) *chargePointState {
 // against. Connectors we have no mapping for get a synthetic uid so they are
 // still observable rather than silently dropped.
 func (s *Service) evseUID(cpID string, connectorID int) string {
-	if s.cfg != nil && cpID == s.cfg.Charger.ID {
-		if e, ok := s.cfg.EVSEByConnectorID(connectorID); ok {
+	if s.cfg != nil {
+		if e, ok := s.cfg.EVSEByConnector(cpID, connectorID); ok {
 			return e.UID
 		}
 	}

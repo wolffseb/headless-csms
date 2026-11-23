@@ -43,7 +43,7 @@ func (stubHandler) HandleCall(_ context.Context, _, action string, payload json.
 
 func testConfig() *config.Config {
 	return &config.Config{
-		Charger: config.Charger{ID: testCP},
+		Chargers: []config.Charger{{ID: testCP}},
 		Location: config.Location{
 			EVSEs: []config.EVSE{{UID: "EVSE-1", OCPPConnectorID: 1}},
 		},

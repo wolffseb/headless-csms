@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wolffseb/cli-cpms/internal/config"
+	"github.com/wolffseb/cli-cpms/internal/control"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
 	"github.com/wolffseb/cli-cpms/internal/simulator"
 )
@@ -68,14 +69,21 @@ func newSimulateChargerCommand(opts *options) *cobra.Command {
 				if csmsURL == "" {
 					csmsURL = csmsURLFromBind(cfg.Server.OCPPBind)
 				}
+				// With several chargers there is no default station, and an id
+				// that is not one of them is a typo, not a foreign CSMS.
+				if len(cfg.Chargers) > 1 {
+					if _, err := control.ResolveCharger(cfg, id); err != nil {
+						return fmt.Errorf("--id: %w", err)
+					}
+				}
 				if id == "" {
-					id = cfg.Charger.ID
+					id = cfg.Chargers[0].ID
 				}
 				if idTag == "" {
 					idTag = cfg.Auth.DefaultIDTag
 				}
 				if connectors == 0 {
-					connectors = len(cfg.Location.EVSEs)
+					connectors = connectorsOf(cfg, id)
 				}
 			}
 			if connectors == 0 {
@@ -118,9 +126,9 @@ func newSimulateChargerCommand(opts *options) *cobra.Command {
 
 	f := cmd.Flags()
 	f.StringVar(&csmsURL, "csms", "", "CSMS WebSocket URL (default: derived from the config's ocpp_bind)")
-	f.StringVar(&id, "id", "", "charge point identity (default: the config's charger.id)")
+	f.StringVar(&id, "id", "", "charge point identity (default: the config's charger id; required with more than one charger)")
 	f.StringVar(&version, "ocpp", string(ocpp.Version16), "OCPP version to speak")
-	f.IntVar(&connectors, "connectors", 0, "number of connectors (default: the config's EVSE count)")
+	f.IntVar(&connectors, "connectors", 0, "number of connectors (default: the EVSE count of the charger in the config)")
 	f.StringVar(&scenario, "scenario", string(simulator.ScenarioNormal), "misbehaviour to simulate: "+scenarioList())
 	f.DurationVar(&meterEvery, "meter-interval", 0, "send MeterValues this often during a transaction, e.g. 10s (default: off)")
 	f.BoolVar(&reconnect, "reconnect", false, "redial with backoff when the connection drops, instead of exiting")
@@ -131,6 +139,20 @@ func newSimulateChargerCommand(opts *options) *cobra.Command {
 	f.StringVar(&logLevel, "log-level", "info", "log level: debug, info, warn or error")
 
 	return cmd
+}
+
+// connectorsOf is how many connectors the simulated station gets by default:
+// the EVSEs config puts on that charger, or with one charger all of them (the
+// id may be anything then, to test against a CSMS that is not ours).
+func connectorsOf(cfg *config.Config, id string) int {
+	if len(cfg.Chargers) == 1 {
+		return len(cfg.Location.EVSEs)
+	}
+	n := 0
+	for _, e := range cfg.EVSEsOf(id) {
+		n = max(n, e.OCPPConnectorID, 1)
+	}
+	return max(n, len(cfg.EVSEsOf(id)))
 }
 
 func scenarioList() string {

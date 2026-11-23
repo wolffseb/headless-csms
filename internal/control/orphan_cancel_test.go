@@ -117,7 +117,7 @@ func newWireRig(t *testing.T, callTimeout time.Duration) *wireRig {
 	t.Cleanup(func() { r.conn.Close(); <-done })
 
 	cfg := testConfig()
-	cfg.Charger.CallTimeout = config.NewDuration(callTimeout)
+	cfg.Chargers[0].CallTimeout = config.NewDuration(callTimeout)
 	r.core = core.New(cfg, core.WithStore(statetest.New(t)), core.WithLogger(discard))
 	t.Cleanup(r.core.Close)
 	cp := v16.NewChargePoint(r.conn, cfg)

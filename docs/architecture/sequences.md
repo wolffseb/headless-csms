@@ -59,7 +59,7 @@ sequenceDiagram
     participant St as Station
 
     CLI->>CLI: check --evse against config (exit 1 if unknown, nothing sent)
-    CLI->>Sock: {"v":1,"op":"reserve","evse":"ALP-HYC-001-1"}
+    CLI->>Sock: {"v":2,"op":"reserve","evse":"ALP-HYC-001-1"}
     Sock->>Ctl: Reserve
     Ctl->>Core: BeginReservation: allocate id, persist counter, pending
     Ctl->>V16: ChargePoint.ReserveNow

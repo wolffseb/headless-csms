@@ -369,10 +369,10 @@ func TestLoadValidFile(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	if got, want := cfg.Charger.ID, "ALP-HYC-001"; got != want {
+	if got, want := cfg.Chargers[0].ID, "ALP-HYC-001"; got != want {
 		t.Errorf("charger id = %q, want %q", got, want)
 	}
-	if got, want := cfg.Charger.HeartbeatTimeout.Duration(), 2*time.Minute; got != want {
+	if got, want := cfg.Chargers[0].HeartbeatTimeout.Duration(), 2*time.Minute; got != want {
 		t.Errorf("heartbeat timeout = %v, want %v", got, want)
 	}
 	if got, want := cfg.OCPI.Push.Debounce.Duration(), 250*time.Millisecond; got != want {
@@ -438,10 +438,10 @@ func TestLoadAppliesDefaults(t *testing.T) {
 		got  any
 		want any
 	}{
-		{"ocpp_version", cfg.Charger.OCPPVersion, config.DefaultOCPPVersion},
-		{"heartbeat_interval", cfg.Charger.HeartbeatInterval.Duration(), config.DefaultHeartbeatInterval},
-		{"heartbeat_timeout", cfg.Charger.HeartbeatTimeout.Duration(), config.DefaultHeartbeatTimeout},
-		{"call_timeout", cfg.Charger.CallTimeout.Duration(), config.DefaultCallTimeout},
+		{"ocpp_version", cfg.Chargers[0].OCPPVersion, config.DefaultOCPPVersion},
+		{"heartbeat_interval", cfg.Chargers[0].HeartbeatInterval.Duration(), config.DefaultHeartbeatInterval},
+		{"heartbeat_timeout", cfg.Chargers[0].HeartbeatTimeout.Duration(), config.DefaultHeartbeatTimeout},
+		{"call_timeout", cfg.Chargers[0].CallTimeout.Duration(), config.DefaultCallTimeout},
 		{"ocpp_bind", cfg.Server.OCPPBind, config.DefaultOCPPBind},
 		{"ocpi_bind", cfg.Server.OCPIBind, config.DefaultOCPIBind},
 		{"push.debounce", cfg.OCPI.Push.Debounce.Duration(), config.DefaultPushDebounce},
@@ -601,12 +601,12 @@ func TestEVSELookups(t *testing.T) {
 		t.Error("EVSEByUID found an EVSE that is not configured")
 	}
 
-	evse, ok = cfg.EVSEByConnectorID(1)
+	evse, ok = cfg.EVSEByConnector("ALP-HYC-001", 1)
 	if !ok || evse.UID != "ALP-HYC-001-1" {
-		t.Errorf("EVSEByConnectorID(1) = %+v, %v; want ALP-HYC-001-1", evse, ok)
+		t.Errorf("EVSEByConnector(1) = %+v, %v; want ALP-HYC-001-1", evse, ok)
 	}
-	if _, ok := cfg.EVSEByConnectorID(99); ok {
-		t.Error("EVSEByConnectorID found a connector that is not mapped")
+	if _, ok := cfg.EVSEByConnector("ALP-HYC-001", 99); ok {
+		t.Error("EVSEByConnector found a connector that is not mapped")
 	}
 }
 

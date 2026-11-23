@@ -15,7 +15,12 @@ cpms config validate
 
 Durations are written like `60s`, `500ms` or `15m`.
 
-## `charger`
+## `charger` and `chargers`
+
+Use `charger:` for one station, or `chargers:` (a list of the same entries) for several on
+the same OCPP listener. Exactly one of the two; both or neither is an error. Every entry
+has its own heartbeat and call timeouts. Charger ids must be unique, and each station
+connects to `ws://<host>:<port>/ocpp/<its id>`.
 
 | Field | Required | Default | |
 |---|---|---|---|
@@ -41,6 +46,11 @@ randomly chosen port.
 | Field | Required | |
 |---|---|---|
 | `default_id_tag` | yes | The RFID tag used when a command names none. 1-20 printable ASCII characters without spaces. |
+| `id_tags` | | A list of further tags, each valid like `default_id_tag`. |
+
+Every tag in `default_id_tag` and `id_tags` is accepted on every charger, in `Authorize` and
+`StartTransaction`. OCPP idTags are case-insensitive, so a duplicate that differs only in
+case is an error.
 
 ## `ocpi`
 
@@ -86,7 +96,8 @@ data. It is served verbatim. Only the per-EVSE status is filled in live.
 |---|---|---|---|
 | `uid` | yes | | The EVSE's OCPI `uid`, and what `--evse` takes. Unique, at most 36 characters, printable ASCII. |
 | `evse_id` | yes | | An eMI3 EVSE ID, for example `DE*EXA*E001*1`. Unique, at most 38 ASCII characters. |
-| `ocpp_connector_id` | yes | | The OCPP 1.6 connector this EVSE is. `1` or greater (`0` is the station itself). Unique. |
+| `charger` | with several chargers | the only charger | The id of the charger this EVSE sits on. Must name a configured charger. |
+| `ocpp_connector_id` | yes | | The OCPP 1.6 connector this EVSE is. `1` or greater (`0` is the station itself). Unique per charger. |
 | `reservable` | | `true` | Advertises the OCPI `RESERVABLE` capability. Set it to `false` if [`cpms probe`](probe.md) reports no Reservation profile. |
 | `connectors` | yes | | At least one. |
 

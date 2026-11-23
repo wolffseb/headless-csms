@@ -370,7 +370,7 @@ func build(t *testing.T, live bool, tune ...func(*config.Config)) *rig {
 	}
 	svc := core.New(cfg, coreOpts...)
 	t.Cleanup(svc.Close)
-	r.core = &probeCore{Service: svc, cpID: cfg.Charger.ID, marker: make(chan struct{}, 1)}
+	r.core = &probeCore{Service: svc, cpID: cfg.Chargers[0].ID, marker: make(chan struct{}, 1)}
 
 	r.reg = credentials.New(credentials.Options{
 		Store:        statetest.New(t),
@@ -487,13 +487,13 @@ func (r *rig) unregister() {
 
 // station is the charge point's side of the core API.
 func (r *rig) setStatus(evse int, status core.EVSEStatus) {
-	r.core.SetConnectorStatus(r.cfg.Charger.ID, r.cfg.Location.EVSEs[evse].OCPPConnectorID, status, "NoError")
+	r.core.SetConnectorStatus(r.cfg.Chargers[0].ID, r.cfg.Location.EVSEs[evse].OCPPConnectorID, status, "NoError")
 }
 
 // connect brings the station online with every EVSE Available, and lets the
 // pusher see it.
 func (r *rig) connect() {
-	r.core.Connected(r.cfg.Charger.ID)
+	r.core.Connected(r.cfg.Chargers[0].ID)
 	for i := range r.cfg.Location.EVSEs {
 		r.setStatus(i, core.StatusAvailable)
 	}

@@ -62,9 +62,15 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	// OCPP 2.0.1 is a separate adapter that does not exist yet. Failing here
 	// beats accepting the config and then rejecting the charger's handshake
 	// with a confusing "no common version".
-	if cfg.Charger.OCPPVersion != string(ocpp.Version16) {
-		return fmt.Errorf("OCPP %s is not implemented yet; set charger.ocpp_version to \"1.6\"",
-			cfg.Charger.OCPPVersion)
+	for i, ch := range cfg.Chargers {
+		if ch.OCPPVersion != string(ocpp.Version16) {
+			path := "charger"
+			if len(cfg.Chargers) > 1 {
+				path = fmt.Sprintf("chargers[%d]", i)
+			}
+			return fmt.Errorf("OCPP %s is not implemented yet; set %s.ocpp_version to \"1.6\"",
+				ch.OCPPVersion, path)
+		}
 	}
 
 	// One cpms per state file, whatever --socket says: two writers would
@@ -90,8 +96,8 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	// socketWait), so the CLI hears what happened.
 	ctl, err := socket.Listen(socket.Options{
 		Path:              socketPath,
-		ChargePointID:     cfg.Charger.ID,
-		UnregisterTimeout: cfg.Charger.CallTimeout.Duration(),
+		Config:            cfg,
+		UnregisterTimeout: maxCallTimeout(cfg),
 		Log:               logger,
 	})
 	if err != nil {
@@ -125,12 +131,11 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 		OnConnect: func(ctx context.Context, cp ocpp.ChargePoint) {
 			commands.RefreshStatusOnConnect(ctx, cp)
 		},
-		// Exactly one station is configured, so anything else dialling in is a
-		// misconfiguration worth rejecting loudly.
-		Accept:      func(id string) bool { return id == cfg.Charger.ID },
-		CallTimeout: cfg.Charger.CallTimeout.Duration(),
-		IdleTimeout: cfg.Charger.HeartbeatTimeout.Duration(),
-		Log:         logger,
+		// Only configured stations are accepted, each with its own timeouts.
+		Accept:         chargerPolicy{cfg}.accept,
+		CallTimeoutFor: chargerPolicy{cfg}.callTimeout,
+		IdleTimeoutFor: chargerPolicy{cfg}.idleTimeout,
+		Log:            logger,
 	})
 	if err != nil {
 		return err
@@ -189,11 +194,17 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	ctl.AttachPush(pusher)
 	ctl.Serve(ctx)
 
-	fmt.Fprintf(cmd.OutOrStdout(), "cpms listening for %s on ws://%s/ocpp/%s\n",
-		cfg.Charger.ID, server.Addr(), cfg.Charger.ID)
+	for _, ch := range cfg.Chargers {
+		fmt.Fprintf(cmd.OutOrStdout(), "cpms listening for %s on ws://%s/ocpp/%s\n",
+			ch.ID, server.Addr(), ch.ID)
+	}
 	fmt.Fprintf(cmd.OutOrStdout(), "OCPI versions endpoint %s (listening on %s)\n", ocpiServer.VersionsURL(), ocpiServer.Addr())
 	fmt.Fprintf(cmd.OutOrStdout(), "control socket %s\n", ctl.Path())
-	fmt.Fprintln(cmd.OutOrStdout(), "waiting for the charge point to connect; press Ctrl-C to stop")
+	if len(cfg.Chargers) > 1 {
+		fmt.Fprintf(cmd.OutOrStdout(), "waiting for %d charge points to connect; press Ctrl-C to stop\n", len(cfg.Chargers))
+	} else {
+		fmt.Fprintln(cmd.OutOrStdout(), "waiting for the charge point to connect; press Ctrl-C to stop")
+	}
 
 	done := make(chan struct{})
 	go func() {

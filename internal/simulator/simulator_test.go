@@ -26,10 +26,10 @@ const (
 
 func testConfig() *config.Config {
 	return &config.Config{
-		Charger: config.Charger{
+		Chargers: []config.Charger{{
 			ID:                testCP,
 			HeartbeatInterval: config.NewDuration(60 * time.Second),
-		},
+		}},
 		Auth: config.Auth{DefaultIDTag: testTag},
 		Location: config.Location{
 			EVSEs: []config.EVSE{

@@ -77,7 +77,7 @@ does not report shows as `not reported`. That is not an error.
 | Key | Why it matters |
 |---|---|
 | `ReserveConnectorZeroSupported` | Informational: cpms always reserves one EVSE. |
-| `AuthorizeRemoteTxRequests` | If true, the station asks cpms to `Authorize` the tag of a remote start. cpms accepts only `auth.default_id_tag`. |
+| `AuthorizeRemoteTxRequests` | If true, the station asks cpms to `Authorize` the tag of a remote start. cpms accepts `auth.default_id_tag` and `auth.id_tags`. |
 | `LocalAuthListEnabled`, `LocalPreAuthorize`, `LocalAuthorizeOffline` | Whether the station lets tags charge without asking cpms. |
 | `NumberOfConnectors` | Checked against the EVSEs in config. |
 | `HeartbeatInterval` | cpms sets it at boot from `charger.heartbeat_interval`. |

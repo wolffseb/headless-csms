@@ -35,7 +35,7 @@ func loadConfig(t *testing.T, path string, modTime time.Time) *config.Config {
 // last_updated rule show in the output. The fraction checks that it is
 // dropped from the wire format.
 func fixedSnapshot(cfg *config.Config, staticAt time.Time) core.Snapshot {
-	cp := core.ChargePointSnapshot{ID: cfg.Charger.ID, Online: true}
+	cp := core.ChargePointSnapshot{ID: cfg.Chargers[0].ID, Online: true}
 	for i, e := range cfg.Location.EVSEs {
 		s := core.EVSESnapshot{UID: e.UID, ConnectorID: e.OCPPConnectorID,
 			Status: core.StatusAvailable, LastUpdated: staticAt.Add(-time.Hour)}

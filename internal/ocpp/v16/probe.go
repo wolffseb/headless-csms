@@ -32,7 +32,7 @@ var probedSettings = []struct {
 	{KeyReserveConnectorZeroSupported,
 		"whether the whole station can be reserved at once; cpms always reserves one EVSE, so this is informational"},
 	{KeyAuthorizeRemoteTxRequests,
-		"if true, the station asks cpms to Authorize the tag of a remote start; cpms accepts only auth.default_id_tag"},
+		"if true, the station asks cpms to Authorize the tag of a remote start; cpms accepts auth.default_id_tag and auth.id_tags"},
 	{KeyLocalAuthListEnabled,
 		"if true, a whitelist held on the station can let tags charge without asking cpms"},
 	{KeyLocalPreAuthorize,

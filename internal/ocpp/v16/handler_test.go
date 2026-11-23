@@ -23,10 +23,10 @@ var testNow = time.Date(2026, 8, 14, 12, 30, 0, 0, time.UTC)
 
 func testConfig() *config.Config {
 	return &config.Config{
-		Charger: config.Charger{
+		Chargers: []config.Charger{{
 			ID:                testCP,
 			HeartbeatInterval: config.NewDuration(60 * time.Second),
-		},
+		}},
 		Auth: config.Auth{DefaultIDTag: testTag},
 		Location: config.Location{
 			EVSEs: []config.EVSE{

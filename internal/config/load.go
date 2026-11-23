@@ -70,9 +70,22 @@ func parse(r io.Reader) (*Config, error) {
 // normalize trims incidental whitespace and formatting so that validation and
 // everything downstream see one canonical form.
 func (c *Config) normalize() {
-	c.Charger.ID = strings.TrimSpace(c.Charger.ID)
-	c.Charger.IP = strings.TrimSpace(c.Charger.IP)
-	c.Charger.OCPPVersion = strings.TrimSpace(c.Charger.OCPPVersion)
+	// The singular form becomes a one-element Chargers. If both forms are
+	// given, both are kept so that Validate can report the conflict.
+	if c.LegacyCharger != nil && len(c.Chargers) == 0 {
+		c.Chargers = []Charger{*c.LegacyCharger}
+		c.LegacyCharger = nil
+		c.singular = true
+	}
+	for i := range c.Chargers {
+		ch := &c.Chargers[i]
+		ch.ID = strings.TrimSpace(ch.ID)
+		ch.IP = strings.TrimSpace(ch.IP)
+		ch.OCPPVersion = strings.TrimSpace(ch.OCPPVersion)
+	}
+	for i := range c.Auth.IDTags {
+		c.Auth.IDTags[i] = strings.TrimSpace(c.Auth.IDTags[i])
+	}
 	c.Server.OCPPBind = strings.TrimSpace(c.Server.OCPPBind)
 	c.Server.OCPIBind = strings.TrimSpace(c.Server.OCPIBind)
 	c.Auth.DefaultIDTag = strings.TrimSpace(c.Auth.DefaultIDTag)
@@ -92,6 +105,7 @@ func (c *Config) normalize() {
 	for i := range c.Location.EVSEs {
 		e := &c.Location.EVSEs[i]
 		e.UID = strings.TrimSpace(e.UID)
+		e.Charger = strings.TrimSpace(e.Charger)
 		e.EVSEID = strings.TrimSpace(e.EVSEID)
 		for j := range e.Connectors {
 			conn := &e.Connectors[j]

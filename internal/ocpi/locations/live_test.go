@@ -32,9 +32,9 @@ func TestLiveStatusFromTheSimulator(t *testing.T) {
 		NewChargePoint: func(conn *ocppj.Conn) (ocpp.ChargePoint, error) {
 			return v16.NewChargePoint(conn, h.cfg), nil
 		},
-		Accept:      func(id string) bool { return id == h.cfg.Charger.ID },
+		Accept:      func(id string) bool { return id == h.cfg.Chargers[0].ID },
 		CallTimeout: 5 * time.Second,
-		IdleTimeout: h.cfg.Charger.HeartbeatTimeout.Duration(),
+		IdleTimeout: h.cfg.Chargers[0].HeartbeatTimeout.Duration(),
 		Log:         log,
 	})
 	if err != nil {
@@ -51,7 +51,7 @@ func TestLiveStatusFromTheSimulator(t *testing.T) {
 
 	sim, err := simulator.New(simulator.Options{
 		URL:        "ws://" + server.Addr(),
-		ID:         h.cfg.Charger.ID,
+		ID:         h.cfg.Chargers[0].ID,
 		Connectors: len(h.cfg.Location.EVSEs),
 		IDTag:      h.cfg.Auth.DefaultIDTag,
 		Log:        log,
