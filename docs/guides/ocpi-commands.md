@@ -39,11 +39,20 @@ Spec: [Commands module](https://github.com/ocpi/ocpi/blob/release-2.3.0-bugfixes
 {
   "response_url": "https://emsp.example/ocpi/commands/RESERVE_NOW/9a41",
   "token": { "uid": "NL-ABC-C00012345", "type": "RFID", "contract_id": "NL-ABC-C00012345" },
-  "expiry_date": "2026-11-23T15:30:00Z",
+  "expiry_date": "2099-12-31T23:00:00Z",
   "reservation_id": "RES-0001",
   "location_id": "SITE-01",
   "evse_uid": "ALP-HYC-001-1"
 }
+```
+
+The `expiry_date` is a placeholder far in the future, which cpms accepts but which holds the
+EVSE for a very long time. Put a real one in, at least a minute ahead (anything sooner is
+`REJECTED`), for example 30 minutes from now:
+
+```sh
+date -u -v+30M +%Y-%m-%dT%H:%M:%SZ        # macOS
+date -u -d '+30 minutes' +%Y-%m-%dT%H:%M:%SZ   # Linux
 ```
 
 ```sh
@@ -104,6 +113,13 @@ A response that is not `ACCEPTED` has `timeout: 0`: no result is coming.
 !!! note "`START_SESSION` without `evse_uid`"
     The spec makes `evse_uid` optional here, and so does cpms: it picks the first
     `AVAILABLE` EVSE. Name the EVSE if the order of `location.evses` is not what you want.
+
+!!! note "`START_SESSION` on an EVSE reserved for another tag"
+    cpms does not check reservations before it passes a `START_SESSION` on, so naming an EVSE
+    that is reserved for another tag is answered `ACCEPTED` like any other. The station then
+    decides: a 1.6 station refuses a remote start for another tag on a reserved connector, and
+    the `CommandResult` is `REJECTED`. The reserved tag itself can start. Without an `evse_uid`
+    a reserved EVSE is never picked, because it does not read `AVAILABLE`.
 
 ### The result
 
@@ -222,6 +238,18 @@ charger's too.
 # register a partner, then POST reserve.json as above      # terminal 3
 ./bin/cpms status
 ```
+
+Two things the block leaves out:
+
+- **Register a partner first.** Commands need `TOKEN_C`, which only a registered partner
+  has, and results go to the partner's `response_url`. The `curl` that registers one is in
+  [OCPI partner](ocpi-partner.md#steps) ("Try it by hand with curl"); its `url` must
+  answer with OCPI versions, or the registration fails with `3001`.
+- **The simulator uses the same `config.yaml`** as `cpms run` (the one in the working
+  directory, or the one `-c` names): it takes the charger, its EVSEs and the CSMS address
+  from it, and `reserve.json` has to use that file's `location_id` and EVSE uids. To redeem
+  the reservation at the simulator with the partner's token, start it with `--tag` set to
+  that token's `uid`.
 
 `cpms simulate charger --scenario reject-reserve` makes the result `REJECTED`, `occupied`
 gives `EVSE_OCCUPIED`, `slow` gives `TIMEOUT`, and `unlock-fails` turns an
