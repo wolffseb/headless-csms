@@ -84,6 +84,11 @@ func logHandler(path, level string) (*logFile, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The state directory may be new: this runs before state.Open would
+	// create it, and creates it as state.LockPath does.
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("creating the log directory: %w", err)
+	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("opening the log file: %w", err)

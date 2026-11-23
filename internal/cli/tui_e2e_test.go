@@ -299,3 +299,27 @@ func TestHeadlessServesAndStopsOnSIGINT(t *testing.T) {
 		})
 	}
 }
+
+// A first run on a new machine: the state directory is not there yet, and the
+// TUI must create it, as headless always has.
+func TestTUIRunsWithAStateDirectoryThatDoesNotExist(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the binary")
+	}
+	t.Parallel()
+
+	const port = 19658
+	s := tuiStation(t, port)
+	state := filepath.Join(shortDir(t), "new", "state.json")
+	r := startPTY(t, buildCPMS(t), "run", "-c", s.configPath, "--state", state, "--socket", s.socketPath)
+
+	r.waitForScreen("cpms · 0/1 chargers online")
+	r.press("q")
+	if code := r.waitExit(); code != 0 {
+		t.Fatalf("exit code %d, want 0; it drew:\n%s", code, r.out.String())
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(state), "cpms.log")); err != nil {
+		t.Errorf("cpms.log: %v", err)
+	}
+	requireReleased(t, s, port)
+}

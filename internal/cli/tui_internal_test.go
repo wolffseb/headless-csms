@@ -53,3 +53,26 @@ func TestLogHandlerRejectsAnUnknownLevel(t *testing.T) {
 		t.Errorf("a bad level must not leave a file behind (stat: %v)", err)
 	}
 }
+
+// The state directory may not exist yet: the log is opened before state.Open
+// would create it, so logHandler creates it, private like state.LockPath does.
+func TestLogHandlerCreatesTheStateDirectory(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join(t.TempDir(), "a", "b")
+	f, err := logHandler(filepath.Join(dir, DefaultLogFile), "info")
+	if err != nil {
+		t.Fatalf("logHandler in a directory that does not exist: %v", err)
+	}
+	_ = f.f.Close()
+
+	for path, want := range map[string]os.FileMode{dir: 0o700, filepath.Join(dir, DefaultLogFile): 0o600} {
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fi.Mode().Perm(); got != want {
+			t.Errorf("%s has mode %v, want %v", path, got, want)
+		}
+	}
+}
