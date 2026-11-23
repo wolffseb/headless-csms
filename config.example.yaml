@@ -37,7 +37,9 @@ auth:
   default_id_tag: "04A1B2C3D4"
   # More RFID tags accepted on every charger, besides default_id_tag.
   # Optional. idTags compare case-insensitively, so duplicates (also of the
-  # default) are an error.
+  # default) are an error. Tags an OCPI partner vouches for need no entry
+  # here: the token of an active reservation, and that of a START_SESSION
+  # for 15 minutes.
   # id_tags:
   #   - "04A1B2C3D5"
 

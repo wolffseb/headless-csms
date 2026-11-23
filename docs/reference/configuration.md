@@ -52,6 +52,10 @@ Every tag in `default_id_tag` and `id_tags` is accepted on every charger, in `Au
 `StartTransaction`. OCPP idTags are case-insensitive, so a duplicate that differs only in
 case is an error.
 
+Tags an OCPI partner vouches for are accepted too, without being listed here: the token of
+an active reservation, and the token of a `START_SESSION` for 15 minutes. See
+[Take commands from the partner](../guides/ocpi-commands.md#which-tags-the-station-accepts).
+
 ## `ocpi`
 
 | Field | Required | Default | |

@@ -13,10 +13,13 @@ A terminal charge point management system for a single OCPP charging station.
   `locations`), so a backend can register and pull the location with live EVSE status;
 - **PATCHes** EVSE status to the registered partner whenever it changes, whether the
   change came from the terminal or from someone physically plugging in a car;
+- takes **OCPI commands** (`RESERVE_NOW`, `CANCEL_RESERVATION`, `START_SESSION`,
+  `STOP_SESSION`, `UNLOCK_CONNECTOR`) from the partner, answers each at once, and posts the
+  station's result to its `response_url`, so a backend can reserve the station over OCPI;
 - includes a **charge point simulator**, so all of it runs on a laptop without hardware;
 - needs no database, no container and no web UI: one hand-edited config file, one binary.
 
-Planned: OCPI commands (`RESERVE_NOW`), a terminal UI and OCPP 2.0.1. See the
+Planned: a terminal UI and OCPP 2.0.1. See the
 [status](https://wolffseb.github.io/headless-csms/development/#status).
 
 ## Quickstart
@@ -50,7 +53,7 @@ With a real station, set its CSMS URL to `ws://<host running cpms>:9000/ocpp/<ch
 | [Quickstart](https://wolffseb.github.io/headless-csms/quickstart/) | The steps above, with output |
 | [Concepts](https://wolffseb.github.io/headless-csms/concepts/) | Who connects to whom, vocabulary, status mapping |
 | [Connect a real station](https://wolffseb.github.io/headless-csms/guides/connect-station/) | Station setup and `cpms probe` |
-| [Guides](https://wolffseb.github.io/headless-csms/guides/charging-session/) | Sessions, simulator, metering, smart charging, OCPI registration and status push |
+| [Guides](https://wolffseb.github.io/headless-csms/guides/charging-session/) | Sessions, simulator, metering, smart charging, OCPI registration, status push and commands |
 | [CLI reference](https://wolffseb.github.io/headless-csms/reference/cli/) | Every command, flag and exit code |
 | [Configuration](https://wolffseb.github.io/headless-csms/reference/configuration/) | `config.yaml` and `state.json` |
 | [OCPI API](https://wolffseb.github.io/headless-csms/reference/ocpi-api/) | Endpoints, auth, examples |

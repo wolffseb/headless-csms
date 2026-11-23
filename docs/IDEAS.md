@@ -177,6 +177,11 @@ without floats.
 Smaller things that came up while planning and were deliberately left out. Each links to
 where it was decided.
 
+- **A `ReserveNow` from an OCPI `RESERVE_NOW` lost to a dropped connection.** The
+  reservation stays at the station until it expires, and new reservations on that EVSE are
+  answered `Occupied` meanwhile. This is the same limit as the item below, which a persisted
+  orphan id would fix for both; the partner is told `FAILED` or `TIMEOUT` in the
+  `CommandResult`. Known when #16 was written, left out of it.
 - **Cancel orphaned reservations on reconnect.** If a ReserveNow fails because the connection
   dropped, the CancelReservation in `control` cannot reach the station, which keeps the
   reservation until it expires and answers Occupied meanwhile. Fix: persist the orphan ids

@@ -68,7 +68,7 @@ Built in tracked steps. Each lands as its own pull request.
 | 5 | OCPI foundation: versions + credentials handshake | :material-check: done |
 | 6 | OCPI Locations module (sender) | :material-check: done |
 | 7 | PATCH location on status change | :material-check: done |
-| 8 | OCPI Commands module (receiver) | |
+| 8 | OCPI Commands module (receiver) | :material-check: done |
 | 9 | Terminal UI | |
 | 10 | OCPP 2.0.1 | |
 | 11 | Docs and release builds | |

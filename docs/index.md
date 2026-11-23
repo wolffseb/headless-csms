@@ -53,7 +53,7 @@ The [quickstart](quickstart.md) walks through it, output included.
 | Test without hardware | [`cpms simulate charger`](guides/simulator.md) | :material-check: |
 | OCPI versions, credentials, locations | [OCPI API](reference/ocpi-api.md) | :material-check: |
 | Push status changes to the partner | [OCPI `PATCH`](guides/ocpi-push.md) | :material-check: |
-| OCPI commands (`RESERVE_NOW`, ...) | | planned |
+| OCPI commands (`RESERVE_NOW`, ...) | [Commands module](guides/ocpi-commands.md) | :material-check: |
 | OCPP 2.0.1, terminal UI | | planned |
 
 The full list is in the [roadmap status](development.md#status).

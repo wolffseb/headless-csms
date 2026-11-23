@@ -11,7 +11,7 @@ The important flows, message by message. Message names are OCPP 1.6
 | [Expiry and restart](#expiry-and-restarting-cpms) | A timer, or a restart |
 | [Silence](#the-station-goes-silent) | A missing heartbeat |
 | [Reconnect](#the-station-reconnects) | The station dialling in again |
-| [OCPI reserve (planned)](#planned-an-ocpi-partner-reserves) | A partner's `RESERVE_NOW` |
+| [OCPI reserve](#an-ocpi-partner-reserves) | A partner's `RESERVE_NOW` |
 
 ## Startup, and the station connecting
 
@@ -208,10 +208,12 @@ Each request is bounded by `charger.call_timeout` and nothing is retried. A stat
 without the RemoteTrigger profile (`Rejected`, `NotImplemented`, or a CALLERROR) gets one
 INFO line in the log and stays connected; its EVSEs then wait for its next status change.
 
-## Planned: an OCPI partner reserves
+## An OCPI partner reserves
 
-[Roadmap](../development.md#status) step 8, not built yet. The status `PATCH` at the end is
-[already sent](../guides/ocpi-push.md). The OCPI side ends in the same `control.Reserve` as the terminal.
+The OCPI side ends in the same `control.Reserve` as the terminal. The command is answered
+before the station is asked, and the result is posted afterwards. See
+[Take commands from the partner](../guides/ocpi-commands.md). The status `PATCH` at the end
+is [the push](../guides/ocpi-push.md).
 
 ```mermaid
 sequenceDiagram
@@ -226,7 +228,7 @@ sequenceDiagram
     O->>Ctl: Reserve (same path as the terminal)
     Ctl->>St: ReserveNow
     St-->>Ctl: Accepted
-    O->>P: POST response_url: CommandResult ACCEPTED
+    O->>P: POST response_url: CommandResult ACCEPTED (own goroutine, retried)
     St->>Ctl: StatusNotification Reserved
     O->>P: PATCH /locations/.../{evse_uid} {status: RESERVED}
 ```
