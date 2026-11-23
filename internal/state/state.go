@@ -26,8 +26,11 @@ import "time"
 //
 // Version 2 added next_charging_profile_id and charging_profiles. A version 1
 // file has neither, which decodes as a zero counter and no profiles: the
-// migration is to read it and write it back as version 2.
-const Version = 2
+// migration is to read it and write it back as the current version.
+//
+// Version 3 added reservations[].response_registration. A version 2 file has
+// none, which decodes as the zero time: the migration is the same as from 1.
+const Version = 3
 
 // State is the whole of state.json.
 type State struct {

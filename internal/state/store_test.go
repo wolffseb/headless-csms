@@ -99,7 +99,7 @@ func TestEmptyListsAreWrittenAsArrays(t *testing.T) {
 	}
 
 	data := readFile(t, path)
-	for _, want := range []string{`"reservations": []`, `"transactions": []`, `"charging_profiles": []`, `"version": 2`} {
+	for _, want := range []string{`"reservations": []`, `"transactions": []`, `"charging_profiles": []`, `"version": 3`} {
 		if !strings.Contains(data, want) {
 			t.Errorf("file does not contain %s:\n%s", want, data)
 		}
@@ -258,7 +258,7 @@ func TestOpenRefusesANewerVersion(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "state.json")
-	const newer = `{"version": 3}`
+	const newer = `{"version": 4}`
 	writeFile(t, path, newer)
 
 	_, err := Open(path)
@@ -513,10 +513,71 @@ func TestOpenMigratesVersion1(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := readFile(t, path)
-	for _, want := range []string{`"version": 2`, `"charging_profiles": []`, `"next_charging_profile_id": 3`, `"next_reservation_id": 4`} {
+	for _, want := range []string{`"version": 3`, `"charging_profiles": []`, `"next_charging_profile_id": 3`, `"next_reservation_id": 4`} {
 		if !strings.Contains(data, want) {
 			t.Errorf("migrated file lacks %s:\n%s", want, data)
 		}
+	}
+}
+
+// A version 2 file has no reservations[].response_registration, which decodes
+// as the zero time; it keeps its reservations, and the next write is
+// version 3.
+func TestOpenMigratesVersion2(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "state.json")
+	writeFile(t, path, `{
+  "version": 2,
+  "next_reservation_id": 4,
+  "next_transaction_id": 9,
+  "next_remote_start_id": 2,
+  "next_charging_profile_id": 5,
+  "reservations": [{"id": 3, "charge_point_id": "cp1", "evse_uid": "EVSE-1", "id_tag": "TAG",
+    "expires_at": "2030-01-01T00:00:00Z", "created_at": "2029-12-31T00:00:00Z", "source": "ocpi",
+    "response_url": "https://emsp.example/result/r1"}],
+  "transactions": [],
+  "charging_profiles": []
+}
+`)
+	s := mustOpen(t, path)
+	st := s.Get()
+	if st.Version != 3 || Version != 3 {
+		t.Errorf("version = %d (const %d), want 3", st.Version, Version)
+	}
+	if len(st.Reservations) != 1 || st.Reservations[0].ID != 3 ||
+		st.Reservations[0].ResponseURL != "https://emsp.example/result/r1" ||
+		!st.Reservations[0].ResponseRegistration.IsZero() || st.NextChargingProfileID != 5 {
+		t.Errorf("version 2 file read as %+v", st)
+	}
+
+	reg := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := s.Update(func(st *State) error { st.Reservations[0].ResponseRegistration = reg; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	data := readFile(t, path)
+	for _, want := range []string{`"version": 3`, `"response_registration": "2030-01-01T00:00:00Z"`, `"next_charging_profile_id": 5`} {
+		if !strings.Contains(data, want) {
+			t.Errorf("migrated file lacks %s:\n%s", want, data)
+		}
+	}
+	if got := mustOpen(t, path).Get().Reservations[0].ResponseRegistration; !got.Equal(reg) {
+		t.Errorf("response_registration read back as %v", got)
+	}
+}
+
+// A version 1 file still opens and is written as version 3.
+func TestOpenWritesVersion1AsCurrent(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "state.json")
+	writeFile(t, path, `{"version": 1, "next_reservation_id": 4, "reservations": [], "transactions": []}`)
+	s := mustOpen(t, path)
+	if err := s.Update(func(st *State) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if data := readFile(t, path); !strings.Contains(data, `"version": 3`) {
+		t.Errorf("version 1 file rewritten without version 3:\n%s", data)
 	}
 }
 
