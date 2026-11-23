@@ -189,8 +189,15 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	events, unsubscribe := svc.Subscribe("log")
 	defer unsubscribe()
 
-	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
+	// Signal handling stays registered until run returns, so a second Ctrl-C
+	// during shutdown is swallowed, whether the first was a signal or `q`.
+	// Calling NotifyContext's stop earlier would restore the default action,
+	// which kills cpms with a Reserve's cancel still to be sent. Quitting the
+	// UI therefore cancels ctx itself, below, and leaves the signals alone.
+	sigCtx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	ctx, cancelRun := context.WithCancel(sigCtx)
+	defer cancelRun()
 
 	// The pusher mirrors EVSE status changes to the OCPI partner. It lives
 	// on ctx, so shutdown cancels a PATCH that is on the wire.
@@ -246,11 +253,11 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 			Config: cfg, Core: svc, Control: commands,
 			Registration: registrar, Push: pusher,
 			Describe: describe,
-			Stop:     stop,
+			Stop:     cancelRun,
 			Logs:     ui.sink, LogPath: ui.logPath, Startup: startup,
 			In: ui.in, Out: ui.out,
 		})
-		stop()
+		cancelRun()
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "shutting down")
 	// Each listener gets its own grace, started when its turn comes:

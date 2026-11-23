@@ -16,6 +16,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
 	"github.com/creack/pty"
+
+	"github.com/wolffseb/cli-cpms/internal/simulator"
 )
 
 // The TUI tests run the real binary: only it has a terminal to draw on, and
@@ -320,6 +322,48 @@ func TestTUIRunsWithAStateDirectoryThatDoesNotExist(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(state), "cpms.log")); err != nil {
 		t.Errorf("cpms.log: %v", err)
+	}
+	requireReleased(t, s, port)
+}
+
+// Quitting the TUI must leave signal handling as headless does until the
+// shutdown is over: a second Ctrl-C while cpms waits for a Reserve and its
+// cancel is swallowed, not the default action that kills the process and
+// leaves the station holding a reservation cpms has forgotten.
+func TestTUISecondSIGINTDuringShutdownIsSwallowed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the binary and waits out a call timeout")
+	}
+	t.Parallel()
+
+	const port = 19660
+	s := &station{
+		t:    t,
+		port: port,
+		configPath: runConfigPorts(t, port, port+1,
+			"heartbeat_timeout: 90s", "heartbeat_timeout: 90s\n  call_timeout: 2s"),
+		socketPath: filepath.Join(shortDir(t), "cpms.sock"),
+	}
+	r := startPTY(t, buildCPMS(t), "run", "-c", s.configPath, "--socket", s.socketPath)
+	r.waitForScreen("cpms · 0/1 chargers online")
+
+	// A station that answers after the call timeout keeps the Reserve (and
+	// the cancel that follows it) pending for most of the shutdown.
+	s.connect(func(o *simulator.Options) {
+		o.Scenario = simulator.ScenarioSlow
+		o.SlowDelay = 3 * time.Second
+	})
+	r.press("r")
+	r.waitForScreen("reserve EVSE-1: waiting for the station")
+	r.press("q")
+	waitForOutput(t, r.out, "shutting down")
+
+	if err := r.cmd.Process.Signal(syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+	if code := r.waitExit(); code != 0 {
+		t.Fatalf("exit code %d after a second SIGINT during shutdown, want 0 (it was killed by the signal); stderr:\n%s",
+			code, r.stderr.String())
 	}
 	requireReleased(t, s, port)
 }
