@@ -52,9 +52,10 @@ func TestReserveUsesTheDefaultTagAndFifteenMinutes(t *testing.T) {
 	if !strings.Contains(frame, want) {
 		t.Errorf("no %q in\n%s", want, frame)
 	}
-	// Once in the message line, once in the log.
-	if n := strings.Count(frame, want); n != 2 {
-		t.Errorf("the result should be in the log and the message line, found %d times", n)
+	// Only in the message line: the log has the event that says the same, and
+	// a failure, which the message line would lose, is the only result it keeps.
+	if n := strings.Count(frame, want); n != 1 {
+		t.Errorf("the result should be in the message line only, found %d times", n)
 	}
 }
 

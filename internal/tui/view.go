@@ -301,8 +301,6 @@ func (m *Model) logLines(h int) []line {
 		text := l.at.In(m.loc).Format("15:04:05") + " " + l.text
 		var style *lipgloss.Style
 		switch l.kind {
-		case lineOK:
-			style = &green
 		case lineErr:
 			style = &red
 		}

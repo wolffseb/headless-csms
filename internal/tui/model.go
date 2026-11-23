@@ -55,7 +55,6 @@ type lineKind int
 
 const (
 	lineInfo lineKind = iota
-	lineOK
 	lineErr
 	lineWarn
 )
@@ -437,9 +436,10 @@ func (m *Model) finish(a actionMsg) {
 		m.addLine(m.now(), lineErr, text)
 		return
 	}
-	text := "✓ " + a.uid + " " + a.text
-	m.msg = message{msgOK, text}
-	m.addLine(m.now(), lineOK, text)
+	// Not in the log: the event the station's answer causes is there, and
+	// the message line has the result. A failure is kept, because the
+	// message line is overwritten by the next result.
+	m.msg = message{msgOK, "✓ " + a.uid + " " + a.text}
 }
 
 func truncate(s string, n int) string {
