@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -420,5 +421,34 @@ func TestStartupLinesAndWarningsReachTheLog(t *testing.T) {
 	case l := <-sink.ch:
 		t.Errorf("an INFO record reached the pane: %q", l.text)
 	default:
+	}
+}
+
+// "Check the station's CSMS URL" is for a station that never reached cpms. On
+// screen, a charger that dropped has a last-seen time and is offline: say that.
+func TestNotConnectedErrorNamesTheOfflineCharger(t *testing.T) {
+	r := newRig(t)
+	r.twoStations() // ALP-HYC-002 has gone away at 09:31:00
+	r.ctl.err = fmt.Errorf("reserve: %w", ocpp.ErrNotConnected)
+	r.send(keyMsg("down"))
+	r.send(keyMsg("down"))
+	r.deliver(r.press("r"))
+
+	want := "✗ ALP-HYC-002 is offline (last seen 09:30:00)"
+	if got := r.view(); !strings.Contains(got, want) {
+		t.Errorf("want %q in\n%s", want, got)
+	}
+	if strings.Contains(r.view(), "CSMS URL") {
+		t.Errorf("the URL hint is for a charger that was never seen:\n%s", r.view())
+	}
+}
+
+func TestNotConnectedErrorForAChargerNeverSeenKeepsTheCLIWording(t *testing.T) {
+	r := newRig(t)
+	r.ctl.err = fmt.Errorf("reserve: %w", ocpp.ErrNotConnected)
+	r.deliver(r.press("r"))
+	want := "✗ ALP-HYC-001-1 reserve failed: reserve: " + ocpp.ErrNotConnected.Error()
+	if got := r.view(); !strings.Contains(got, want) {
+		t.Errorf("want Describe's wording %q in\n%s", want, got)
 	}
 }

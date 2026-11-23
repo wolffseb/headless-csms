@@ -431,7 +431,7 @@ func (m *Model) run(uid string, op socket.Op, label string, f func(context.Conte
 func (m *Model) finish(a actionMsg) {
 	delete(m.flights, a.uid)
 	if a.err != nil {
-		text := "✗ " + m.opts.Describe(a.op, a.uid, a.err)
+		text := "✗ " + m.describe(a)
 		m.msg = message{msgErr, text}
 		m.addLine(m.now(), lineErr, text)
 		return
@@ -440,6 +440,22 @@ func (m *Model) finish(a actionMsg) {
 	// the message line has the result. A failure is kept, because the
 	// message line is overwritten by the next result.
 	m.msg = message{msgOK, "✓ " + a.uid + " " + a.text}
+}
+
+// describe words a failure. It is the CLI's wording, except for a command
+// that found the station not connected: for a charger this screen has seen
+// the CSMS-URL hint points the wrong way, and "offline, last seen" is what the
+// charger line already says.
+func (m *Model) describe(a actionMsg) string {
+	if socket.Classify(a.err).Code == socket.CodeNotConnected {
+		for _, c := range m.chargers {
+			if c.st.Online || c.st.LastSeen == nil || !slices.ContainsFunc(c.evses, func(e socket.EVSEStatus) bool { return e.UID == a.uid }) {
+				continue
+			}
+			return fmt.Sprintf("%s is offline (last seen %s)", c.st.ID, m.clock(*c.st.LastSeen))
+		}
+	}
+	return m.opts.Describe(a.op, a.uid, a.err)
 }
 
 func truncate(s string, n int) string {
