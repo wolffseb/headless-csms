@@ -244,11 +244,21 @@ func (c *Config) ChargerByID(id string) (Charger, bool) {
 	return Charger{}, false
 }
 
+// evseOn reports whether e sits on the charger. An EVSE with no charger set
+// belongs to the only charger; the loader fills that in, this keeps a Config
+// built by hand (as tests do) working the same way.
+func (c *Config) evseOn(e EVSE, chargerID string) bool {
+	if e.Charger == "" {
+		return len(c.Chargers) == 1 && c.Chargers[0].ID == chargerID
+	}
+	return e.Charger == chargerID
+}
+
 // EVSEsOf returns the EVSEs on the given charger, in config order.
 func (c *Config) EVSEsOf(chargerID string) []EVSE {
 	var out []EVSE
 	for _, e := range c.Location.EVSEs {
-		if e.Charger == chargerID {
+		if c.evseOn(e, chargerID) {
 			out = append(out, e)
 		}
 	}
@@ -259,7 +269,7 @@ func (c *Config) EVSEsOf(chargerID string) []EVSE {
 // on the given charger.
 func (c *Config) EVSEByConnector(chargerID string, connectorID int) (EVSE, bool) {
 	for _, e := range c.Location.EVSEs {
-		if e.Charger == chargerID && e.OCPPConnectorID == connectorID {
+		if c.evseOn(e, chargerID) && e.OCPPConnectorID == connectorID {
 			return e, true
 		}
 	}

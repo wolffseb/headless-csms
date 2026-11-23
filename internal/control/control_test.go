@@ -29,8 +29,8 @@ var t0 = time.Date(2026, 10, 6, 10, 0, 0, 0, time.UTC)
 
 func testConfig() *config.Config {
 	return &config.Config{
-		Charger: config.Charger{ID: testCP},
-		Auth:    config.Auth{DefaultIDTag: testTag},
+		Chargers: []config.Charger{{ID: testCP}},
+		Auth:     config.Auth{DefaultIDTag: testTag},
 		Location: config.Location{
 			EVSEs: []config.EVSE{
 				{UID: "EVSE-1", OCPPConnectorID: 1},

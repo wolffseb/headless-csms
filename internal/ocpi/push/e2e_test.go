@@ -33,9 +33,9 @@ func newStation(t *testing.T, r *rig) *station {
 		NewChargePoint: func(conn *ocppj.Conn) (ocpp.ChargePoint, error) {
 			return v16.NewChargePoint(conn, r.cfg), nil
 		},
-		Accept:      func(id string) bool { return id == r.cfg.Charger.ID },
+		Accept:      func(id string) bool { return id == r.cfg.Chargers[0].ID },
 		CallTimeout: 5 * time.Second,
-		IdleTimeout: r.cfg.Charger.HeartbeatTimeout.Duration(),
+		IdleTimeout: r.cfg.Chargers[0].HeartbeatTimeout.Duration(),
 		Log:         log,
 	})
 	if err != nil {
@@ -52,7 +52,7 @@ func newStation(t *testing.T, r *rig) *station {
 
 	sim, err := simulator.New(simulator.Options{
 		URL:        "ws://" + server.Addr(),
-		ID:         r.cfg.Charger.ID,
+		ID:         r.cfg.Chargers[0].ID,
 		Connectors: len(r.cfg.Location.EVSEs),
 		IDTag:      r.cfg.Auth.DefaultIDTag,
 		Log:        log,

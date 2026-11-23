@@ -12,8 +12,9 @@ import (
 func probeConfig() *config.Config {
 	var cfg config.Config
 	cfg.Location.EVSEs = []config.EVSE{{UID: "EVSE-1", OCPPConnectorID: 1}}
-	cfg.Charger.HeartbeatInterval = config.NewDuration(60 * time.Second)
-	cfg.Charger.HeartbeatTimeout = config.NewDuration(90 * time.Second)
+	cfg.Chargers = []config.Charger{{}}
+	cfg.Chargers[0].HeartbeatInterval = config.NewDuration(60 * time.Second)
+	cfg.Chargers[0].HeartbeatTimeout = config.NewDuration(90 * time.Second)
 	return &cfg
 }
 

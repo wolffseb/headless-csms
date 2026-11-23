@@ -370,7 +370,7 @@ func TestDisconnectReadsUnknownOverHTTP(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	cpID := h.cfg.Charger.ID
+	cpID := h.cfg.Chargers[0].ID
 	h.core.Connected(cpID)
 	for _, e := range h.cfg.Location.EVSEs {
 		h.core.SetConnectorStatus(cpID, e.OCPPConnectorID, core.StatusAvailable, "NoError")

@@ -102,7 +102,7 @@ func TestRetryBacksOffThenSucceeds(t *testing.T) {
 		}
 		return answer{}
 	})
-	r.core.Connected(r.cfg.Charger.ID)
+	r.core.Connected(r.cfg.Chargers[0].ID)
 	r.setStatus(0, core.StatusCharging)
 
 	r.pushRound(1)
@@ -159,7 +159,7 @@ func TestGiveUpAfterMaxRetries(t *testing.T) {
 	r := newRig(t, func(c *config.Config) { c.OCPI.Push.MaxRetries = 3 })
 	r.register()
 	r.emsp.setAnswers(func(int) answer { return answer{httpStatus: http.StatusInternalServerError} })
-	r.core.Connected(r.cfg.Charger.ID)
+	r.core.Connected(r.cfg.Chargers[0].ID)
 	r.setStatus(0, core.StatusCharging)
 
 	r.pushRound(1)
@@ -248,7 +248,7 @@ func TestWhichFailuresAreRetried(t *testing.T) {
 			r := newRig(t)
 			r.register()
 			r.emsp.setAnswers(func(int) answer { return tc.reply })
-			r.core.Connected(r.cfg.Charger.ID)
+			r.core.Connected(r.cfg.Chargers[0].ID)
 			r.setStatus(0, core.StatusCharging)
 
 			r.pushRound(1)
@@ -282,7 +282,7 @@ func TestUnreachablePartnerIsRetried(t *testing.T) {
 	r := newRig(t)
 	r.register()
 	r.emsp.srv.Close()
-	r.core.Connected(r.cfg.Charger.ID)
+	r.core.Connected(r.cfg.Chargers[0].ID)
 	r.setStatus(0, core.StatusCharging)
 
 	r.pushRound(1)
@@ -317,7 +317,7 @@ func TestSupersededRetrySendsTheNewStatus(t *testing.T) {
 		}
 		return answer{}
 	})
-	r.core.Connected(r.cfg.Charger.ID)
+	r.core.Connected(r.cfg.Chargers[0].ID)
 	r.setStatus(0, core.StatusCharging)
 	r.pushRound(1)
 	r.emsp.waitPatches(1)
@@ -364,7 +364,7 @@ func TestChangeDuringAPatchIsPushedNext(t *testing.T) {
 		case <-time.After(5 * time.Second):
 		}
 	})
-	r.core.Connected(r.cfg.Charger.ID)
+	r.core.Connected(r.cfg.Chargers[0].ID)
 	r.setStatus(0, core.StatusCharging)
 	r.pushRound(1)
 	r.emsp.waitPatches(1)
@@ -390,7 +390,7 @@ func TestNotRegisteredPushesNothing(t *testing.T) {
 	t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
 
 	r := newRig(t)
-	r.core.Connected(r.cfg.Charger.ID)
+	r.core.Connected(r.cfg.Chargers[0].ID)
 	r.core.flush(t)
 	before := runtime.NumGoroutine()
 
@@ -440,7 +440,7 @@ func TestNoLocationsReceiverPushesNothing(t *testing.T) {
 	r.register()
 	calls := r.emsp.total()
 
-	r.core.Connected(r.cfg.Charger.ID)
+	r.core.Connected(r.cfg.Chargers[0].ID)
 	r.setStatus(0, core.StatusCharging)
 	r.pushRound(1)
 	eventually(t, "the round to end", func() bool { return r.pusher.Status().Pending == 0 })
@@ -458,7 +458,7 @@ func TestNoLocationsReceiverPushesNothing(t *testing.T) {
 func TestRegistrationIsReadAtSendTime(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	r.core.Connected(r.cfg.Charger.ID)
+	r.core.Connected(r.cfg.Chargers[0].ID)
 
 	r.setStatus(0, core.StatusCharging)
 	r.pushRound(1)
@@ -491,7 +491,7 @@ func TestUnregisterDuringDebounceStopsTheSend(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	r.register()
-	r.core.Connected(r.cfg.Charger.ID)
+	r.core.Connected(r.cfg.Chargers[0].ID)
 	r.setStatus(0, core.StatusCharging)
 	r.core.flush(t)
 	r.waitTimer(1)
@@ -513,7 +513,7 @@ func TestUnregisterDuringBackoffStopsTheRetry(t *testing.T) {
 	r := newRig(t)
 	r.register()
 	r.emsp.setAnswers(func(int) answer { return answer{httpStatus: http.StatusInternalServerError} })
-	r.core.Connected(r.cfg.Charger.ID)
+	r.core.Connected(r.cfg.Chargers[0].ID)
 	r.setStatus(0, core.StatusCharging)
 
 	r.pushRound(1)
@@ -546,7 +546,7 @@ func TestDropsPushEveryEVSEOncePerRise(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	r.register()
-	r.core.Connected(r.cfg.Charger.ID)
+	r.core.Connected(r.cfg.Chargers[0].ID)
 	r.core.flush(t)
 	if r.clk.Pending() != 0 {
 		t.Fatal("something is pending before any change")
@@ -596,7 +596,7 @@ func TestDisconnectPushesUnknownPerEVSE(t *testing.T) {
 
 	r.clk.Advance(time.Minute)
 	gone := r.clk.Now()
-	r.core.Disconnected(r.cfg.Charger.ID, "test")
+	r.core.Disconnected(r.cfg.Chargers[0].ID, "test")
 	r.pushRound(r.evses())
 	r.emsp.waitPatches(2 * r.evses())
 	eventually(t, "the round to end", func() bool { return r.pusher.Status().Pending == 0 })
@@ -628,12 +628,12 @@ func TestOtherEventsAreIgnored(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, func(c *config.Config) { c.Location.EVSEs[0].UID = "ROGUE-1" })
 	r.register()
-	r.core.Connected(r.cfg.Charger.ID)
+	r.core.Connected(r.cfg.Chargers[0].ID)
 
 	r.core.Connected("ROGUE")
 	r.core.SetConnectorStatus("ROGUE", 1, core.StatusCharging, "NoError")
-	r.core.SetConnectorStatus(r.cfg.Charger.ID, 99, core.StatusCharging, "NoError")
-	r.core.Heartbeat(r.cfg.Charger.ID)
+	r.core.SetConnectorStatus(r.cfg.Chargers[0].ID, 99, core.StatusCharging, "NoError")
+	r.core.Heartbeat(r.cfg.Chargers[0].ID)
 	r.core.flush(t)
 	// The pusher has handled them; a worker that was woken arms its timer a
 	// moment later, on its own goroutine. There is nothing to wait for when
@@ -661,7 +661,7 @@ func TestShutdownCancelsAnInFlightPatch(t *testing.T) {
 		case <-time.After(10 * time.Second):
 		}
 	})
-	r.core.Connected(r.cfg.Charger.ID)
+	r.core.Connected(r.cfg.Chargers[0].ID)
 	r.setStatus(0, core.StatusCharging)
 	r.pushRound(1)
 	r.emsp.waitPatches(1)
@@ -692,7 +692,7 @@ func TestShutdownDuringDebounceSendsNothing(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	r.register()
-	r.core.Connected(r.cfg.Charger.ID)
+	r.core.Connected(r.cfg.Chargers[0].ID)
 	r.setStatus(0, core.StatusCharging)
 	r.core.flush(t)
 	r.waitTimer(1)

@@ -38,7 +38,7 @@ func TestRunServesOCPIBesideOCPP(t *testing.T) {
 
 	// OCPP is up at the same time: a station connects and boots.
 	ocppAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(ocppPort))
-	client := ocpptest.MustDial(t, "ws://"+ocppAddr+"/ocpp/"+cfg.Charger.ID)
+	client := ocpptest.MustDial(t, "ws://"+ocppAddr+"/ocpp/"+cfg.Chargers[0].ID)
 	client.MustCall("BootNotification", map[string]string{
 		"chargePointVendor": "Alpitronic", "chargePointModel": "HYC300",
 	})

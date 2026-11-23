@@ -133,7 +133,7 @@ func serveWith(t *testing.T, ctx context.Context, station ocpp.ChargePoint, tune
 	t.Helper()
 
 	cfg := &config.Config{
-		Charger:  config.Charger{ID: "CP"},
+		Chargers: []config.Charger{{ID: "CP"}},
 		Auth:     config.Auth{DefaultIDTag: "TAG"},
 		Location: config.Location{EVSEs: []config.EVSE{{UID: "EVSE-1", OCPPConnectorID: 1}}},
 	}

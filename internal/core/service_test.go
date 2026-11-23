@@ -14,7 +14,7 @@ const testCP = "ALP-HYC-001"
 
 func testConfig() *config.Config {
 	return &config.Config{
-		Charger: config.Charger{ID: testCP},
+		Chargers: []config.Charger{{ID: testCP}},
 		Location: config.Location{
 			ID: "SITE-01",
 			EVSEs: []config.EVSE{
