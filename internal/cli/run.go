@@ -17,6 +17,7 @@ import (
 	"github.com/wolffseb/cli-cpms/internal/control/socket"
 	"github.com/wolffseb/cli-cpms/internal/core"
 	"github.com/wolffseb/cli-cpms/internal/ocpi"
+	ocpicommands "github.com/wolffseb/cli-cpms/internal/ocpi/commands"
 	"github.com/wolffseb/cli-cpms/internal/ocpi/credentials"
 	"github.com/wolffseb/cli-cpms/internal/ocpi/locations"
 	"github.com/wolffseb/cli-cpms/internal/ocpi/push"
@@ -164,7 +165,17 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 		Log:          logger,
 	})
 	ctl.AttachOCPI(registrar)
-	ocpiServer, err := startOCPI(ocpiDeps{Config: cfg, Core: svc, Log: logger, Credentials: registrar})
+	cmdReceiver, err := ocpicommands.New(ocpicommands.Options{
+		Config: cfg, Core: svc, Control: commands, Partner: registrar, Log: logger,
+	})
+	if err != nil {
+		commands.Close()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+		return err
+	}
+	ocpiServer, err := startOCPI(ocpiDeps{Config: cfg, Core: svc, Log: logger, Credentials: registrar, Commands: cmdReceiver})
 	if err != nil {
 		commands.Close()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
@@ -233,6 +244,11 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	if err := ocpiServer.Shutdown(ocpiCtx); err != nil {
 		logger.Warn("OCPI shutdown did not complete cleanly", "error", err)
 	}
+	// Shutdown cancelled the lifetime context the background commands and
+	// their result posts hang off; wait for them before control closes.
+	if err := cmdReceiver.Wait(ocpiCtx); err != nil {
+		logger.Warn("OCPI commands did not stop within the grace", "error", err)
+	}
 	ctl.Close()
 	// Reserve cancels in the background; let those finish while the station
 	// is still connected.
@@ -260,6 +276,8 @@ type ocpiDeps struct {
 	// Credentials is the registration: it decides what each token grants and
 	// serves the credentials module.
 	Credentials *credentials.Registrar
+	// Commands is the Commands module, which acts through control.
+	Commands *ocpicommands.Receiver
 }
 
 // startOCPI serves OCPI on server.ocpi_bind under the path of
@@ -288,7 +306,14 @@ func startOCPI(d ocpiDeps) (*ocpi.Server, error) {
 	if err := s.Register(sender.Module()); err != nil {
 		return nil, err
 	}
+	// Commands too needs module access. It is mounted last so that nothing
+	// that can fail comes after it but Start, which is undone below.
+	if err := d.Commands.Mount(s); err != nil {
+		return nil, err
+	}
 	if err := s.Start(); err != nil {
+		// Stops the commands module's watcher, which hangs off the server.
+		_ = s.Shutdown(context.Background())
 		return nil, err
 	}
 	return s, nil
