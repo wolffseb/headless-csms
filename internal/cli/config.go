@@ -21,7 +21,7 @@ func newConfigCommand(opts *options) *cobra.Command {
 }
 
 func newConfigSetCommand(opts *options) *cobra.Command {
-	return &cobra.Command{
+	c := &cobra.Command{
 		Use:   "set <key> <value>",
 		Short: "Change a configuration key on the station (OCPP ChangeConfiguration)",
 		Long: "Sets one of the STATION's OCPP configuration keys through a running `cpms run`.\n" +
@@ -30,6 +30,7 @@ func newConfigSetCommand(opts *options) *cobra.Command {
 			"Exits 0 when the station accepts it, and also when it answers RebootRequired,\n" +
 			"which is printed as a warning: the value takes effect after the station restarts.\n" +
 			"Rejected and NotSupported (an unknown key) exit 4.\n\n" +
+			"With more than one charger configured, --charger says which station to change.\n\n" +
 			"Example, to have the station report power and current in MeterValues:\n\n" +
 			"  cpms config set MeterValuesSampledData \\\n" +
 			"    Energy.Active.Import.Register,Power.Active.Import,Power.Offered,Current.Import,Current.Offered",
@@ -43,7 +44,10 @@ func newConfigSetCommand(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			raw, err := env.call(cmd, socket.Request{Op: socket.OpConfigSet, Key: key, Value: value})
+			if err := env.resolveCharger(cmd); err != nil {
+				return err
+			}
+			raw, err := env.call(cmd, socket.Request{Op: socket.OpConfigSet, Charger: env.charger, Key: key, Value: value})
 			if err != nil {
 				return err
 			}
@@ -58,6 +62,8 @@ func newConfigSetCommand(opts *options) *cobra.Command {
 			return nil
 		},
 	}
+	addChargerFlag(c)
+	return c
 }
 
 func newConfigValidateCommand(opts *options) *cobra.Command {

@@ -96,8 +96,8 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	// socketWait), so the CLI hears what happened.
 	ctl, err := socket.Listen(socket.Options{
 		Path:              socketPath,
-		ChargePointID:     cfg.Chargers[0].ID,                     // TODO(#85 B2)
-		UnregisterTimeout: cfg.Chargers[0].CallTimeout.Duration(), // TODO(#85 B2)
+		Config:            cfg,
+		UnregisterTimeout: maxCallTimeout(cfg),
 		Log:               logger,
 	})
 	if err != nil {

@@ -56,7 +56,7 @@ type Options struct {
 	Log       *slog.Logger
 }
 
-// Service performs actions on the configured station.
+// Service performs actions on the configured stations.
 type Service struct {
 	core     *core.Service
 	commands Commander
@@ -171,7 +171,7 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 	if err := s.checkEVSE(p.EVSEUID); err != nil {
 		return core.Reservation{}, err
 	}
-	cp, err := s.chargePoint()
+	cp, err := s.chargePoint(p.EVSEUID, "")
 	if err != nil {
 		return core.Reservation{}, err
 	}
@@ -300,7 +300,8 @@ func (s *Service) cancelOrphan(ctx context.Context, cp ocpp.ChargePoint, r core.
 
 // cancelAttempt sends one CancelReservation and waits for it.
 func (s *Service) cancelAttempt(ctx context.Context, cp ocpp.ChargePoint, id int) (ocpp.Result, error) {
-	if timeout := s.cfg.Chargers[0].CallTimeout.Duration(); timeout > 0 { // TODO(#85 B2)
+	ch, _ := s.cfg.ChargerByID(cp.ID())
+	if timeout := ch.CallTimeout.Duration(); timeout > 0 {
 		// The connection's own timers are what bound a busy or silent
 		// station, and their errors name the action and the timeout for the
 		// log. This deadline only backstops an implementation without them,
@@ -337,7 +338,7 @@ func (s *Service) Cancel(ctx context.Context, evseUID string) error {
 	if !ok {
 		return fmt.Errorf("%s: %w", evseUID, ErrNoReservation)
 	}
-	cp, err := s.chargePoint()
+	cp, err := s.chargePoint(evseUID, "")
 	if err != nil {
 		return err
 	}
@@ -363,7 +364,7 @@ func (s *Service) Start(ctx context.Context, evseUID, idTag string) error {
 	if err := s.checkEVSE(evseUID); err != nil {
 		return err
 	}
-	cp, err := s.chargePoint()
+	cp, err := s.chargePoint(evseUID, "")
 	if err != nil {
 		return err
 	}
@@ -397,7 +398,7 @@ func (s *Service) Stop(ctx context.Context, evseUID, txID string) error {
 	if err != nil {
 		return err
 	}
-	cp, err := s.chargePoint()
+	cp, err := s.chargePoint(evseUID, "")
 	if err != nil {
 		return err
 	}
@@ -450,7 +451,7 @@ func (s *Service) Unlock(ctx context.Context, evseUID string) error {
 	if err := s.checkEVSE(evseUID); err != nil {
 		return err
 	}
-	cp, err := s.chargePoint()
+	cp, err := s.chargePoint(evseUID, "")
 	if err != nil {
 		return err
 	}
@@ -471,7 +472,7 @@ func (s *Service) TriggerStatus(ctx context.Context, evseUID string) error {
 	if err := s.checkEVSE(evseUID); err != nil {
 		return err
 	}
-	cp, err := s.chargePoint()
+	cp, err := s.chargePoint(evseUID, "")
 	if err != nil {
 		return err
 	}
@@ -516,9 +517,10 @@ func (s *Service) TriggerStatus(ctx context.Context, evseUID string) error {
 // call timeout is not sent (ocpp.ErrNotSent); it is logged like any other
 // failure here and not retried.
 func (s *Service) RefreshStatusOnConnect(ctx context.Context, cp ocpp.ChargePoint) {
-	if cp.ID() != s.cfg.Chargers[0].ID { // TODO(#85 B2)
+	if _, ok := s.cfg.ChargerByID(cp.ID()); !ok {
 		return
 	}
+	evses := s.cfg.EVSEsOf(cp.ID())
 	if !s.sleep(ctx, s.bootGrace) {
 		return
 	}
@@ -527,7 +529,7 @@ func (s *Service) RefreshStatusOnConnect(ctx context.Context, cp ocpp.ChargePoin
 		return
 	}
 
-	for _, e := range s.cfg.Location.EVSEs {
+	for _, e := range evses {
 		res, err := cp.TriggerStatus(ctx, e.UID)
 		var rpcErr *ocpp.RPCError
 		switch {
@@ -548,7 +550,7 @@ func (s *Service) RefreshStatusOnConnect(ctx context.Context, cp ocpp.ChargePoin
 		return
 	}
 	s.log.Info("asked the station for the status of every EVSE after it connected without booting",
-		"charge_point", cp.ID(), "evses", len(s.cfg.Location.EVSEs))
+		"charge_point", cp.ID(), "evses", len(evses))
 }
 
 // sleep waits d on the service's clock. It reports false, early, if ctx ends
@@ -566,10 +568,11 @@ func (s *Service) sleep(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-// Probe asks the station what it supports and how it is set up. It changes
-// nothing, on the station or in core.
-func (s *Service) Probe(ctx context.Context) (ocpp.ProbeReport, error) {
-	cp, err := s.chargePoint()
+// Probe asks a station what it supports and how it is set up. It changes
+// nothing, on the station or in core. chargerID may be empty with one charger
+// configured.
+func (s *Service) Probe(ctx context.Context, chargerID string) (ocpp.ProbeReport, error) {
+	cp, err := s.chargePoint("", chargerID)
 	if err != nil {
 		return ocpp.ProbeReport{}, err
 	}
@@ -580,8 +583,8 @@ func (s *Service) Probe(ctx context.Context) (ocpp.ProbeReport, error) {
 // does not touch config.yaml. Accepted and RebootRequired both mean the
 // station took the value, so both come back as a Result for the caller to
 // word; anything else is a *RefusedError.
-func (s *Service) ChangeConfiguration(ctx context.Context, key, value string) (ocpp.Result, error) {
-	cp, err := s.chargePoint()
+func (s *Service) ChangeConfiguration(ctx context.Context, chargerID, key, value string) (ocpp.Result, error) {
+	cp, err := s.chargePoint("", chargerID)
 	if err != nil {
 		return ocpp.Result{}, err
 	}
@@ -611,10 +614,6 @@ func (s *Service) checkEVSE(evseUID string) error {
 		return fmt.Errorf("%w %q", ocpp.ErrUnknownEVSE, evseUID)
 	}
 	return nil
-}
-
-func (s *Service) chargePoint() (ocpp.ChargePoint, error) {
-	return s.commands.Command(s.cfg.Chargers[0].ID) // TODO(#85 B2)
 }
 
 func (s *Service) tagOrDefault(tag string) string {

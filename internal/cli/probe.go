@@ -74,8 +74,8 @@ func newProbeCommand(opts *options) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "probe",
-		Short: "Report what the connected station supports",
-		Long: "Asks the connected station for its configuration and reports which\n" +
+		Short: "Report what a connected station supports",
+		Long: "Asks a connected station for its configuration and reports which\n" +
 			"capabilities cpms relies on it has, the settings that change how it\n" +
 			"behaves towards cpms, and where it disagrees with config. It changes\n" +
 			"nothing on the station.\n\n" +
@@ -84,14 +84,18 @@ func newProbeCommand(opts *options) *cobra.Command {
 			"a warning, not a failure, and the command exits 0. Core is mandatory in\n" +
 			"OCPP 1.6, so it is assumed present when the station lists no feature\n" +
 			"profiles at all. A profile left out of a list as long as the station\n" +
-			"can make it (SupportedFeatureProfilesMaxLength) is unconfirmed too.",
+			"can make it (SupportedFeatureProfilesMaxLength) is unconfirmed too.\n\n" +
+			"With more than one charger configured, --charger says which to probe.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			env, err := newStationEnv(cmd, opts)
 			if err != nil {
 				return err
 			}
-			data, err := env.call(cmd, socket.Request{Op: socket.OpProbe})
+			if err := env.resolveCharger(cmd); err != nil {
+				return err
+			}
+			data, err := env.call(cmd, socket.Request{Op: socket.OpProbe, Charger: env.charger})
 			if err != nil {
 				if ExitCode(err) == ExitNotConnected {
 					return notConnected(cmd, env)
@@ -122,6 +126,7 @@ func newProbeCommand(opts *options) *cobra.Command {
 			return nil
 		},
 	}
+	addChargerFlag(cmd)
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the report as JSON (it always includes every key)")
 	cmd.Flags().BoolVar(&raw, "raw", false, "also list every configuration key the station reported")
 	return cmd
@@ -168,7 +173,22 @@ type check struct{ mark, text string }
 func configChecks(cfg *config.Config, r socket.ProbeResult) []check {
 	var out []check
 
-	evses := len(cfg.Location.EVSEs)
+	// What config says about the probed charger: its EVSEs and heartbeat
+	// settings. A result without a known charger id is read against the
+	// first, which is the only one when a single charger is configured.
+	charger, known := cfg.ChargerByID(r.ChargePoint.ID)
+	if !known {
+		charger = cfg.Chargers[0]
+	}
+	var mine []config.EVSE
+	var mineIdx []int
+	for i, e := range cfg.Location.EVSEs {
+		if e.Charger == charger.ID {
+			mine = append(mine, e)
+			mineIdx = append(mineIdx, i)
+		}
+	}
+	evses := len(mine)
 	switch {
 	case r.Connectors == nil:
 		out = append(out, check{markUnknown, "the station did not report how many connectors it has; cannot check it against config"})
@@ -178,11 +198,11 @@ func configChecks(cfg *config.Config, r socket.ProbeResult) []check {
 			plural(*r.Connectors, "connector"), plural(evses, "EVSE"))})
 	default:
 		var stray []check
-		for i, e := range cfg.Location.EVSEs {
+		for n, e := range mine {
 			if e.OCPPConnectorID > *r.Connectors {
 				stray = append(stray, check{markWarn, fmt.Sprintf(
 					"location.evses[%d] (%s) maps to ocpp_connector_id %d, but the station reports %s",
-					i, e.UID, e.OCPPConnectorID, plural(*r.Connectors, "connector"))})
+					mineIdx[n], e.UID, e.OCPPConnectorID, plural(*r.Connectors, "connector"))})
 			}
 		}
 		if len(stray) > 0 {
@@ -196,8 +216,8 @@ func configChecks(cfg *config.Config, r socket.ProbeResult) []check {
 		return append(out, check{markUnknown, "the station did not report its heartbeat interval; cannot check it against config"})
 	}
 	got := time.Duration(*r.HeartbeatIntervalSeconds) * time.Second
-	want := cfg.Chargers[0].HeartbeatInterval.Duration()   // TODO(#85 B2)
-	timeout := cfg.Chargers[0].HeartbeatTimeout.Duration() // TODO(#85 B2)
+	want := charger.HeartbeatInterval.Duration()
+	timeout := charger.HeartbeatTimeout.Duration()
 	switch {
 	case got >= timeout:
 		out = append(out, check{markWarn, fmt.Sprintf(
@@ -382,11 +402,11 @@ func supportMark(support string) string {
 // has to be configured with, and when it was last seen leaving.
 func notConnected(cmd *cobra.Command, env *stationEnv) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s is not connected to cpms, so there is nothing to probe.\n", env.cfg.Chargers[0].ID) // TODO(#85 B2)
-	fmt.Fprintf(&b, "Set the station's CSMS URL to:\n  %s\n", csmsURL(env.cfg, env.cfg.Chargers[0].ID))     // TODO(#85 B2)
+	fmt.Fprintf(&b, "%s is not connected to cpms, so there is nothing to probe.\n", env.charger)
+	fmt.Fprintf(&b, "Set the station's CSMS URL to:\n  %s\n", csmsURL(env.cfg, env.charger))
 
 	// Best effort: the probe already failed for the reason that matters.
-	if data, err := env.call(cmd, socket.Request{Op: socket.OpStatus}); err == nil {
+	if data, err := env.call(cmd, socket.Request{Op: socket.OpStatus, Charger: env.charger}); err == nil {
 		var st socket.Status
 		if json.Unmarshal(data, &st) == nil {
 			if d := st.ChargePoint.LastDisconnect; d != nil {

@@ -125,7 +125,7 @@ func (s *Server) dispatchProfile(ctx context.Context, req Request) Response {
 		l := req.Limit
 		params := control.LimitParams{
 			EVSEUID: req.target(), KW: l.KW, Amps: l.Amps, StackLevel: l.StackLevel, Force: l.Force,
-			TransactionID: l.TransactionID, Source: "cli",
+			TransactionID: l.TransactionID, Source: "cli", Charger: req.Charger,
 		}
 		if l.Purpose != "" {
 			purpose, err := ParsePurpose(l.Purpose)
@@ -155,7 +155,7 @@ func (s *Server) dispatchProfile(ctx context.Context, req Request) Response {
 		if err != nil {
 			return fail(&Error{Code: CodeUsage, Message: err.Error()})
 		}
-		rec, err := ctl.SetProfile(ctx, req.target(), p, "cli")
+		rec, err := ctl.SetProfile(ctx, req.Charger, req.target(), p, "cli")
 		if err != nil {
 			return fail(classifyProfile(err))
 		}
@@ -166,7 +166,7 @@ func (s *Server) dispatchProfile(ctx context.Context, req Request) Response {
 		if req.Clear != nil {
 			c = *req.Clear
 		}
-		params := control.ClearParams{ID: c.ID}
+		params := control.ClearParams{ID: c.ID, Charger: req.Charger}
 		if c.Purpose != "" {
 			purpose, err := ParsePurpose(c.Purpose)
 			if err != nil {
@@ -210,7 +210,7 @@ func (s *Server) dispatchProfile(ctx context.Context, req Request) Response {
 				unit = &u
 			}
 		}
-		sched, err := ctl.Schedule(ctx, req.target(), window, unit)
+		sched, err := ctl.Schedule(ctx, req.Charger, req.target(), window, unit)
 		if err != nil {
 			return fail(classifyProfile(err))
 		}

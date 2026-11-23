@@ -34,6 +34,10 @@ type LimitParams struct {
 	Force bool
 	// Source is who asked: "cli", "tui" or "ocpi".
 	Source string
+	// Charger is the station for a station-wide limit (EVSEUID ""); it may be
+	// empty with one charger configured. With an EVSE it may be left out,
+	// and must be the EVSE's charger if given.
+	Charger string
 }
 
 // ClearParams select the charging profiles to clear. Each nil field means
@@ -44,6 +48,9 @@ type ClearParams struct {
 	EVSEUID    *string
 	Purpose    *ocpp.ProfilePurpose
 	StackLevel *int
+	// Charger is the station to clear on; it may be empty when EVSEUID names
+	// an EVSE, or with one charger configured.
+	Charger string
 }
 
 // SetLimit installs a one-period Absolute profile that caps an EVSE, or the
@@ -99,22 +106,22 @@ func (s *Service) SetLimit(ctx context.Context, p LimitParams) (core.ChargingPro
 		profile.Schedule.Duration = &d
 		profile.ValidTo = &until
 	}
-	return s.setProfile(ctx, profile, p.Source, p.Force)
+	return s.setProfile(ctx, p.Charger, profile, p.Source, p.Force)
 }
 
 // SetProfile installs a full charging profile on an EVSE ("" for the
 // station). The caller's id is ignored: one is allocated, so a profile can
 // never replace one cpms did not mean it to. A Tx profile without a
 // transaction id is for the one session running on the EVSE.
-func (s *Service) SetProfile(ctx context.Context, evseUID string, p ocpp.ChargingProfile, source string) (core.ChargingProfile, error) {
+func (s *Service) SetProfile(ctx context.Context, chargerID, evseUID string, p ocpp.ChargingProfile, source string) (core.ChargingProfile, error) {
 	p.EVSEUID = evseUID
-	return s.setProfile(ctx, p, source, false)
+	return s.setProfile(ctx, chargerID, p, source, false)
 }
 
 // setProfile checks, allocates an id, sends, and records the profile once
 // the station accepts it. Nothing is recorded otherwise: the record is what
 // the station holds, as far as cpms knows.
-func (s *Service) setProfile(ctx context.Context, p ocpp.ChargingProfile, source string, force bool) (core.ChargingProfile, error) {
+func (s *Service) setProfile(ctx context.Context, chargerID string, p ocpp.ChargingProfile, source string, force bool) (core.ChargingProfile, error) {
 	if err := s.checkEVSEOrStation(p.EVSEUID); err != nil {
 		return core.ChargingProfile{}, err
 	}
@@ -131,7 +138,7 @@ func (s *Service) setProfile(ctx context.Context, p ocpp.ChargingProfile, source
 	if err := p.Validate(); err != nil {
 		return core.ChargingProfile{}, err
 	}
-	cp, err := s.chargePoint()
+	cp, err := s.chargePoint(p.EVSEUID, chargerID)
 	if err != nil {
 		return core.ChargingProfile{}, err
 	}
@@ -170,7 +177,11 @@ func (s *Service) ClearProfiles(ctx context.Context, c ClearParams) ([]core.Char
 			return nil, err
 		}
 	}
-	cp, err := s.chargePoint()
+	evse := ""
+	if c.EVSEUID != nil {
+		evse = *c.EVSEUID
+	}
+	cp, err := s.chargePoint(evse, c.Charger)
 	if err != nil {
 		return nil, err
 	}
@@ -204,14 +215,14 @@ func (s *Service) ClearProfiles(ctx context.Context, c ClearParams) ([]core.Char
 // Schedule asks the station for the limits it will apply to an EVSE ("" for
 // the station) over the next d: all profiles combined, as only the station
 // can work out. unit nil leaves the unit to the station.
-func (s *Service) Schedule(ctx context.Context, evseUID string, d time.Duration, unit *ocpp.RateUnit) (ocpp.CompositeSchedule, error) {
+func (s *Service) Schedule(ctx context.Context, chargerID, evseUID string, d time.Duration, unit *ocpp.RateUnit) (ocpp.CompositeSchedule, error) {
 	if err := s.checkEVSEOrStation(evseUID); err != nil {
 		return ocpp.CompositeSchedule{}, err
 	}
 	if d <= 0 || d%time.Second != 0 {
 		return ocpp.CompositeSchedule{}, fmt.Errorf("%w: duration %s is not a positive number of seconds", ocpp.ErrInvalidProfile, d)
 	}
-	cp, err := s.chargePoint()
+	cp, err := s.chargePoint(evseUID, chargerID)
 	if err != nil {
 		return ocpp.CompositeSchedule{}, err
 	}

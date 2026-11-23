@@ -135,14 +135,14 @@ func serveWith(t *testing.T, ctx context.Context, station ocpp.ChargePoint, tune
 	cfg := &config.Config{
 		Chargers: []config.Charger{{ID: "CP"}},
 		Auth:     config.Auth{DefaultIDTag: "TAG"},
-		Location: config.Location{EVSEs: []config.EVSE{{UID: "EVSE-1", OCPPConnectorID: 1}}},
+		Location: config.Location{EVSEs: []config.EVSE{{UID: "EVSE-1", Charger: "CP", OCPPConnectorID: 1}}},
 	}
 	c := core.New(cfg, core.WithLogger(discard()))
 	t.Cleanup(c.Close)
 	ctl := control.New(control.Options{Core: c, Commands: commands{station}, Config: cfg, Log: discard()})
 
 	path := filepath.Join(shortDir(t), "cpms.sock")
-	opts := socket.Options{Path: path, ChargePointID: "CP", Log: discard()}
+	opts := socket.Options{Path: path, Config: cfg, Log: discard()}
 	tune(&opts)
 	srv, err := socket.Listen(opts)
 	if err != nil {

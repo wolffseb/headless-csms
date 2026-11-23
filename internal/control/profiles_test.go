@@ -198,7 +198,7 @@ func TestSetProfileAllocatesItsOwnID(t *testing.T) {
 		ID: 999, Purpose: ocpp.PurposeTxDefault, Kind: ocpp.KindRelative, EVSEUID: "ignored",
 		Schedule: ocpp.ChargingSchedule{Unit: ocpp.UnitA, Periods: []ocpp.SchedulePeriod{{Limit: 16}, {Start: time.Minute, Limit: 10}}},
 	}
-	rec, err := r.ctl.SetProfile(context.Background(), "EVSE-2", p, "cli")
+	rec, err := r.ctl.SetProfile(context.Background(), "", "EVSE-2", p, "cli")
 	if err != nil {
 		t.Fatalf("SetProfile: %v", err)
 	}
@@ -270,12 +270,12 @@ func TestScheduleRefusedIsAnError(t *testing.T) {
 	r := newRig(t)
 	r.station.answer["composite-schedule"] = ocpp.Result{Status: ocpp.CommandRejected, Raw: "Rejected"}
 
-	_, err := r.ctl.Schedule(context.Background(), "", time.Hour, nil)
+	_, err := r.ctl.Schedule(context.Background(), "", "", time.Hour, nil)
 	var refused *control.RefusedError
 	if !errors.As(err, &refused) || refused.Op != control.OpSchedule || refused.EVSEUID != "station" {
 		t.Errorf("err = %v, want a refused composite schedule for the station", err)
 	}
-	if _, err := r.ctl.Schedule(context.Background(), "EVSE-1", 0, nil); !errors.Is(err, ocpp.ErrInvalidProfile) {
+	if _, err := r.ctl.Schedule(context.Background(), "", "EVSE-1", 0, nil); !errors.Is(err, ocpp.ErrInvalidProfile) {
 		t.Errorf("zero duration: err = %v", err)
 	}
 }

@@ -9,7 +9,7 @@ cpms [command] [flags]
 | Command | Does | Needs `cpms run` |
 |---|---|---|
 | [`run`](#cpms-run) | Runs the CSMS and the OCPI server | |
-| [`status`](#cpms-status) | Shows the station, EVSEs, reservations and sessions | yes |
+| [`status`](#cpms-status) | Shows the stations, EVSEs, reservations and sessions | yes |
 | [`reserve`](#cpms-reserve) | Reserves an EVSE for an RFID tag | yes |
 | [`cancel`](#cpms-cancel) | Cancels the reservation on an EVSE | yes |
 | [`start`](#cpms-start) | Starts a charging session | yes |
@@ -34,6 +34,24 @@ cpms [command] [flags]
 
 `--evse UID` takes an EVSE `uid` from config. It may be left out when only one EVSE is
 configured. A typo is caught before anything is sent, and the error lists the valid uids.
+
+### Several chargers
+
+With [`chargers:`](configuration.md#charger-and-chargers) in config, a command that names an
+EVSE (`reserve`, `cancel`, `start`, `stop`, `unlock`, and `limit` or `profile` with `--evse`)
+goes to the charger that EVSE sits on. You do not name the charger.
+
+A command about a station rather than an EVSE takes **`--charger ID`**: `probe`,
+`config set`, and `limit` / `profile` with `--station` (or `limit clear` with no `--evse`).
+`--charger` is required when more than one charger is configured, and may be left out
+otherwise. Without it the command exits 1 and lists the ids:
+
+```
+cpms: --charger is required with 2 chargers configured; one of: PRUESTEL_000, PRUESTEL_001
+```
+
+An unknown id exits 1 too, and so does `--evse` together with a `--charger` that does not
+own it.
 
 ## Exit codes
 
@@ -94,12 +112,32 @@ exits with "another cpms is already running".
 
 ### `cpms status`
 
-The station, per EVSE its status, reservation, session and [meter reading](../guides/metering.md),
+The stations, per EVSE its status, reservation, session and [meter reading](../guides/metering.md),
 and the OCPI registration.
 
 | Flag | |
 |---|---|
 | `--json` | A stable format for scripts. |
+| `--charger ID` | Show only this charger, in the single-charger layout. |
+
+With one charger the output is as below. With several, the table has one section per
+charger, in config order, with that charger's EVSEs, reservations and sessions under it, and
+the OCPI line once at the end. The JSON has a `chargers` array instead of the top-level
+`charge_point` and `evses`; each element holds those two keys for one charger.
+
+```
+PRUESTEL_000  online  last seen 10:04:03
+
+EVSE            STATUS     RESERVATION  TRANSACTION                          METER
+PRUESTEL_000-1  CHARGING   -            1 RFID_PRUESTEL_001 since 10:03:59   -
+
+PRUESTEL_001  offline  never seen
+
+EVSE            STATUS   RESERVATION  TRANSACTION  METER
+PRUESTEL_001-1  UNKNOWN  -            -            -
+
+OCPI  not registered
+```
 
 === "Table"
 
@@ -207,6 +245,7 @@ Reports what the connected station supports. Read-only. See [Probe report](probe
 
 | Flag | |
 |---|---|
+| `--charger ID` | The station to probe. Required with more than one charger. |
 | `--raw` | Also lists every configuration key the station reported. |
 | `--json` | The whole report as JSON, always with every key. |
 
@@ -225,6 +264,7 @@ Installs a one-period charging profile from now on.
 | `--kw` | | Power limit in kW, sent as W. Exactly one of `--kw` and `--amps`. |
 | `--amps` | | Current limit in A per phase. |
 | `--evse` / `--station` | the only EVSE | `--station` addresses the whole station (connector 0). |
+| `--charger` | the only charger | With `--station`: which station. Required with more than one charger. |
 | `--purpose` | `tx-default` | `tx-default`, `station-max` or `tx`. |
 | `--stack` | `0` | Stack level. The highest of one purpose wins. |
 | `--for` | until cleared | How long the limit holds, for example `1h`. |
@@ -238,6 +278,7 @@ The limits the station applies (`GetCompositeSchedule`), as a period table.
 | Flag | Default | |
 |---|---|---|
 | `--evse` / `--station` | the only EVSE | |
+| `--charger` | the only charger | With `--station`: which station. Required with more than one charger. |
 | `--duration` | `1h` | How far ahead to look. |
 | `--unit` | the station's choice | `W` or `A`. |
 
@@ -251,6 +292,7 @@ Clears profiles (`ClearChargingProfile`). One of `--id`, `--purpose` or `--all` 
 | `--purpose P` | Every profile of this purpose. |
 | `--all` | Every profile. |
 | `--evse` / `--station` | Narrows `--purpose` and `--all`, which otherwise clear on every EVSE and the station. |
+| `--charger` | Which station, when not narrowed by `--evse`. Required with more than one charger: clearing is per charger. |
 
 ### `cpms profile set`
 
@@ -261,6 +303,7 @@ Installs a full profile from a JSON file. The shape is in
 |---|---|
 | `-f`, `--file` | The profile, as JSON. |
 | `--evse` / `--station` | |
+| `--charger` | With `--station`: which station. Required with more than one charger. |
 
 ---
 
@@ -291,6 +334,7 @@ cpms config set <key> <value>
 
 Sets one of the **station's** OCPP configuration keys (`ChangeConfiguration`). It does not
 touch `config.yaml`. Answers and exit codes: [Read power and current](../guides/metering.md#cpms-config-set).
+With more than one charger, add `--charger ID`.
 
 ---
 
@@ -309,7 +353,9 @@ credentials endpoint. `TOKEN_A` works again, so the partner can redo the handsha
 ### `cpms simulate charger`
 
 Dials a CSMS and behaves like a charging station. Does not need `cpms run` on the same
-host: point `--csms` anywhere. Flags and scenarios:
+host: point `--csms` anywhere. With several chargers in config, `--id` is required and picks
+that charger: its connectors default to that charger's EVSEs, for example
+`cpms simulate charger --id PRUESTEL_001`. Flags and scenarios:
 [Test with the simulator](../guides/simulator.md).
 
 ---

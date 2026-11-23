@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/wolffseb/cli-cpms/internal/control"
 	"github.com/wolffseb/cli-cpms/internal/control/socket"
 )
 
@@ -20,27 +21,44 @@ func usage(format string, args ...any) error {
 	return &ExitStatus{Code: ExitError, Err: fmt.Errorf(format, args...)}
 }
 
-// addTargetFlags adds --evse and --station to a limit or profile command.
+// addTargetFlags adds --evse, --station and --charger to a limit or profile
+// command.
 func addTargetFlags(c *cobra.Command) {
+	addChargerFlag(c)
 	c.Flags().String("evse", "", "EVSE uid from config (may be omitted when only one EVSE is configured)")
 	c.Flags().Bool("station", false, "address the whole station (OCPP 1.6 connector 0) instead of an EVSE")
 }
 
-// limitEnv is a station env plus whether the command addresses the whole
-// station. --evse and --station exclude each other.
-func newLimitEnv(cmd *cobra.Command, opts *options) (*stationEnv, bool, error) {
+// newLimitEnv is a station env plus whether the command addresses the whole
+// station, which wholeStation forces for a command that has no EVSE to name
+// (clear without a target). --evse and --station exclude each other.
+//
+// A station needs its charger (--charger, optional with one charger); an EVSE
+// brings its own, and a --charger given with it must be that one.
+func newLimitEnv(cmd *cobra.Command, opts *options, wholeStation bool) (*stationEnv, bool, error) {
 	station, _ := cmd.Flags().GetBool("station")
 	if station && cmd.Flags().Changed("evse") {
 		return nil, false, usage("--evse and --station exclude each other")
 	}
-	env, err := newStationEnv(cmd, opts)
+	station = station || wholeStation
+	env, err := newStationEnvFor(cmd, opts, station)
 	if err != nil {
 		return nil, false, err
 	}
 	if station {
 		env.evse = ""
+		return env, true, env.resolveCharger(cmd)
 	}
-	return env, station, nil
+	if id, _ := cmd.Flags().GetString("charger"); id != "" {
+		if _, err := control.ResolveCharger(env.cfg, id); err != nil {
+			return nil, false, &ExitStatus{Code: ExitError, Err: err}
+		}
+		if e, _ := env.cfg.EVSEByUID(env.evse); e.Charger != id {
+			return nil, false, usage("EVSE %s is on charger %s, not %s", env.evse, e.Charger, id)
+		}
+		env.charger = id
+	}
+	return env, false, nil
 }
 
 func newLimitCommand(opts *options) *cobra.Command {
@@ -110,11 +128,11 @@ func newLimitSetCommand(opts *options) *cobra.Command {
 				req.For = forD.String()
 			}
 
-			env, station, err := newLimitEnv(cmd, opts)
+			env, station, err := newLimitEnv(cmd, opts, false)
 			if err != nil {
 				return err
 			}
-			raw, err := env.call(cmd, socket.Request{Op: socket.OpLimitSet, EVSE: env.evse, Station: station, Limit: &req})
+			raw, err := env.call(cmd, socket.Request{Op: socket.OpLimitSet, EVSE: env.evse, Charger: env.charger, Station: station, Limit: &req})
 			if err != nil {
 				return err
 			}
@@ -172,16 +190,13 @@ func newLimitClearCommand(opts *options) *cobra.Command {
 			}
 			req.ByTarget = byTarget
 
-			env, station, err := newLimitEnv(cmd, opts)
+			// Not narrowed: the whole station is the subject, and the
+			// daemon ignores the target without ByTarget.
+			env, station, err := newLimitEnv(cmd, opts, !byTarget)
 			if err != nil {
 				return err
 			}
-			if !byTarget {
-				// Not narrowed: the whole station is the subject, and the
-				// daemon ignores the target without ByTarget.
-				env.evse, station = "", true
-			}
-			raw, err := env.call(cmd, socket.Request{Op: socket.OpLimitClear, EVSE: env.evse, Station: station, Clear: &req})
+			raw, err := env.call(cmd, socket.Request{Op: socket.OpLimitClear, EVSE: env.evse, Charger: env.charger, Station: station, Clear: &req})
 			if err != nil {
 				return err
 			}
@@ -225,12 +240,12 @@ func newLimitShowCommand(opts *options) *cobra.Command {
 			if unit != "" && unit != "W" && unit != "A" {
 				return usage("--unit %q: want W or A", unit)
 			}
-			env, station, err := newLimitEnv(cmd, opts)
+			env, station, err := newLimitEnv(cmd, opts, false)
 			if err != nil {
 				return err
 			}
 			raw, err := env.call(cmd, socket.Request{
-				Op: socket.OpLimitShow, EVSE: env.evse, Station: station,
+				Op: socket.OpLimitShow, EVSE: env.evse, Charger: env.charger, Station: station,
 				Schedule: &socket.ScheduleRequest{Duration: window.String(), Unit: unit},
 			})
 			if err != nil {
@@ -288,11 +303,11 @@ func newProfileCommand(opts *options) *cobra.Command {
 				return usage("%s: %v", file, err)
 			}
 
-			env, station, err := newLimitEnv(cmd, opts)
+			env, station, err := newLimitEnv(cmd, opts, false)
 			if err != nil {
 				return err
 			}
-			raw, err := env.call(cmd, socket.Request{Op: socket.OpProfileSet, EVSE: env.evse, Station: station, Profile: &p})
+			raw, err := env.call(cmd, socket.Request{Op: socket.OpProfileSet, EVSE: env.evse, Charger: env.charger, Station: station, Profile: &p})
 			if err != nil {
 				return err
 			}
@@ -382,16 +397,16 @@ func printSchedule(w io.Writer, res socket.ScheduleResult) error {
 
 // printProfiles lists the recorded profiles under the status table, when
 // there are any.
-func printProfiles(w io.Writer, st socket.Status) {
+func printProfiles(w io.Writer, cp socket.ChargePointStatus, evses []socket.EVSEStatus) {
 	type row struct {
 		target string
 		p      socket.ChargingProfileStatus
 	}
 	var rows []row
-	for _, p := range st.ChargePoint.ChargingProfiles {
+	for _, p := range cp.ChargingProfiles {
 		rows = append(rows, row{"station", p})
 	}
-	for _, e := range st.EVSEs {
+	for _, e := range evses {
 		for _, p := range e.ChargingProfiles {
 			rows = append(rows, row{e.UID, p})
 		}

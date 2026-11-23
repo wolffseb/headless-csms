@@ -34,7 +34,7 @@ With no flags it reads the same config and connects to the CSMS that `cpms run` 
 | `--reconnect` | off | Redials when the connection drops, instead of exiting. |
 | `--allow-foreign-tag` | off | Lets another tag start on a reserved connector. |
 | `--csms URL` | from `server.ocpp_bind` | The CSMS to dial. |
-| `--id`, `--connectors`, `--tag` | from config | Fake a different station. |
+| `--id`, `--connectors`, `--tag` | from config | Fake a different station. With several `chargers:` in config, `--id` is required and picks one: `cpms simulate charger --id PRUESTEL_001` gets that charger's EVSEs as connectors. |
 | `--vendor`, `--model` | Alpitronic HYC300 | What `BootNotification` reports. |
 | `--log-level` | `info` | `debug`, `info`, `warn` or `error`. |
 
