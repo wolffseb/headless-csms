@@ -55,7 +55,11 @@ func newConfigSetCommand(opts *options) *cobra.Command {
 			if err := json.Unmarshal(raw, &r); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s set to %q on the station (%s)\n", r.Key, r.Value, r.Status)
+			on := "the station"
+			if len(env.cfg.Chargers) > 1 {
+				on = env.charger
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s set to %q on %s (%s)\n", r.Key, r.Value, on, r.Status)
 			if r.Status == "RebootRequired" {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: the station needs a reboot before %s takes effect\n", r.Key)
 			}

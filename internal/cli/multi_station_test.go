@@ -238,8 +238,11 @@ func TestProbeNeedsAChargerWithTwo(t *testing.T) {
 	_, stderr, code = m.cpms("config", "set", "ConnectionTimeOut", "60")
 	expectExit(t, "config set", code, cli.ExitError, stderr, "--charger")
 	out2 := m.mustCPMS("config", "set", "ConnectionTimeOut", "60", "--charger", "PRUESTEL_000")
-	if !strings.Contains(out2, "ConnectionTimeOut") {
-		t.Errorf("config set printed %q", out2)
+	if !strings.Contains(out2, "ConnectionTimeOut") || !strings.Contains(out2, "on PRUESTEL_000 (Accepted)") {
+		t.Errorf("config set printed %q, want it to name PRUESTEL_000", out2)
+	}
+	if run := m.runOut.String(); !strings.Contains(run, "waiting for 2 charge points to connect") {
+		t.Errorf("cpms run printed %q, want the several-chargers waiting line", run)
 	}
 
 	_, stderr, code = m.cpms("limit", "set", "--station", "--purpose", "station-max", "--kw", "10")
