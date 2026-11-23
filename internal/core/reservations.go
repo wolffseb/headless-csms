@@ -78,6 +78,10 @@ type Reservation struct {
 type reservation struct {
 	Reservation
 	timer Stopper
+	// prior is, while a replacement is pending, the reservation it replaces
+	// as the station still holds it. It is what the file lists, what its
+	// driver may redeem, and what RevertReplacement puts back.
+	prior *Reservation
 }
 
 func (r *reservation) stopTimer() {
@@ -129,8 +133,9 @@ func (s *Service) BeginReservation(r Reservation) (Reservation, error) {
 // its OCPP id, because a ReserveNow with an id the station holds replaces it
 // there too. It is pending again until ActivateReservation or EndReservation,
 // carrying r's tag, expiry, source and response URL; the expiry timer is
-// stopped, and the file no longer lists it (a pending reservation is never
-// persisted).
+// stopped. The reservation it replaces is kept (PriorReservation): until the
+// station has answered it is what the file lists and what its tag may
+// redeem, and RevertReplacement brings it back.
 //
 // It reports false, with no error, when no reservation has that OCPI id, so
 // the caller goes on with BeginReservation. A reservation that is pending or
@@ -155,6 +160,7 @@ func (s *Service) BeginReplacement(r Reservation) (Reservation, bool, error) {
 	}
 
 	before := old.Reservation
+	old.prior = &before
 	old.stopTimer()
 	old.IDTag, old.ExpiresAt, old.Source, old.ResponseURL = r.IDTag, r.ExpiresAt, r.Source, r.ResponseURL
 	old.CreatedAt = s.now()
@@ -166,13 +172,46 @@ func (s *Service) BeginReplacement(r Reservation) (Reservation, bool, error) {
 		// Put the held reservation back: nothing was sent.
 		s.mu.Lock()
 		if cur, ok := s.reservations[before.ID]; ok && cur.Status == ReservationPending {
-			cur.Reservation = before
+			cur.Reservation, cur.prior = before, nil
 			s.armLocked(cur)
 		}
 		s.mu.Unlock()
 		return Reservation{}, false, fmt.Errorf("recording the reservation: %w", err)
 	}
 	return out, true, nil
+}
+
+// PriorReservation is the reservation a pending replacement replaces, as the
+// station held it before. It reports false for any other reservation.
+func (s *Service) PriorReservation(id int) (Reservation, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	r, ok := s.reservations[id]
+	if !ok || r.Status != ReservationPending || r.prior == nil {
+		return Reservation{}, false
+	}
+	return *r.prior, true
+}
+
+// RevertReplacement gives up a pending replacement because the station never
+// saw it, or refused it: the reservation it replaced is active again, as it
+// was, with its expiry re-armed, and is returned. Nothing is published, since
+// nothing ended. It reports false if id is not a pending replacement.
+func (s *Service) RevertReplacement(id int) (Reservation, bool) {
+	s.mu.Lock()
+	r, ok := s.reservations[id]
+	if !ok || r.Status != ReservationPending || r.prior == nil {
+		s.mu.Unlock()
+		return Reservation{}, false
+	}
+	r.Reservation, r.prior = *r.prior, nil
+	s.armLocked(r)
+	out := r.Reservation
+	s.mu.Unlock()
+
+	s.persistOrLog("reverted replacement", id)
+	return out, true
 }
 
 // ReservationByOCPIID finds a reservation by the id the OCPI partner gave it,
@@ -213,6 +252,7 @@ func (s *Service) ActivateReservation(id int) (Reservation, bool) {
 		return Reservation{}, false
 	}
 	r.Status = ReservationActive
+	r.prior = nil
 	s.armLocked(r)
 	out := r.Reservation
 	s.mu.Unlock()

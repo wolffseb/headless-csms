@@ -59,8 +59,13 @@ func (s *Service) persistOrLog(what string, id int) {
 // stable order so that an unchanged state writes an unchanged file.
 func (s *Service) persistableLocked() ([]state.Reservation, []state.Transaction) {
 	reservations := []state.Reservation{}
-	for _, r := range s.reservations {
-		if r.Status != ReservationActive {
+	for _, held := range s.reservations {
+		r := held.Reservation
+		if held.Status == ReservationPending && held.prior != nil {
+			// A replacement is out: the station still holds the original until
+			// it answers, and a crash now must not forget it.
+			r = *held.prior
+		} else if held.Status != ReservationActive {
 			continue
 		}
 		reservations = append(reservations, state.Reservation{

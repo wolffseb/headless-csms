@@ -111,7 +111,10 @@ EVSE as `RESERVED` only when the station does.
 
 A reservation made over OCPI keeps the partner's `reservation_id`. Reserving again under a
 known one replaces it with the same OCPP id. If that fails, no cancel is sent (it would drop
-the original at the station too), and our record of the original ends with it.
+the original at the station too). If the station never saw the replacement or said no, it
+still holds the original, and so do we. If the outcome is unknown (a timeout, or the
+connection went while it was out), our record of the original ends, and the tags of both
+stay accepted until their own expiry.
 
 ### Charging profiles are validated before sending
 

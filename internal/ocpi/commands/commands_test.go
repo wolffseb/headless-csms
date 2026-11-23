@@ -367,21 +367,24 @@ func TestReserveNowTwiceReplacesTheReservation(t *testing.T) {
 }
 
 // A replacement the station does not take sends no CancelReservation (the id
-// is the one the station already holds, so it would drop the original), ends
-// the original locally, and reports the failure.
-func TestFailedReplacementEndsTheOriginalWithoutACancel(t *testing.T) {
+// is the one the station already holds, so it would drop the original), and
+// reports the failure. The original ends locally only when what the station
+// holds is unknown (it was silent, or the connection dropped); when the
+// station answered no, it holds the original, and so do we.
+func TestFailedReplacementSendsNoCancel(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name   string
 		answer func(n int) (ocpp.Result, error)
 		want   string
+		kept   bool
 	}{
-		{"the station is silent", func(int) (ocpp.Result, error) { return ocpp.Result{}, ocpp.ErrTimeout }, "TIMEOUT"},
+		{"the station is silent", func(int) (ocpp.Result, error) { return ocpp.Result{}, ocpp.ErrTimeout }, "TIMEOUT", false},
 		{"the station says no", func(int) (ocpp.Result, error) {
 			return ocpp.Result{Status: ocpp.CommandRejected, Raw: "Rejected"}, nil
-		}, "REJECTED"},
-		{"the connection drops", func(int) (ocpp.Result, error) { return ocpp.Result{}, ocpp.ErrNotConnected }, "FAILED"},
+		}, "REJECTED", true},
+		{"the connection drops", func(int) (ocpp.Result, error) { return ocpp.Result{}, ocpp.ErrNotConnected }, "FAILED", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -406,11 +409,14 @@ func TestFailedReplacementEndsTheOriginalWithoutACancel(t *testing.T) {
 			if got := s.station(cpA).cancelled(); len(got) != 0 {
 				t.Errorf("CancelReservation sent for %v: it would cancel the original, which the station may still hold", got)
 			}
-			if rs := s.core.Snapshot().ChargePoints[0].Reservations; len(rs) != 0 {
-				t.Errorf("core still holds %+v", rs)
-			}
-			if _, ok := s.core.ReservationByOCPIID("RES-1"); ok {
-				t.Error("the reservation can still be found by its OCPI id")
+			rs := s.core.Snapshot().ChargePoints[0].Reservations
+			_, found := s.core.ReservationByOCPIID("RES-1")
+			if tc.kept {
+				if len(rs) != 1 || rs[0].Status != core.ReservationActive || !found {
+					t.Errorf("core holds %+v (found by OCPI id: %v), want the original, active", rs, found)
+				}
+			} else if len(rs) != 0 || found {
+				t.Errorf("core still holds %+v (found by OCPI id: %v), want nothing", rs, found)
 			}
 			// The partner is told by the command's own result; the original's
 			// response_url hears nothing more.

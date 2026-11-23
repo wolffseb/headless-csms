@@ -45,7 +45,7 @@ func (s *Service) TagAuthorised(tag string) bool {
 //   - one of the configured tags (auth.default_id_tag, auth.id_tags), which
 //     has no end: until is the zero time;
 //   - the tag of an active reservation, so that it can be redeemed, until the
-//     reservation expires;
+//     reservation expires (and, while a replacement is out, the original's);
 //   - the tag of a START_SESSION within TagGrantWindow of the command, until
 //     the window ends.
 //
@@ -71,6 +71,12 @@ func (s *Service) TagAuthorisation(tag string) (ok bool, until time.Time) {
 			// after the expiry itself: the end is then already past, which is
 			// what the station should be told.
 			vouch(r.ExpiresAt)
+		}
+	}
+	for _, r := range s.reservations {
+		// While a replacement is out the station still holds the original.
+		if r.Status == ReservationPending && r.prior != nil && strings.EqualFold(r.prior.IDTag, tag) {
+			vouch(r.prior.ExpiresAt)
 		}
 	}
 	if end := s.tagGrants[strings.ToLower(tag)]; end.After(s.now()) {

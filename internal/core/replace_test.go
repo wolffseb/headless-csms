@@ -55,8 +55,10 @@ func TestBeginReplacementKeepsTheIDAndTakesTheNewRequest(t *testing.T) {
 	if _, ok := r.svc.ActiveReservation("EVSE-1"); ok {
 		t.Error("a reservation that is being replaced still reads as active")
 	}
-	if n := len(r.store.Get().Reservations); n != 0 {
-		t.Errorf("state.json lists %d reservations while one is pending, want none", n)
+	// The station still holds the original until it answers, and a crash now
+	// must not forget it.
+	if got := r.store.Get().Reservations; len(got) != 1 || got[0].IDTag != "TAG-A" || got[0].ResponseURL != "http://emsp/a" {
+		t.Errorf("state.json lists %+v while the replacement is pending, want the original", got)
 	}
 
 	// The old expiry timer is gone, and must not end the pending replacement.
@@ -180,5 +182,37 @@ func TestEndedEventsCarryTheResponseURLOfActiveReservations(t *testing.T) {
 	}
 	if _, ok := r.svc.ReservationByOCPIID(""); ok {
 		t.Error("an empty id matched")
+	}
+}
+
+// RevertReplacement puts the original back as it was: active, with its tag,
+// expiry and response URL, its expiry re-armed, and nothing published.
+func TestRevertReplacementRestoresTheOriginal(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, clocktest.New(t0), statetest.New(t))
+	orig := r.ocpiReserve(t, "RES-1", "EVSE-1", "TAG-A", "http://emsp/a", 10*time.Minute)
+	pending, _, err := r.svc.BeginReplacement(replacement("RES-1", "EVSE-1", "TAG-B", "http://emsp/b", t0.Add(30*time.Minute)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prior, ok := r.svc.PriorReservation(pending.ID); !ok || prior.IDTag != "TAG-A" {
+		t.Errorf("PriorReservation = %+v, %v, want the original", prior, ok)
+	}
+	collect(t, r.events)
+
+	got, ok := r.svc.RevertReplacement(pending.ID)
+	if !ok || got.ID != orig.ID || got.Status != core.ReservationActive || got.IDTag != "TAG-A" ||
+		got.ResponseURL != "http://emsp/a" || !got.ExpiresAt.Equal(t0.Add(10*time.Minute)) {
+		t.Fatalf("RevertReplacement = %+v, %v, want the original, active", got, ok)
+	}
+	if evs := collect(t, r.events); len(evs) != 0 {
+		t.Errorf("events %+v, want none", evs)
+	}
+	if _, ok := r.svc.RevertReplacement(pending.ID); ok {
+		t.Error("a reservation that is not a pending replacement was reverted")
+	}
+	r.clk.Advance(11 * time.Minute)
+	if rs := r.reservations(t); len(rs) != 0 {
+		t.Errorf("the original's expiry was not re-armed: %+v", rs)
 	}
 }

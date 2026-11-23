@@ -147,10 +147,16 @@ tag, expiry and `response_url`. A 1.6 `ReserveNow` with an id the station holds 
 it there too. The replacement must be for the same EVSE (or name none); moving a
 reservation is refused at once.
 
-If the replacement fails (the station says no, or does not answer), cpms does **not** send
-`CancelReservation`, which would cancel the original at the station too. Because what the
-station holds is now unknown, the original ends in cpms as well, and the failure is the
-result of the new command.
+If the replacement fails, cpms does **not** send `CancelReservation`, which would cancel the
+original at the station too, and the failure is the result of the new command. What happens
+to the original depends on what cpms knows:
+
+- The station never saw the replacement (it was busy) or answered no: it still holds the
+  original, so cpms keeps it, with its tag and expiry.
+- The outcome is unknown (the station did not answer, or the connection went while the
+  request was out): the station may hold either, so the original ends in cpms. The tags of
+  both stay accepted at the station until their own expiry, so whichever it holds can still
+  be redeemed.
 
 ## When cpms cancels a reservation
 

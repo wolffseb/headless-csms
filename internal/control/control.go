@@ -162,8 +162,12 @@ func (s *Service) Close() {
 // A ReserveParams.OCPIReservationID that names a reservation we hold replaces
 // it: same OCPP id, as a ReserveNow with an id the station holds replaces it
 // there. If that fails, no cancel follows (it would drop the original, which
-// the station may still hold), and the original ends locally too, because
-// what the station holds is now unknown.
+// the station may still hold). Whether the original lives on depends on what
+// we know of the station. If it never saw the replacement (ErrNotSent) or
+// answered no, it holds the original: we keep it, and the caller reports the
+// failure. If the outcome is unknown (a timeout, or the connection went while
+// the request was out), the original ends locally, and the tags of both stay
+// accepted until their own expiry (see core.AuthoriseTag).
 func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservation, error) {
 	s.mu.Lock()
 	if s.closed {
@@ -222,6 +226,12 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		ExpiresAt:     r.ExpiresAt,
 	})
 	if errors.Is(err, ocpp.ErrNotSent) {
+		if replaced {
+			// The station never saw the replacement, so it still holds the
+			// original, which is known, not unknown: keep it.
+			s.core.RevertReplacement(r.ID)
+			return core.Reservation{}, err
+		}
 		// The station never saw the ReserveNow, so there is nothing to
 		// cancel, and a cancel for a reservation that never went out would
 		// only be a second command for a station that is already busy.
@@ -231,10 +241,16 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 	if err != nil && replaced {
 		// The id is the one the station holds from before: a cancel for it
 		// (cancelOrphan assumes ids are never reused) would drop the original
-		// reservation too, which may well still be good there. What the
-		// station holds now is unknown, so our record goes as well, and the
-		// caller reports the failure.
+		// reservation too, which may well still be good there. The request
+		// may or may not have got through, so what the station holds now is
+		// unknown: our record goes, and the tags of both reservations stay
+		// accepted until their own expiry, so that whichever the station
+		// holds can still be redeemed. The caller reports the failure.
+		prior, _ := s.core.PriorReservation(r.ID)
 		s.core.EndReservation(r.ID, endReason(err))
+		now := s.now()
+		s.core.AuthoriseTag(prior.IDTag, prior.ExpiresAt.Sub(now))
+		s.core.AuthoriseTag(r.IDTag, r.ExpiresAt.Sub(now))
 		return core.Reservation{}, err
 	}
 	if err != nil {
@@ -254,7 +270,13 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		return core.Reservation{}, err
 	}
 	if res.Status != ocpp.CommandAccepted {
-		s.core.EndReservation(r.ID, core.ReservationRejected)
+		if replaced {
+			// The station answered, and said no to the replacement: the
+			// original is what it holds.
+			s.core.RevertReplacement(r.ID)
+		} else {
+			s.core.EndReservation(r.ID, core.ReservationRejected)
+		}
 		return core.Reservation{}, refused(OpReserve, r.EVSEUID, res)
 	}
 
