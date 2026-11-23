@@ -125,6 +125,8 @@ type Pusher struct {
 type worker struct {
 	p   *Pusher
 	uid string
+	// charger is the id of the charger the EVSE hangs on.
+	charger string
 	// wake is the dirty flag: capacity one, set without blocking.
 	wake chan struct{}
 }
@@ -150,11 +152,21 @@ func New(opts Options) (*Pusher, error) {
 	// EVSEs are static config, so the workers are too.
 	p.byUID = make(map[string]*worker, len(opts.Config.Location.EVSEs))
 	for _, e := range opts.Config.Location.EVSEs {
-		w := &worker{p: p, uid: e.UID, wake: make(chan struct{}, 1)}
+		w := &worker{p: p, uid: e.UID, charger: chargerOf(opts.Config, e), wake: make(chan struct{}, 1)}
 		p.workers = append(p.workers, w)
 		p.byUID[e.UID] = w
 	}
 	return p, nil
+}
+
+// chargerOf is the id of the charger e hangs on: an EVSE with no charger set
+// belongs to the only charger, as in config (a Config built by hand may leave
+// it empty).
+func chargerOf(cfg *config.Config, e config.EVSE) string {
+	if e.Charger == "" && len(cfg.Chargers) == 1 {
+		return cfg.Chargers[0].ID
+	}
+	return e.Charger
 }
 
 // defaultBackoff is 1s, 2s, 4s… capped at 30s, with up to 25% jitter so that
@@ -216,7 +228,6 @@ func (p *Pusher) Status() Status {
 // let a slow partner back the bus up, which is the very drop the dirty flag
 // exists to make harmless.
 func (p *Pusher) subscribe(ctx context.Context, events <-chan core.Event) {
-	cpID := p.opts.Config.Chargers[0].ID // TODO(#85 B1)
 	var seenDrops uint64
 	for {
 		select {
@@ -226,8 +237,11 @@ func (p *Pusher) subscribe(ctx context.Context, events <-chan core.Event) {
 			if !ok {
 				return
 			}
-			if e.Kind == core.EventEVSEStatusChanged && e.ChargePointID == cpID {
-				if w, ok := p.byUID[e.EVSEUID]; ok {
+			if e.Kind == core.EventEVSEStatusChanged {
+				// Found by uid (globally unique); the event must come from
+				// the charger the EVSE is configured on, so a made-up
+				// station's connector cannot wake a worker.
+				if w, ok := p.byUID[e.EVSEUID]; ok && w.charger == e.ChargePointID {
 					w.markDirty()
 				}
 			}
@@ -352,7 +366,7 @@ func (w *worker) send(ctx context.Context, retries int) outcome {
 		return sent
 	}
 
-	cp, ok := p.opts.Core.Snapshot().ChargePoint(cfg.Chargers[0].ID) // TODO(#85 B1)
+	cp, ok := p.opts.Core.Snapshot().ChargePoint(w.charger)
 	if !ok {
 		return sent
 	}

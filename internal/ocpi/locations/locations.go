@@ -109,10 +109,18 @@ const (
 // staticAt is when the static data last changed (the config file's
 // modification time). It does no I/O, so its output can be golden-tested.
 func Build(cfg *config.Config, staticAt time.Time, snap core.Snapshot) Location {
-	live := map[string]core.EVSESnapshot{}
-	if cp, ok := snap.ChargePoint(cfg.Chargers[0].ID); ok { // TODO(#85 B1)
-		for _, e := range cp.EVSEs {
-			live[e.UID] = e
+	// Each EVSE takes its live state from its own charger only: core's
+	// synthetic uids for unconfigured connectors ("<charger>-<n>") can equal a
+	// configured uid on another charger, so uids are not unique across
+	// chargers' snapshots.
+	live := map[string]map[string]core.EVSESnapshot{}
+	for _, ch := range cfg.Chargers {
+		if cp, ok := snap.ChargePoint(ch.ID); ok {
+			m := make(map[string]core.EVSESnapshot, len(cp.EVSEs))
+			for _, e := range cp.EVSEs {
+				m[e.UID] = e
+			}
+			live[ch.ID] = m
 		}
 	}
 
@@ -133,12 +141,22 @@ func Build(cfg *config.Config, staticAt time.Time, snap core.Snapshot) Location 
 	}
 	locUpdated := staticAt
 	for _, e := range l.EVSEs {
-		evse := buildEVSE(e, staticAt, live[e.UID])
+		evse := buildEVSE(e, staticAt, live[chargerOf(cfg, e)][e.UID])
 		locUpdated = latest(locUpdated, evse.LastUpdated.Time())
 		loc.EVSEs = append(loc.EVSEs, evse)
 	}
 	loc.LastUpdated = DateTime(locUpdated)
 	return loc
+}
+
+// chargerOf is the id of the charger e hangs on: an EVSE with no charger set
+// belongs to the only charger, as in config (a Config built by hand may leave
+// it empty).
+func chargerOf(cfg *config.Config, e config.EVSE) string {
+	if e.Charger == "" && len(cfg.Chargers) == 1 {
+		return cfg.Chargers[0].ID
+	}
+	return e.Charger
 }
 
 func buildEVSE(e config.EVSE, staticAt time.Time, live core.EVSESnapshot) EVSE {
