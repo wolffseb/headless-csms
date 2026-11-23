@@ -118,7 +118,9 @@ func exitFor(cfg *config.Config, op socket.Op, evse string, err error) error {
 		if se.Status == "UnlockFailed" {
 			return &ExitStatus{Code: ExitUnlockFailed, Err: msg("the station could not release the cable lock%s", answer(se))}
 		}
-		return &ExitStatus{Code: ExitUnlockFailed, Err: msg("the station does not support this%s", answer(se))}
+		// The station's own word (NotImplemented, NotSupported) is jargon here;
+		// the daemon's log has it.
+		return &ExitStatus{Code: ExitUnlockFailed, Err: msg("the station does not support %s", unsupported(op))}
 	case socket.CodeNotSupported:
 		return &ExitStatus{Code: ExitNotSupported, Err: msg(
 			"the station does not support this %s%s. `cpms probe` shows its SmartCharging support, allowed units and limits", noun(op), answer(se))}
@@ -195,6 +197,19 @@ func answer(se *socket.Error) string {
 		return " (CALLERROR " + se.CallError + ")"
 	default:
 		return ""
+	}
+}
+
+// unsupported names what a station that answers NotImplemented or NotSupported
+// cannot do, for the commands that have no noun of their own.
+func unsupported(op socket.Op) string {
+	switch op {
+	case socket.OpUnlock:
+		return "unlock"
+	case socket.OpStatus:
+		return "status requests"
+	default:
+		return "this"
 	}
 }
 
