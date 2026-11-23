@@ -159,6 +159,31 @@ func (r *Registrar) Registration() *state.OCPIRegistration {
 // counterparty refuses.
 func (r *Registrar) Client() *client.Client { return r.client }
 
+// Registered identifies the current registration, as its RegisteredAt: it is
+// set by a registration (POST) and kept by an update (PUT), so it changes
+// when another partner registers, or the same one starts over, and not when a
+// partner only rotates its token. It is the zero time when nothing is
+// registered.
+func (r *Registrar) Registered() time.Time {
+	if reg := r.opts.Store.Get().OCPI; reg != nil {
+		return reg.RegisteredAt
+	}
+	return time.Time{}
+}
+
+// ClientFor is Client for a call that belongs to one registration, which
+// Registered returned when the call was caused: a command's result, or the end
+// of a reservation. It reports false if that registration is no longer the
+// current one, so that the call is not made. The registration is read once, so
+// the token that goes out is the one of the registration that was checked.
+func (r *Registrar) ClientFor(registration time.Time) (*client.Client, bool) {
+	reg := r.opts.Store.Get().OCPI
+	if reg == nil || !reg.RegisteredAt.Equal(registration) {
+		return nil, false
+	}
+	return r.client.WithToken(reg.TokenB), true
+}
+
 func (r *Registrar) tokenB() string {
 	if reg := r.opts.Store.Get().OCPI; reg != nil {
 		return reg.TokenB

@@ -139,6 +139,13 @@ the next command. A result still waiting when cpms stops is lost.
     whatever URL the request names. Only the registered partner can send commands, so it is
     sending its own token to a URL it chose.
 
+A `response_url` belongs to the registration its command arrived under. If that partner is
+unregistered, and another registers (or the same one registers again from the start), a
+result still to be sent, and the `CANCELED_RESERVATION` of a reservation made before, are
+**dropped** and logged: they would otherwise go to the former partner's URL with the new
+partner's `TOKEN_B`. A credentials `PUT`, which only rotates `TOKEN_B`, keeps the
+registration, and results go on with the new token.
+
 ## Replace a reservation
 
 A `RESERVE_NOW` with a `reservation_id` cpms already holds **replaces** that reservation:

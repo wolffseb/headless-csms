@@ -59,10 +59,11 @@ func TestRoundTripKeepsEveryFieldAndStoresUTC(t *testing.T) {
 	}
 
 	times := map[string][2]time.Time{
-		"ocpi.registered_at":         {got.OCPI.RegisteredAt, want.OCPI.RegisteredAt},
-		"reservations[0].expires_at": {got.Reservations[0].ExpiresAt, want.Reservations[0].ExpiresAt},
-		"reservations[0].created_at": {got.Reservations[0].CreatedAt, want.Reservations[0].CreatedAt},
-		"transactions[0].started_at": {got.Transactions[0].StartedAt, want.Transactions[0].StartedAt},
+		"ocpi.registered_at":                    {got.OCPI.RegisteredAt, want.OCPI.RegisteredAt},
+		"reservations[0].expires_at":            {got.Reservations[0].ExpiresAt, want.Reservations[0].ExpiresAt},
+		"reservations[0].created_at":            {got.Reservations[0].CreatedAt, want.Reservations[0].CreatedAt},
+		"reservations[0].response_registration": {got.Reservations[0].ResponseRegistration, want.Reservations[0].ResponseRegistration},
+		"transactions[0].started_at":            {got.Transactions[0].StartedAt, want.Transactions[0].StartedAt},
 	}
 	for name, pair := range times {
 		if pair[0].Location() != time.UTC {
@@ -366,15 +367,16 @@ func full(at time.Time) State {
 		NextTransactionID: 1001,
 		NextRemoteStartID: 5,
 		Reservations: []Reservation{{
-			ID:                42,
-			OCPIReservationID: "c6a1f0e2-7b1d-4c1e-9d3a-5f0b8a2c9e11",
-			ChargePointID:     "ALP-HYC-001",
-			EVSEUID:           "EVSE-1",
-			IDTag:             "04A1B2C3D4",
-			ExpiresAt:         at.Add(15 * time.Minute),
-			CreatedAt:         at,
-			Source:            "ocpi",
-			ResponseURL:       "https://emsp.example/ocpi/2.3.0/commands/RESERVE_NOW/1",
+			ID:                   42,
+			OCPIReservationID:    "c6a1f0e2-7b1d-4c1e-9d3a-5f0b8a2c9e11",
+			ChargePointID:        "ALP-HYC-001",
+			EVSEUID:              "EVSE-1",
+			IDTag:                "04A1B2C3D4",
+			ExpiresAt:            at.Add(15 * time.Minute),
+			CreatedAt:            at,
+			Source:               "ocpi",
+			ResponseURL:          "https://emsp.example/ocpi/2.3.0/commands/RESERVE_NOW/1",
+			ResponseRegistration: at.Add(-time.Hour),
 		}},
 		Transactions: []Transaction{{
 			ID:            "1000",

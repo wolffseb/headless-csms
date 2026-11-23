@@ -178,6 +178,8 @@ func (r *Receiver) reserveNow(b *body) (*plan, *refusal) {
 			Source:            "ocpi",
 			OCPIReservationID: b.ReservationID,
 			ResponseURL:       b.ResponseURL,
+
+			ResponseRegistration: b.registration,
 		})
 		return err
 	}}, nil

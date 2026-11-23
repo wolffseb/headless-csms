@@ -216,3 +216,47 @@ func TestRevertReplacementRestoresTheOriginal(t *testing.T) {
 		t.Errorf("the original's expiry was not re-armed: %+v", rs)
 	}
 }
+
+// The partner registration a response_url came from stays with the
+// reservation: in the ended event, in state.json and across a restart, and a
+// replacement under another registration takes the new one.
+func TestReservationKeepsTheRegistrationItsResponseURLCameFrom(t *testing.T) {
+	t.Parallel()
+	store := statetest.New(t)
+	r := newRig(t, clocktest.New(t0), store)
+	regA, regB := t0.Add(-time.Hour), t0.Add(-time.Minute)
+
+	pending, err := r.svc.BeginReservation(core.Reservation{
+		OCPIReservationID: "RES-1", ChargePointID: testCP, EVSEUID: "EVSE-1", IDTag: "TAG-A",
+		ExpiresAt: t0.Add(time.Hour), Source: "ocpi", ResponseURL: "http://emsp/a", ResponseRegistration: regA,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.svc.ActivateReservation(pending.ID)
+	if got := store.Get().Reservations; len(got) != 1 || !got[0].ResponseRegistration.Equal(regA) {
+		t.Fatalf("state.json holds %+v, want the registration %s", got, regA)
+	}
+
+	// A restart reads it back.
+	again := newRig(t, clocktest.New(t0), store)
+	held, ok := again.svc.ReservationByOCPIID("RES-1")
+	if !ok || !held.ResponseRegistration.Equal(regA) {
+		t.Fatalf("after a restart: %+v, %v, want the registration %s", held, ok, regA)
+	}
+
+	// A replacement from the partner that registered since takes over.
+	repl := replacement("RES-1", "EVSE-1", "TAG-B", "http://emsp/b", t0.Add(2*time.Hour))
+	repl.ResponseRegistration = regB
+	got, _, err := again.svc.BeginReplacement(repl)
+	if err != nil || !got.ResponseRegistration.Equal(regB) {
+		t.Fatalf("BeginReplacement = %+v, %v, want the registration %s", got, err, regB)
+	}
+	again.svc.ActivateReservation(got.ID)
+	collect(t, again.events)
+	again.svc.EndReservation(got.ID, core.ReservationCancelled)
+	evs := collect(t, again.events)
+	if len(evs) != 1 || evs[0].ResponseURL != "http://emsp/b" || !evs[0].ResponseRegistration.Equal(regB) {
+		t.Fatalf("events = %+v, want the ended event with http://emsp/b and registration %s", evs, regB)
+	}
+}

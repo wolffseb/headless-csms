@@ -293,17 +293,18 @@ func (b *syncBuffer) String() string {
 // stage wires the stack under test around a set of stations: core, control,
 // the Commands module on an OCPI server, and the partner.
 type stage struct {
-	t      *testing.T
-	cfg    *config.Config
-	clk    *clocktest.Clock
-	core   *core.Service
-	ctl    *control.Service
-	recv   *commands.Receiver
-	srv    *ocpi.Server
-	emsp   *emsp
-	logs   *syncBuffer
-	fleet  *fleet
-	cmdURL string
+	partner *partnerState
+	t       *testing.T
+	cfg     *config.Config
+	clk     *clocktest.Clock
+	core    *core.Service
+	ctl     *control.Service
+	recv    *commands.Receiver
+	srv     *ocpi.Server
+	emsp    *emsp
+	logs    *syncBuffer
+	fleet   *fleet
+	cmdURL  string
 }
 
 func (s *stage) station(id string) *station { return s.fleet.by[id] }
@@ -351,9 +352,10 @@ func newStage(t *testing.T, opts ...func(*stageOptions)) *stage {
 	t.Cleanup(ctl.Close)
 
 	em := newEMSP(t)
+	pt := newPartner(log)
 	recv, err := commands.New(commands.Options{
 		Config: cfg, Core: svc, Control: ctl, Log: log, Now: clk.Now, Backoff: o.backoff, AfterFunc: o.afterFunc,
-		Partner: partner{client.New(client.Options{Token: func() string { return tokenB }, Log: log})},
+		Partner: pt,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -384,7 +386,7 @@ func newStage(t *testing.T, opts ...func(*stageOptions)) *stage {
 	})
 
 	s := &stage{
-		t: t, cfg: cfg, clk: clk, core: svc, ctl: ctl, recv: recv, srv: srv, emsp: em, logs: logs, fleet: fl,
+		t: t, partner: pt.partnerState, cfg: cfg, clk: clk, core: svc, ctl: ctl, recv: recv, srv: srv, emsp: em, logs: logs, fleet: fl,
 		cmdURL: "http://" + srv.Addr() + "/ocpi/2.3.0/commands/",
 	}
 	if o.commander == nil && !o.noConnect {
@@ -404,9 +406,43 @@ func (c *retryClock) afterFunc(d time.Duration, fn func()) commands.Stopper {
 	return c.AfterFunc(d, fn)
 }
 
-type partner struct{ c *client.Client }
+// partner is the registered counterparty: one registration at a time, which
+// a test replaces with set.
+type partner struct{ *partnerState }
 
-func (p partner) Client() *client.Client { return p.c }
+type partnerState struct {
+	mu    sync.Mutex
+	at    time.Time
+	token string
+	log   *slog.Logger
+}
+
+func newPartner(log *slog.Logger) partner {
+	return partner{&partnerState{at: t0.Add(-time.Hour), token: tokenB, log: log}}
+}
+
+// set makes another registration the current one.
+func (p *partnerState) set(at time.Time, token string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.at, p.token = at, token
+}
+
+func (p *partnerState) Registered() time.Time {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.at
+}
+
+func (p *partnerState) ClientFor(registration time.Time) (*client.Client, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !registration.Equal(p.at) {
+		return nil, false
+	}
+	token := p.token
+	return client.New(client.Options{Token: func() string { return token }, Log: p.log}), true
+}
 
 // connect brings a charger online with every EVSE AVAILABLE.
 func (s *stage) connect(cp string) {

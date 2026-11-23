@@ -866,3 +866,65 @@ func TestPartyAndPushEndpoint(t *testing.T) {
 		t.Errorf("PushEndpoint = %q, %v", got, ok)
 	}
 }
+
+// A call that belongs to one registration (a command's result) is made only
+// while that registration is current. A PUT, which rotates TOKEN_B, keeps the
+// registration; an unregistration, or another registration, ends it.
+func TestClientForServesOnlyTheRegistrationItWasAskedFor(t *testing.T) {
+	t.Parallel()
+	h, emsp := newHarness(t), newFakeEMSP(t)
+	if !h.reg.Registered().IsZero() {
+		t.Error("Registered is not the zero time before a registration")
+	}
+	if _, ok := h.reg.ClientFor(time.Time{}); ok {
+		t.Error("ClientFor served with nothing registered")
+	}
+	h.register(emsp)
+
+	first := h.reg.Registered()
+	if first.IsZero() {
+		t.Fatal("Registered is the zero time after a registration")
+	}
+	c, ok := h.reg.ClientFor(first)
+	if !ok {
+		t.Fatal("ClientFor refused the current registration")
+	}
+	calls := len(emsp.got())
+	if _, err := c.Get(context.Background(), emsp.versionsURL()); err != nil {
+		t.Fatal(err)
+	}
+	if got := emsp.got()[calls:]; len(got) != 1 || got[0].auth != "Token "+base64.StdEncoding.EncodeToString([]byte(tokenB)) {
+		t.Errorf("the client sent %+v, want TOKEN_B", got)
+	}
+
+	// A PUT keeps the registration, and the client sends the new token.
+	h.do(http.MethodPut, "credentials", h.cfg.OCPI.TokenC, theirCredentials(newTokenB, emsp.versionsURL()))
+	if got := h.reg.Registered(); !got.Equal(first) {
+		t.Errorf("a PUT changed the registration: %s -> %s", first, got)
+	}
+	c, ok = h.reg.ClientFor(first)
+	if !ok {
+		t.Fatal("ClientFor refused the registration after a PUT")
+	}
+	calls = len(emsp.got())
+	if _, err := c.Get(context.Background(), emsp.versionsURL()); err != nil {
+		t.Fatal(err)
+	}
+	if got := emsp.got()[calls:]; len(got) != 1 || got[0].auth != "Token "+base64.StdEncoding.EncodeToString([]byte(newTokenB)) {
+		t.Errorf("after a PUT the client sent %+v, want the new TOKEN_B", got)
+	}
+
+	// Unregistered, and registered again: a new registration, so the old one's
+	// calls are not served, whatever token B the new partner has.
+	h.do(http.MethodDelete, "credentials", h.cfg.OCPI.TokenC, nil)
+	if _, ok := h.reg.ClientFor(first); ok {
+		t.Error("ClientFor served an unregistered registration")
+	}
+	h.register(emsp)
+	if got := h.reg.Registered(); got.Equal(first) {
+		t.Fatal("a new registration has the identity of the old one")
+	}
+	if _, ok := h.reg.ClientFor(first); ok {
+		t.Error("ClientFor served the former registration after another one registered")
+	}
+}

@@ -71,7 +71,12 @@ type Reservation struct {
 	Source string
 	// ResponseURL is where OCPI wants the outcome of its command posted.
 	ResponseURL string
-	Status      ReservationStatus
+	// ResponseRegistration identifies the OCPI partner registration the
+	// ResponseURL came from (its registered_at). A result is posted only while
+	// that registration is the current one, so that it never goes to a former
+	// partner's URL with the current partner's token.
+	ResponseRegistration time.Time
+	Status               ReservationStatus
 }
 
 // reservation is a Reservation plus the expiry timer that only core sees.
@@ -163,6 +168,7 @@ func (s *Service) BeginReplacement(r Reservation) (Reservation, bool, error) {
 	old.prior = &before
 	old.stopTimer()
 	old.IDTag, old.ExpiresAt, old.Source, old.ResponseURL = r.IDTag, r.ExpiresAt, r.Source, r.ResponseURL
+	old.ResponseRegistration = r.ResponseRegistration
 	old.CreatedAt = s.now()
 	old.Status = ReservationPending
 	out := old.Reservation
@@ -345,7 +351,7 @@ func (s *Service) endLocked(r *reservation, reason string) Event {
 		EVSEUID: r.EVSEUID, ReservationID: r.ID, IDTag: r.IDTag, Detail: reason,
 	}
 	if r.Status == ReservationActive {
-		e.ResponseURL = r.ResponseURL
+		e.ResponseURL, e.ResponseRegistration = r.ResponseURL, r.ResponseRegistration
 	}
 	return e
 }

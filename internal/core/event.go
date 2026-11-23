@@ -56,6 +56,8 @@ type Event struct {
 	// ResponseURL is set on EventReservationEnded for a reservation that came
 	// in over OCPI and had been active: where its eMSP wants outcomes posted.
 	ResponseURL string
+	// ResponseRegistration is the registration ResponseURL belongs to.
+	ResponseRegistration time.Time
 
 	// Detail is a short extra: a disconnect reason, why a reservation ended,
 	// or, on EventReservationCreated, its expiry in RFC 3339.

@@ -34,6 +34,8 @@ type commandsEMSP struct {
 type commandResult struct {
 	at   time.Time
 	body map[string]any
+	// auth is the Authorization header the result came with.
+	auth string
 }
 
 func newCommandsEMSP(t *testing.T) *commandsEMSP {
@@ -62,7 +64,7 @@ func newCommandsEMSP(t *testing.T) *commandsEMSP {
 			_ = json.Unmarshal(raw, &body)
 			name := strings.TrimPrefix(r.URL.Path, "/result/")
 			f.mu.Lock()
-			f.results[name] = append(f.results[name], commandResult{at: time.Now(), body: body})
+			f.results[name] = append(f.results[name], commandResult{at: time.Now(), body: body, auth: r.Header.Get("Authorization")})
 			f.mu.Unlock()
 		default:
 			http.NotFound(w, r)
@@ -79,6 +81,16 @@ func (f *commandsEMSP) resultsAt(name string) []commandResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]commandResult(nil), f.results[name]...)
+}
+
+func (f *commandsEMSP) allResults() map[string][]commandResult {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[string][]commandResult{}
+	for name, rs := range f.results {
+		out[name] = append([]commandResult(nil), rs...)
+	}
+	return out
 }
 
 func (f *commandsEMSP) patchStatuses() []string {
@@ -143,25 +155,7 @@ func commandsRun(t *testing.T, ocppPort, ocpiPort int, emsp *commandsEMSP) (*sta
 	s.startRun()
 	base := "http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(ocpiPort)) + "/ocpi/2.3.0/"
 
-	var reg bytes.Buffer
-	_ = json.NewEncoder(&reg).Encode(map[string]any{
-		"token": "emsp-token-b", "url": emsp.srv.URL + "/versions",
-		"roles": []map[string]any{{"role": "EMSP", "party_id": "ABC", "country_code": "NL",
-			"business_details": map[string]any{"name": "Fake"}}},
-	})
-	req, err := http.NewRequest(http.MethodPost, base+"credentials", &reg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Authorization", "Token "+base64.StdEncoding.EncodeToString([]byte(cfg.OCPI.TokenA)))
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST credentials: HTTP %d", resp.StatusCode)
-	}
+	registerPartner(t, base, cfg, emsp, "emsp-token-b")
 
 	post := func(command string, body map[string]any) (int, map[string]any) {
 		t.Helper()
@@ -183,6 +177,32 @@ func commandsRun(t *testing.T, ocppPort, ocpiPort int, emsp *commandsEMSP) (*sta
 		return resp.StatusCode, env
 	}
 	return s, cfg, post
+}
+
+// registerPartner registers the fake partner through POST /credentials, which
+// hands it TOKEN_C, and gives it tokenB for the calls cpms makes to it.
+func registerPartner(t *testing.T, base string, cfg *config.Config, emsp *commandsEMSP, tokenB string) {
+	t.Helper()
+
+	var reg bytes.Buffer
+	_ = json.NewEncoder(&reg).Encode(map[string]any{
+		"token": tokenB, "url": emsp.srv.URL + "/versions",
+		"roles": []map[string]any{{"role": "EMSP", "party_id": "ABC", "country_code": "NL",
+			"business_details": map[string]any{"name": "Fake"}}},
+	})
+	req, err := http.NewRequest(http.MethodPost, base+"credentials", &reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Token "+base64.StdEncoding.EncodeToString([]byte(cfg.OCPI.TokenA)))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST credentials: HTTP %d", resp.StatusCode)
+	}
 }
 
 func reserveNowBody(cfg *config.Config, emsp *commandsEMSP, name, uid string) map[string]any {
@@ -293,5 +313,60 @@ func TestCpmsCancelOfAnOCPIReservationIsReportedToThePartner(t *testing.T) {
 	}
 	if got := emsp.resultsAt("r1")[1].body["result"]; got != "CANCELED_RESERVATION" {
 		t.Errorf("second CommandResult = %v, want CANCELED_RESERVATION", got)
+	}
+}
+
+// A result is for the partner that sent the command. When the operator
+// unregisters it and another partner registers, nothing that belongs to the
+// first is sent to its response_url with the second's TOKEN_B, and nothing of it
+// is sent to the second.
+//
+// Partner A reserves, cpms unregisters it, B registers, and `cpms cancel` ends
+// A's reservation: the CANCELED_RESERVATION that would tell A goes nowhere.
+func TestAFormerPartnerNeverGetsTheCurrentPartnersToken(t *testing.T) {
+	t.Parallel()
+
+	const ocppPort, ocpiPort = 19634, 19635
+	const tokenB = "PARTNER-B-SECRET"
+	emspA, emspB := newCommandsEMSP(t), newCommandsEMSP(t)
+	s, cfg, post := commandsRun(t, ocppPort, ocpiPort, emspA)
+	s.connect()
+
+	if _, env := post("RESERVE_NOW", reserveNowBody(cfg, emspA, "r1", "NL-ABC-C00012345")); env["status_code"] != float64(1000) {
+		t.Fatalf("RESERVE_NOW: %v", env)
+	}
+	if res := emspA.waitResult(t, "r1"); res.body["result"] != "ACCEPTED" {
+		t.Fatalf("CommandResult = %v", res.body)
+	}
+
+	s.mustCPMS("ocpi", "unregister")
+	base := "http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(ocpiPort)) + "/ocpi/2.3.0/"
+	registerPartner(t, base, cfg, emspB, tokenB)
+
+	s.mustCPMS("cancel")
+
+	// The delivery is dropped, and the log says so: waiting for that line is
+	// what makes the absence below meaningful.
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(s.runOut.String(), "registration it was for has changed") {
+		if time.Now().After(deadline) {
+			t.Fatalf("the dropped delivery was never logged; run output:\n%s", s.runOut.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if got := emspA.resultsAt("r1"); len(got) != 1 {
+		t.Errorf("the former partner got %d results at r1, want only the original ACCEPTED: %+v", len(got), got)
+	}
+	wantB := "Token " + base64.StdEncoding.EncodeToString([]byte(tokenB))
+	for name, results := range emspA.allResults() {
+		for _, r := range results {
+			if r.auth == wantB {
+				t.Errorf("the former partner got a result at %s with the current partner's TOKEN_B", name)
+			}
+		}
+	}
+	if got := emspB.allResults(); len(got) != 0 {
+		t.Errorf("the current partner got results for a reservation that was not its own: %+v", got)
 	}
 }

@@ -72,7 +72,7 @@ func (s *Service) persistableLocked() ([]state.Reservation, []state.Transaction)
 			ID: r.ID, OCPIReservationID: r.OCPIReservationID,
 			ChargePointID: r.ChargePointID, EVSEUID: r.EVSEUID, IDTag: r.IDTag,
 			ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt,
-			Source: r.Source, ResponseURL: r.ResponseURL,
+			Source: r.Source, ResponseURL: r.ResponseURL, ResponseRegistration: r.ResponseRegistration,
 		})
 	}
 	sort.Slice(reservations, func(i, j int) bool { return reservations[i].ID < reservations[j].ID })
@@ -170,7 +170,8 @@ func (s *Service) loadLocked(st state.State) (dropped bool) {
 			ID: r.ID, OCPIReservationID: r.OCPIReservationID,
 			ChargePointID: r.ChargePointID, EVSEUID: r.EVSEUID, ConnectorID: connectorID,
 			IDTag: r.IDTag, ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt,
-			Source: r.Source, ResponseURL: r.ResponseURL, Status: ReservationActive,
+			Source: r.Source, ResponseURL: r.ResponseURL, ResponseRegistration: r.ResponseRegistration,
+			Status: ReservationActive,
 		}}
 		s.reservations[r.ID] = res
 		s.armLocked(res)

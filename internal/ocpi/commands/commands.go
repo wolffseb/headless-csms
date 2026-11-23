@@ -80,8 +80,17 @@ type Core interface {
 
 // Partner is the registered counterparty, whose response_urls get the results.
 // *credentials.Registrar satisfies it.
+//
+// A response_url belongs to the registration it arrived under. Its results are
+// posted with that registration's TOKEN_B, or not at all: after an
+// unregistration, and another partner registering, the old URL must never be
+// sent the new partner's token.
 type Partner interface {
-	Client() *client.Client
+	// Registered identifies the current registration; the zero time means none.
+	Registered() time.Time
+	// ClientFor calls the partner with the TOKEN_B of the registration, or
+	// reports false if that is no longer the current one.
+	ClientFor(registration time.Time) (*client.Client, bool)
 }
 
 // Stopper is a scheduled callback that can be cancelled, as *time.Timer is.
@@ -224,6 +233,10 @@ type body struct {
 	EVSEUID       string `json:"evse_uid"`
 	ConnectorID   string `json:"connector_id"`
 	SessionID     string `json:"session_id"`
+
+	// registration is the partner registration the command arrived under,
+	// which its response_url belongs to.
+	registration time.Time
 }
 
 // token is the part of OCPI's Token a command needs: the uid is what a charge
@@ -291,6 +304,7 @@ func (r *Receiver) serve(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	b.registration = r.opts.Partner.Registered()
 	p, ref := prepare(&b)
 	if ref != nil {
 		r.log.Info("refusing an OCPI command", "command", command, "response", string(ref.response), "reason", ref.message)
@@ -302,7 +316,7 @@ func (r *Receiver) serve(w http.ResponseWriter, req *http.Request) {
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
-		r.execute(ocpi.WithCorrelationID(r.ctx, ocpi.CorrelationID(req.Context())), command, b.ResponseURL, p)
+		r.execute(ocpi.WithCorrelationID(r.ctx, ocpi.CorrelationID(req.Context())), command, b.ResponseURL, b.registration, p)
 	}()
 	respond(w, ocpi.StatusSuccess, commandResponse{Result: ResponseAccepted, Timeout: timeout})
 }
@@ -402,7 +416,7 @@ func (r *Receiver) callTimeout(chargerID string) time.Duration {
 }
 
 // execute runs an accepted command and posts how it went.
-func (r *Receiver) execute(ctx context.Context, command, responseURL string, p *plan) {
+func (r *Receiver) execute(ctx context.Context, command, responseURL string, registration time.Time, p *plan) {
 	// The call timeouts are what normally end a command. This only backstops
 	// a station adapter that lacks them, so it must not tie with them.
 	runCtx, cancel := context.WithTimeout(ctx, p.bound(r)+responseTimeoutSlack)
@@ -413,16 +427,28 @@ func (r *Receiver) execute(ctx context.Context, command, responseURL string, p *
 	if err != nil {
 		r.log.Info("an OCPI command did not succeed", "command", command, "result", string(result), "error", err)
 	}
-	r.deliver(ctx, command, responseURL, commandResult{Result: result, Message: text(msg)})
+	r.deliver(ctx, command, responseURL, registration, commandResult{Result: result, Message: text(msg)})
 }
 
 // deliver POSTs a CommandResult to its response_url, and again, after a
 // backoff, if the partner could not take it, up to ocpi.push.max_retries
 // times. A partner that refuses the request itself (4xx) is not asked again.
 // It runs in the caller's goroutine: callers start one per result.
-func (r *Receiver) deliver(ctx context.Context, what, responseURL string, res commandResult) {
+//
+// The URL belongs to a registration, and is posted to, with that registration's
+// TOKEN_B, only while it is the current one. If the partner was unregistered
+// or replaced in the meantime (including between two attempts), the result is
+// dropped and logged: its URL is a former partner's, and the new partner's
+// token must not be sent there.
+func (r *Receiver) deliver(ctx context.Context, what, responseURL string, registration time.Time, res commandResult) {
 	for retries := 0; ; retries++ {
-		_, err := r.opts.Partner.Client().Post(ctx, responseURL, res)
+		partner, ok := r.opts.Partner.ClientFor(registration)
+		if !ok {
+			r.log.Warn("dropping a command result: the partner registration it was for has changed",
+				"command", what, "result", string(res.Result))
+			return
+		}
+		_, err := partner.Post(ctx, responseURL, res)
 		switch {
 		case err == nil:
 			r.log.Debug("posted a command result", "command", what, "result", string(res.Result))
@@ -490,7 +516,7 @@ func (r *Receiver) watchReservations(events <-chan core.Event) {
 			r.wg.Add(1)
 			go func() {
 				defer r.wg.Done()
-				r.deliver(ocpi.WithCorrelationID(r.ctx, ocpi.NewID()), "CANCELED_RESERVATION", e.ResponseURL,
+				r.deliver(ocpi.WithCorrelationID(r.ctx, ocpi.NewID()), "CANCELED_RESERVATION", e.ResponseURL, e.ResponseRegistration,
 					commandResult{Result: ResultCanceledReservation, Message: text(msg)})
 			}()
 		}

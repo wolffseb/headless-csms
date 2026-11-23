@@ -87,6 +87,9 @@ type Reservation struct {
 	CreatedAt         time.Time `json:"created_at"`
 	Source            string    `json:"source"`                 // "cli", "tui" or "ocpi"
 	ResponseURL       string    `json:"response_url,omitempty"` // OCPI CommandResult target
+	// ResponseRegistration is the registered_at of the partner registration
+	// ResponseURL belongs to; results go there only while it is still current.
+	ResponseRegistration time.Time `json:"response_registration,omitzero"`
 }
 
 // Transaction is an active charging transaction.
@@ -184,6 +187,7 @@ func (s *State) normalize() {
 		r := &s.Reservations[i]
 		r.ExpiresAt = r.ExpiresAt.UTC()
 		r.CreatedAt = r.CreatedAt.UTC()
+		r.ResponseRegistration = r.ResponseRegistration.UTC()
 	}
 	for i := range s.Transactions {
 		s.Transactions[i].StartedAt = s.Transactions[i].StartedAt.UTC()

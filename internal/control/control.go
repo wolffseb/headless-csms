@@ -127,6 +127,9 @@ type ReserveParams struct {
 	// back.
 	OCPIReservationID string
 	ResponseURL       string
+	// ResponseRegistration is the OCPI partner registration ResponseURL came
+	// from, kept with the reservation (see core.Reservation).
+	ResponseRegistration time.Time
 }
 
 // Close refuses further reservations (ErrShuttingDown), then waits for the
@@ -208,6 +211,8 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		ExpiresAt:         expiresAt,
 		Source:            p.Source,
 		ResponseURL:       p.ResponseURL,
+		// Kept with the URL it belongs to.
+		ResponseRegistration: p.ResponseRegistration,
 	}
 	// An OCPI reservation_id we hold is replaced under the same OCPP id.
 	var (

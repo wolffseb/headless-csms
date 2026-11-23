@@ -830,3 +830,76 @@ func TestTheCommandOutlivesTheRequest(t *testing.T) {
 		t.Errorf("result = %s", res)
 	}
 }
+
+// A response_url belongs to the registration its command arrived under. When
+// another partner registers, its token is never sent there.
+func TestResultsAreDroppedWhenThePartnerRegistrationChanged(t *testing.T) {
+	t.Parallel()
+	const dropped = "the partner registration it was for has changed"
+	other := t0.Add(time.Minute)
+
+	t.Run("a result that was still to be delivered", func(t *testing.T) {
+		t.Parallel()
+		s := newStage(t)
+		release := s.station(cpA).holdOp("reserve")
+		if got := s.post("RESERVE_NOW", s.reserveBody("r1", nil)); got.result != "ACCEPTED" {
+			t.Fatalf("answer = %+v", got)
+		}
+		s.partner.set(other, "partner-b-token")
+		release()
+
+		eventually(t, "the result to be dropped", func() bool { return strings.Contains(s.logs.String(), dropped) })
+		if got := s.emsp.got("r1"); len(got) != 0 {
+			t.Errorf("a result went to the former partner's response_url: %+v", got)
+		}
+	})
+
+	t.Run("the end of a reservation made before", func(t *testing.T) {
+		t.Parallel()
+		s := newStage(t)
+		s.post("RESERVE_NOW", s.reserveBody("r1", nil))
+		s.result("r1")
+
+		s.partner.set(other, "partner-b-token")
+		if err := s.ctl.Cancel(context.Background(), "EVSE-A1"); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, "the delivery to be dropped", func() bool { return strings.Contains(s.logs.String(), dropped) })
+		if got := s.emsp.got("r1"); len(got) != 1 {
+			t.Errorf("the former partner got %d posts, want only its ACCEPTED: %+v", len(got), got)
+		}
+	})
+
+	t.Run("a retry after the partner changed", func(t *testing.T) {
+		t.Parallel()
+		clk := newClock()
+		s := newStage(t, func(o *stageOptions) { o.afterFunc = clk.afterFunc })
+		s.emsp.status["r1"] = http.StatusInternalServerError
+		s.post("RESERVE_NOW", s.reserveBody("r1", nil))
+		eventually(t, "the first attempt", func() bool { return len(s.emsp.got("r1")) == 1 })
+		eventually(t, "a retry to be waited for", func() bool { return clk.Pending() == 1 })
+
+		s.partner.set(other, "partner-b-token")
+		clk.Advance(time.Hour)
+		eventually(t, "the retry to be dropped", func() bool { return strings.Contains(s.logs.String(), dropped) })
+		if got := s.emsp.got("r1"); len(got) != 1 {
+			t.Errorf("the former partner got %d posts, want only the first attempt: %+v", len(got), got)
+		}
+	})
+
+	t.Run("the same registration with a new token", func(t *testing.T) {
+		t.Parallel()
+		s := newStage(t)
+		release := s.station(cpA).holdOp("reserve")
+		s.post("RESERVE_NOW", s.reserveBody("r1", nil))
+		// A credentials PUT rotates TOKEN_B and keeps the registration.
+		s.partner.set(s.partner.Registered(), "rotated-token")
+		release()
+
+		s.result("r1")
+		want := "Token " + base64.StdEncoding.EncodeToString([]byte("rotated-token"))
+		if got := s.emsp.got("r1")[0].auth; got != want {
+			t.Errorf("Authorization = %q, want the rotated token %q", got, want)
+		}
+	})
+}
