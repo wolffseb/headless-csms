@@ -203,6 +203,9 @@ type Service struct {
 	// profiles are the charging profiles the station accepted, as sent.
 	profiles []ChargingProfile
 	txSeq    uint64
+	// tagGrants are the tags an OCPI START_SESSION vouched for, lowercased,
+	// and until when (see tags.go). In memory only: the window is minutes.
+	tagGrants map[string]time.Time
 
 	// The next id to hand out. Ids start at 1: OCPP 1.6 uses transaction id 0
 	// to mean "refused", and a zero reservation id reads as "none".
@@ -271,6 +274,7 @@ func New(cfg *config.Config, opts ...Option) *Service {
 		log:               slog.Default(),
 		cps:               make(map[string]*chargePointState),
 		reservations:      make(map[int]*reservation),
+		tagGrants:         make(map[string]time.Time),
 		nextReservationID: 1,
 		nextTransactionID: 1,
 		nextRemoteStartID: 1,

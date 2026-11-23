@@ -133,7 +133,7 @@ func (h *Handler) authorize(cpID string, payload json.RawMessage) (any, *ocpp.RP
 
 	h.core.Seen(cpID)
 	status := AuthInvalid
-	if h.cfg.AcceptsIDTag(req.IDTag) {
+	if h.core.TagAuthorised(req.IDTag) {
 		status = AuthAccepted
 	} else {
 		h.log.Warn("rejecting unknown id tag", "charge_point", cpID, "id_tag", req.IDTag)
@@ -152,7 +152,7 @@ func (h *Handler) startTransaction(cpID string, payload json.RawMessage) (any, *
 
 	// An unknown tag is refused with an Invalid idTagInfo rather than a
 	// CALLERROR: the message was perfectly well formed, the answer is just no.
-	if !h.cfg.AcceptsIDTag(req.IDTag) {
+	if !h.core.TagAuthorised(req.IDTag) {
 		h.core.Seen(cpID)
 		h.log.Warn("refusing transaction for unknown id tag", "charge_point", cpID, "id_tag", req.IDTag)
 		return StartTransactionConf{

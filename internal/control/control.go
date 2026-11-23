@@ -158,6 +158,12 @@ func (s *Service) Close() {
 // and the reservation the station may hold is left to expire there, at the
 // reservation's expiryDate, so a new reserve on that EVSE can be answered
 // Occupied until then.
+//
+// A ReserveParams.OCPIReservationID that names a reservation we hold replaces
+// it: same OCPP id, as a ReserveNow with an id the station holds replaces it
+// there. If that fails, no cancel follows (it would drop the original, which
+// the station may still hold), and the original ends locally too, because
+// what the station holds is now unknown.
 func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservation, error) {
 	s.mu.Lock()
 	if s.closed {
@@ -185,7 +191,7 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		expiresAt = s.now().Add(length)
 	}
 
-	r, err := s.core.BeginReservation(core.Reservation{
+	want := core.Reservation{
 		OCPIReservationID: p.OCPIReservationID,
 		ChargePointID:     cp.ID(),
 		EVSEUID:           p.EVSEUID,
@@ -193,7 +199,18 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		ExpiresAt:         expiresAt,
 		Source:            p.Source,
 		ResponseURL:       p.ResponseURL,
-	})
+	}
+	// An OCPI reservation_id we hold is replaced under the same OCPP id.
+	var (
+		r        core.Reservation
+		replaced bool
+	)
+	if p.OCPIReservationID != "" {
+		r, replaced, err = s.core.BeginReplacement(want)
+	}
+	if err == nil && !replaced {
+		r, err = s.core.BeginReservation(want)
+	}
 	if err != nil {
 		return core.Reservation{}, err
 	}
@@ -209,6 +226,15 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		// cancel, and a cancel for a reservation that never went out would
 		// only be a second command for a station that is already busy.
 		s.core.EndReservation(r.ID, core.ReservationFailed)
+		return core.Reservation{}, err
+	}
+	if err != nil && replaced {
+		// The id is the one the station holds from before: a cancel for it
+		// (cancelOrphan assumes ids are never reused) would drop the original
+		// reservation too, which may well still be good there. What the
+		// station holds now is unknown, so our record goes as well, and the
+		// caller reports the failure.
+		s.core.EndReservation(r.ID, endReason(err))
 		return core.Reservation{}, err
 	}
 	if err != nil {
@@ -331,6 +357,18 @@ func (s *Service) isClosed() bool {
 // Our record is then stale and would block new reservations until it timed
 // out, so it ends here as well, and the refusal is reported.
 func (s *Service) Cancel(ctx context.Context, evseUID string) error {
+	return s.cancel(ctx, evseUID, core.ReservationCancelled)
+}
+
+// CancelForPartner is Cancel for a cancellation the OCPI partner asked for.
+// The reservation ends as core.ReservationCancelledByPartner, so that the
+// partner, who already has the answer to its CANCEL_RESERVATION, is not also
+// told that the CPO cancelled.
+func (s *Service) CancelForPartner(ctx context.Context, evseUID string) error {
+	return s.cancel(ctx, evseUID, core.ReservationCancelledByPartner)
+}
+
+func (s *Service) cancel(ctx context.Context, evseUID, reason string) error {
 	if err := s.checkEVSE(evseUID); err != nil {
 		return err
 	}
@@ -347,7 +385,7 @@ func (s *Service) Cancel(ctx context.Context, evseUID string) error {
 	if err != nil {
 		return err
 	}
-	s.core.EndReservation(r.ID, core.ReservationCancelled)
+	s.core.EndReservation(r.ID, reason)
 	if res.Status != ocpp.CommandAccepted {
 		s.log.Warn("station refused to cancel a reservation; dropping our record of it anyway",
 			"reservation_id", r.ID, "evse", evseUID, "status", res.Raw)
