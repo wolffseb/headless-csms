@@ -86,7 +86,7 @@
       "name": "AuthorizeRemoteTxRequests",
       "value": "false",
       "reported": true,
-      "meaning": "if true, the station asks cpms to Authorize the tag of a remote start; cpms accepts only auth.default_id_tag"
+      "meaning": "if true, the station asks cpms to Authorize the tag of a remote start; cpms accepts auth.default_id_tag and auth.id_tags"
     },
     {
       "name": "LocalAuthListEnabled",

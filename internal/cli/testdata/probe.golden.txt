@@ -10,7 +10,7 @@ Features
 
 Settings
   ReserveConnectorZeroSupported            false                                                                 whether the whole station can be reserved at once; cpms always reserves one EVSE, so this is informational
-  AuthorizeRemoteTxRequests                false                                                                 if true, the station asks cpms to Authorize the tag of a remote start; cpms accepts only auth.default_id_tag
+  AuthorizeRemoteTxRequests                false                                                                 if true, the station asks cpms to Authorize the tag of a remote start; cpms accepts auth.default_id_tag and auth.id_tags
   LocalAuthListEnabled                     false                                                                 if true, a whitelist held on the station can let tags charge without asking cpms
   LocalPreAuthorize                        false                                                                 if true, the station starts at once for tags it knows locally, before cpms answers
   LocalAuthorizeOffline                    false                                                                 if true, the station lets tags it knows locally charge while cpms is unreachable

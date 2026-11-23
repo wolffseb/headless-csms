@@ -96,8 +96,8 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	// socketWait), so the CLI hears what happened.
 	ctl, err := socket.Listen(socket.Options{
 		Path:              socketPath,
-		ChargePointID:     cfg.Chargers[0].ID,                     // TODO(#85 B2)
-		UnregisterTimeout: cfg.Chargers[0].CallTimeout.Duration(), // TODO(#85 B2)
+		Config:            cfg,
+		UnregisterTimeout: maxCallTimeout(cfg),
 		Log:               logger,
 	})
 	if err != nil {
@@ -200,7 +200,11 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "OCPI versions endpoint %s (listening on %s)\n", ocpiServer.VersionsURL(), ocpiServer.Addr())
 	fmt.Fprintf(cmd.OutOrStdout(), "control socket %s\n", ctl.Path())
-	fmt.Fprintln(cmd.OutOrStdout(), "waiting for the charge point to connect; press Ctrl-C to stop")
+	if len(cfg.Chargers) > 1 {
+		fmt.Fprintf(cmd.OutOrStdout(), "waiting for %d charge points to connect; press Ctrl-C to stop\n", len(cfg.Chargers))
+	} else {
+		fmt.Fprintln(cmd.OutOrStdout(), "waiting for the charge point to connect; press Ctrl-C to stop")
+	}
 
 	done := make(chan struct{})
 	go func() {

@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wolffseb/cli-cpms/internal/config"
+	"github.com/wolffseb/cli-cpms/internal/control"
 	"github.com/wolffseb/cli-cpms/internal/control/socket"
 )
 
@@ -164,14 +165,23 @@ func newStationCommands(opts *options) []*cobra.Command {
 
 	status := &cobra.Command{
 		Use:   "status",
-		Short: "Show the station, its EVSEs, reservations and sessions",
-		Args:  cobra.NoArgs,
+		Short: "Show the stations, their EVSEs, reservations and sessions",
+		Long: "Shows every configured charger with its EVSEs, reservations and sessions.\n" +
+			"With more than one charger there is one section per charger; --charger\n" +
+			"shows just that one, in the single-charger layout.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			env, err := newStationEnv(cmd, opts)
 			if err != nil {
 				return err
 			}
-			raw, err := env.call(cmd, socket.Request{Op: socket.OpStatus})
+			charger, _ := cmd.Flags().GetString("charger")
+			if charger != "" {
+				if _, err := control.ResolveCharger(env.cfg, charger); err != nil {
+					return &ExitStatus{Code: ExitError, Err: err}
+				}
+			}
+			raw, err := env.call(cmd, socket.Request{Op: socket.OpStatus, Charger: charger})
 			if err != nil {
 				return err
 			}
@@ -196,18 +206,57 @@ func newStationCommands(opts *options) []*cobra.Command {
 	for _, c := range []*cobra.Command{reserve, cancel, start, stop, unlock} {
 		c.Flags().String("evse", "", "EVSE uid from config (may be omitted when only one EVSE is configured)")
 	}
+	status.Flags().String("charger", "", "show only this charger (default: all)")
 	return []*cobra.Command{reserve, cancel, start, stop, unlock, status}
 }
 
 // stationEnv is what every one-shot command needs: the config, the EVSE it
 // acts on, and where `cpms run` listens.
 type stationEnv struct {
-	cfg        *config.Config
-	evse       string
+	cfg  *config.Config
+	evse string
+	// charger is the station a station-level command addresses, set by
+	// resolveCharger. EVSE commands leave it empty: the EVSE says.
+	charger    string
 	socketPath string
 }
 
+// addChargerFlag adds --charger to a command that addresses a station rather
+// than an EVSE.
+func addChargerFlag(c *cobra.Command) {
+	c.Flags().String("charger", "", "charger id from config (required when more than one charger is configured)")
+}
+
+// resolveCharger sets env.charger from --charger: the only charger when none
+// is given and one is configured, an error listing the ids otherwise.
+func (e *stationEnv) resolveCharger(cmd *cobra.Command) error {
+	id, _ := cmd.Flags().GetString("charger")
+	ch, err := control.ResolveCharger(e.cfg, id)
+	if err != nil {
+		return &ExitStatus{Code: ExitError, Err: err}
+	}
+	e.charger = ch.ID
+	return nil
+}
+
+// maxCallTimeout is the longest call timeout of any charger. A command is
+// answered by the daemon within twice its charger's, so this is a bound that
+// holds whichever charger it goes to.
+func maxCallTimeout(cfg *config.Config) time.Duration {
+	var d time.Duration
+	for _, ch := range cfg.Chargers {
+		d = max(d, ch.CallTimeout.Duration())
+	}
+	return d
+}
+
 func newStationEnv(cmd *cobra.Command, opts *options) (*stationEnv, error) {
+	return newStationEnvFor(cmd, opts, false)
+}
+
+// newStationEnvFor is newStationEnv; with noEVSE it leaves --evse alone, for a
+// command that addresses a station and so has no use for one.
+func newStationEnvFor(cmd *cobra.Command, opts *options, noEVSE bool) (*stationEnv, error) {
 	cfg, err := loadConfig(cmd, opts)
 	if err != nil {
 		return nil, err
@@ -216,7 +265,7 @@ func newStationEnv(cmd *cobra.Command, opts *options) (*stationEnv, error) {
 
 	// The EVSE is checked here, against config, before anything is sent: a
 	// typo should not need a running cpms to be told it is a typo.
-	if f := cmd.Flags().Lookup("evse"); f != nil {
+	if f := cmd.Flags().Lookup("evse"); f != nil && !noEVSE {
 		evse, err := resolveEVSE(cfg, f.Value.String())
 		if err != nil {
 			return nil, &ExitStatus{Code: ExitError, Err: err}
@@ -227,7 +276,7 @@ func newStationEnv(cmd *cobra.Command, opts *options) (*stationEnv, error) {
 }
 
 func (e *stationEnv) call(cmd *cobra.Command, req socket.Request) (json.RawMessage, error) {
-	raw, err := socket.Call(cmd.Context(), e.socketPath, req, socketWait(e.cfg.Chargers[0].CallTimeout.Duration())) // TODO(#85 B2)
+	raw, err := socket.Call(cmd.Context(), e.socketPath, req, socketWait(maxCallTimeout(e.cfg)))
 	if err != nil {
 		subject := req.EVSE
 		if req.Op == socket.OpConfigSet {
@@ -279,10 +328,24 @@ func evseList(cfg *config.Config) string {
 	return strings.Join(uids, ", ")
 }
 
-// printStatus renders the status for a person: one line for the station, then
-// a table with a row per EVSE.
+// printStatus renders the status for a person: for each charger one line, then
+// a table with a row per EVSE. With several chargers each has its own section,
+// which is also where a reservation or session is shown to belong to one.
 func printStatus(cmd *cobra.Command, st socket.Status) {
-	cp := st.ChargePoint
+	if len(st.Chargers) == 0 {
+		printCharger(cmd, st.ChargePoint, st.EVSEs)
+		fmt.Fprintln(cmd.OutOrStdout())
+	}
+	for _, ch := range st.Chargers {
+		printCharger(cmd, ch.ChargePoint, ch.EVSEs)
+		fmt.Fprintln(cmd.OutOrStdout())
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), ocpiLine(st.OCPI))
+}
+
+// printCharger renders one charger: its line, its EVSE table and its
+// charging profiles.
+func printCharger(cmd *cobra.Command, cp socket.ChargePointStatus, evses []socket.EVSEStatus) {
 	state := "offline"
 	if cp.Online {
 		state = "online"
@@ -307,7 +370,7 @@ func printStatus(cmd *cobra.Command, st socket.Status) {
 
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "EVSE\tSTATUS\tRESERVATION\tTRANSACTION\tMETER")
-	for _, e := range st.EVSEs {
+	for _, e := range evses {
 		status := e.Status
 		if e.ErrorCode != "" && e.ErrorCode != "NoError" {
 			status += " (" + e.ErrorCode + ")"
@@ -325,9 +388,7 @@ func printStatus(cmd *cobra.Command, st socket.Status) {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", e.UID, status, reservation, transaction, meterCell(e.MeterStatus, time.Now()))
 	}
 	_ = w.Flush()
-	printProfiles(cmd.OutOrStdout(), st)
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintln(cmd.OutOrStdout(), ocpiLine(st.OCPI))
+	printProfiles(cmd.OutOrStdout(), cp, evses)
 }
 
 // meterCell is a meter reading for status, an EVSE's or the station's: what it

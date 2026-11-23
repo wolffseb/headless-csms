@@ -790,7 +790,7 @@ func TestProbe(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 
-	report, err := r.ctl.Probe(ctx)
+	report, err := r.ctl.Probe(ctx, "")
 	if err != nil || report.Version != ocpp.Version16 {
 		t.Fatalf("Probe = %+v, %v; want the station's report", report, err)
 	}
@@ -799,12 +799,12 @@ func TestProbe(t *testing.T) {
 	}
 
 	r.station.fail["probe"] = ocpp.ErrTimeout
-	if _, err := r.ctl.Probe(ctx); !errors.Is(err, ocpp.ErrTimeout) {
+	if _, err := r.ctl.Probe(ctx, ""); !errors.Is(err, ocpp.ErrTimeout) {
 		t.Errorf("err = %v, want ErrTimeout", err)
 	}
 
 	ctl := control.New(control.Options{Core: r.core, Commands: commands{}, Config: testConfig()})
-	if _, err := ctl.Probe(ctx); !errors.Is(err, ocpp.ErrNotConnected) {
+	if _, err := ctl.Probe(ctx, ""); !errors.Is(err, ocpp.ErrNotConnected) {
 		t.Errorf("err = %v, want ErrNotConnected", err)
 	}
 }
@@ -914,7 +914,7 @@ func TestChangeConfiguration(t *testing.T) {
 			r := newRig(t)
 			r.station.answer[op] = ocpp.Result{Status: tt.status, Raw: tt.raw}
 
-			res, err := r.ctl.ChangeConfiguration(context.Background(), key, value)
+			res, err := r.ctl.ChangeConfiguration(context.Background(), "", key, value)
 			if r.station.callCount() != 1 {
 				t.Fatalf("%d calls sent, want the one ChangeConfiguration", r.station.callCount())
 			}
@@ -937,7 +937,7 @@ func TestChangeConfigurationNotConnected(t *testing.T) {
 	t.Parallel()
 
 	ctl := control.New(control.Options{Core: core.New(testConfig()), Commands: commands{}, Config: testConfig()})
-	if _, err := ctl.ChangeConfiguration(context.Background(), "HeartbeatInterval", "60"); !errors.Is(err, ocpp.ErrNotConnected) {
+	if _, err := ctl.ChangeConfiguration(context.Background(), "", "HeartbeatInterval", "60"); !errors.Is(err, ocpp.ErrNotConnected) {
 		t.Fatalf("error = %v, want ErrNotConnected", err)
 	}
 }
@@ -956,7 +956,7 @@ func TestChangeConfigurationDoesNotLogTheValue(t *testing.T) {
 		Log: slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
 
-	if _, err := ctl.ChangeConfiguration(context.Background(), key, value); err != nil {
+	if _, err := ctl.ChangeConfiguration(context.Background(), "", key, value); err != nil {
 		t.Fatalf("ChangeConfiguration: %v", err)
 	}
 	if !strings.Contains(logged.String(), key) || !strings.Contains(logged.String(), "Accepted") {

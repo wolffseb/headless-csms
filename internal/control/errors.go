@@ -21,6 +21,8 @@ import (
 //     the connection closed while this one waited, so it was never sent (the
 //     one thing every other error here may not promise);
 //   - ocpp.ErrUnknownEVSE: the EVSE is not in config;
+//   - ErrChargerRequired, ErrUnknownCharger, ErrChargerMismatch: the charger
+//     a command names, or fails to name, is not usable;
 //   - *ocpp.RPCError: the station answered with a CALLERROR.
 //
 // All of them are matched with errors.Is or errors.As.
@@ -37,6 +39,14 @@ var (
 	// ErrNoKeyValueConfig means the station's OCPP version has no flat
 	// key/value configuration to change.
 	ErrNoKeyValueConfig = errors.New("this OCPP version has no key/value configuration")
+	// ErrChargerRequired means the command addresses a station, not an EVSE,
+	// and more than one charger is configured, so it must be told which.
+	ErrChargerRequired = errors.New("--charger is required")
+	// ErrUnknownCharger means the charger is not in config.
+	ErrUnknownCharger = errors.New("unknown charger")
+	// ErrChargerMismatch means a command named an EVSE and a charger that
+	// does not own it.
+	ErrChargerMismatch = errors.New("charger does not match the EVSE")
 )
 
 // Op names the action a RefusedError is about, in words a person would use.

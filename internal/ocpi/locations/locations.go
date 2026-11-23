@@ -141,22 +141,12 @@ func Build(cfg *config.Config, staticAt time.Time, snap core.Snapshot) Location 
 	}
 	locUpdated := staticAt
 	for _, e := range l.EVSEs {
-		evse := buildEVSE(e, staticAt, live[chargerOf(cfg, e)][e.UID])
+		evse := buildEVSE(e, staticAt, live[cfg.ChargerOf(e)][e.UID])
 		locUpdated = latest(locUpdated, evse.LastUpdated.Time())
 		loc.EVSEs = append(loc.EVSEs, evse)
 	}
 	loc.LastUpdated = DateTime(locUpdated)
 	return loc
-}
-
-// chargerOf is the id of the charger e hangs on: an EVSE with no charger set
-// belongs to the only charger, as in config (a Config built by hand may leave
-// it empty).
-func chargerOf(cfg *config.Config, e config.EVSE) string {
-	if e.Charger == "" && len(cfg.Chargers) == 1 {
-		return cfg.Chargers[0].ID
-	}
-	return e.Charger
 }
 
 func buildEVSE(e config.EVSE, staticAt time.Time, live core.EVSESnapshot) EVSE {
