@@ -25,6 +25,13 @@ func (m *Model) eventText(e core.Event) string {
 			e.ChargePointID, e.TransactionID, e.EVSEUID, e.IDTag)
 	case core.EventTransactionStopped:
 		return fmt.Sprintf("%s session %s stopped", e.ChargePointID, e.TransactionID)
+	case core.EventChargePointDisconnected:
+		if e.Detail == "" {
+			break
+		}
+		// The transport's own text is in cpms.log; the charger line gives the
+		// same short reason.
+		return e.ChargePointID + " disconnected: " + offlineReason(e.Detail)
 	}
 	return e.String()
 }

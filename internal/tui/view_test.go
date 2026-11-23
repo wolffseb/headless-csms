@@ -428,3 +428,25 @@ func TestSelectedRowOnAnOfflineChargerIsBold(t *testing.T) {
 		t.Errorf("the selected offline row should be bold, not faint: %q", l)
 	}
 }
+
+// The log pane words a disconnect like the charger line: the transport's own
+// text is in cpms.log only.
+func TestLogPaneDisconnectReasonIsShort(t *testing.T) {
+	for _, tc := range []struct{ reason, want string }{
+		{"websocket: close 1006 (abnormal closure): unexpected EOF", "ALP-HYC-001 disconnected: connection lost"},
+		{"heartbeat timeout", "ALP-HYC-001 disconnected: heartbeat timeout"},
+		{"closed by charge point", "ALP-HYC-001 disconnected: closed by charge point"},
+	} {
+		r := newRig(t)
+		r.onlineStation(cp1, "Alpitronic", "HYC300", "1.4.2", core.StatusAvailable)
+		r.core.Disconnected(cp1, tc.reason)
+		r.pump()
+		got := r.view()
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("reason %q: want %q in\n%s", tc.reason, tc.want, got)
+		}
+		if strings.Contains(got, "EOF") {
+			t.Errorf("reason %q leaks into the log pane:\n%s", tc.reason, got)
+		}
+	}
+}
