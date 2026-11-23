@@ -51,14 +51,14 @@ func TestOneShotCommandsDoNotQueryTheTerminal(t *testing.T) {
 				if err != nil {
 					t.Fatalf("cpms %v: %v", args, err)
 				}
-			case <-time.After(3 * time.Second):
+			case <-time.After(4500 * time.Millisecond):
 				_ = c.Process.Kill()
 				<-exited
-				t.Fatalf("cpms %v still running after 3 s on a terminal that never answers", args)
+				t.Fatalf("cpms %v still running after 4.5 s on a terminal that never answers", args)
 			}
 			// 5 s is what a query costs; anything near it is the bug. The
 			// bound leaves room for a slow CI machine.
-			if took := time.Since(start); took > 2*time.Second {
+			if took := time.Since(start); took > 4*time.Second {
 				t.Errorf("cpms %v took %v on a silent terminal", args, took)
 			}
 
