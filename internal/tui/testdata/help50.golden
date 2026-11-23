@@ -13,11 +13,11 @@ q  ctrl-c   quit cpms
 
 Other tags, expiry, limits: run the CLI in another
     terminal, for example:
-  cpms reserve --evse <uid> --tag <tag> --expires
-    30m
+  cpms reserve --evse <uid> --tag <tag>
 
 Full log:
   …someone/projects/cpms/scratchpad/uxrun/cpms.log
+
 
 
 

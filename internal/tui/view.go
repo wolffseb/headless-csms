@@ -431,9 +431,9 @@ func (m *Model) helpLines() []line {
 	}
 	blank()
 	add("Other tags, expiry, limits: run the CLI in another terminal, for example:")
-	// The example keeps to a line of its own; at a narrow width it wraps under
-	// itself, which is better than cutting the end off.
-	for _, l := range wrap("cpms reserve --evse <uid> --tag <tag> --expires 30m", m.w-2, "  ") {
+	// The example is short enough for a line of its own at 50 columns; below that
+	// it wraps under itself, which is better than cutting the end off.
+	for _, l := range wrap("cpms reserve --evse <uid> --tag <tag>", m.w-2, "  ") {
 		out = append(out, line{text: m.fit("  " + l)})
 	}
 	if m.opts.LogPath != "" {

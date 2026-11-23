@@ -348,6 +348,10 @@ func TestHelpAt50Columns(t *testing.T) {
 	r.send(keyMsg("?"))
 	golden(t, "help50", r.view())
 	assertFits(t, r.view(), 50, 30)
+	// The example is a whole command on one line, not one wrapped mid-command.
+	if !slices.Contains(strings.Split(r.view(), "\n"), "  cpms reserve --evse <uid> --tag <tag>") {
+		t.Errorf("the example command wraps at 50 columns:\n%s", r.view())
+	}
 }
 
 // The example command and the log path each start a line of their own, and a
@@ -357,7 +361,7 @@ func TestHelpExampleAndLogPathHaveTheirOwnLines(t *testing.T) {
 	r.send(keyMsg("?"))
 	lines := strings.Split(r.view(), "\n")
 	has := func(want string) bool { return slices.Contains(lines, want) }
-	if !has("  cpms reserve --evse <uid> --tag <tag> --expires 30m") {
+	if !has("  cpms reserve --evse <uid> --tag <tag>") {
 		t.Errorf("the example command is not on a line of its own:\n%s", r.view())
 	}
 	if !has("  " + longLogPath) {
