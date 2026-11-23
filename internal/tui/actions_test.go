@@ -485,3 +485,20 @@ func TestNotConnectedErrorForAChargerNeverSeenKeepsTheCLIWording(t *testing.T) {
 		t.Errorf("want Describe's wording %q in\n%s", want, got)
 	}
 }
+
+// A charger the screen shows online has a last-seen time too. If a command
+// still finds it not connected (the drop is not on the screen yet), the screen
+// must not call it offline: that is the CLI's sentence to give.
+func TestNotConnectedErrorForAnOnlineChargerKeepsTheCLIWording(t *testing.T) {
+	r := newRig(t)
+	r.twoStations() // ALP-HYC-001 is online
+	r.ctl.err = fmt.Errorf("reserve: %w", ocpp.ErrNotConnected)
+	r.deliver(r.press("r"))
+	want := "✗ ALP-HYC-001-1 reserve failed: reserve: " + ocpp.ErrNotConnected.Error()
+	if got := r.view(); !strings.Contains(got, want) {
+		t.Errorf("want Describe's wording %q in\n%s", want, got)
+	}
+	if strings.Contains(r.view(), "is offline") {
+		t.Errorf("an online charger is called offline:\n%s", r.view())
+	}
+}
