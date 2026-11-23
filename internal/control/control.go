@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -73,10 +74,14 @@ type Service struct {
 	inflight sync.WaitGroup
 	mu       sync.Mutex
 	closed   bool
-	// settling maps the OCPP id of a reservation whose Reserve is under way to
-	// a channel closed when that Reserve has returned, which is when the
-	// reservation is active or gone. A cancel waits on it. Guarded by mu.
-	settling map[int]chan struct{}
+	// settling maps an EVSE to the channels of the Reserve calls under way on
+	// it; each is closed when its Reserve has returned, which is when the
+	// reservation is active or gone. A cancel waits on them. It is keyed by
+	// EVSE, not by reservation id, because a Reserve registers before it has
+	// an id: its record is in core, findable by the partner, from the moment
+	// BeginReservation takes the lock, a state.json write before it returns.
+	// Guarded by mu.
+	settling map[string][]chan struct{}
 	// closing is closed by Close. A cancel that was not sent stops trying
 	// again when it sees it.
 	closing chan struct{}
@@ -105,7 +110,7 @@ func New(opts Options) *Service {
 		bootGrace: opts.BootGrace,
 		afterFunc: opts.AfterFunc,
 		closing:   make(chan struct{}),
-		settling:  map[int]chan struct{}{},
+		settling:  map[string][]chan struct{}{},
 	}
 }
 
@@ -203,6 +208,23 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		expiresAt = s.now().Add(length)
 	}
 
+	// A cancel for this reservation waits until the station has answered. The
+	// wait is registered before the record exists, so it covers the write of
+	// the record to state.json too; every way out of Reserve ends it.
+	settled := make(chan struct{})
+	s.mu.Lock()
+	s.settling[p.EVSEUID] = append(s.settling[p.EVSEUID], settled)
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.settling[p.EVSEUID] = slices.DeleteFunc(s.settling[p.EVSEUID], func(c chan struct{}) bool { return c == settled })
+		if len(s.settling[p.EVSEUID]) == 0 {
+			delete(s.settling, p.EVSEUID)
+		}
+		s.mu.Unlock()
+		close(settled)
+	}()
+
 	want := core.Reservation{
 		OCPIReservationID: p.OCPIReservationID,
 		ChargePointID:     cp.ID(),
@@ -228,18 +250,6 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 	if err != nil {
 		return core.Reservation{}, err
 	}
-
-	// A cancel for this reservation waits until the station has answered.
-	settled := make(chan struct{})
-	s.mu.Lock()
-	s.settling[r.ID] = settled
-	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		delete(s.settling, r.ID)
-		s.mu.Unlock()
-		close(settled)
-	}()
 
 	res, err := cp.ReserveNow(ctx, ocpp.ReserveRequest{
 		ReservationID: r.ID,
@@ -411,7 +421,8 @@ func (s *Service) Cancel(ctx context.Context, evseUID string) error {
 // partner, who already has the answer to its CANCEL_RESERVATION, is not also
 // told that the CPO cancelled.
 //
-// If that reservation's ReserveNow is still out, the cancel waits for the
+// If that reservation's Reserve is still under way (its record being written,
+// or its ReserveNow out), the cancel waits for the
 // station's answer (ctx bounds the wait), and cancels the reservation if it
 // became active. Without the wait there is nothing yet to cancel, and the
 // reservation would go active behind the partner's back. It is that
@@ -426,7 +437,7 @@ func (s *Service) cancel(ctx context.Context, evseUID string, reservationID int,
 		return err
 	}
 	if reservationID != 0 {
-		if err := s.settled(ctx, reservationID); err != nil {
+		if err := s.settled(ctx, evseUID); err != nil {
 			return fmt.Errorf("%s: waiting for reservation %d to be set up: %w", evseUID, reservationID, err)
 		}
 	}
@@ -452,21 +463,21 @@ func (s *Service) cancel(ctx context.Context, evseUID string, reservationID int,
 	return nil
 }
 
-// settled waits until the Reserve of reservation id, if one is under way, has
-// returned.
-func (s *Service) settled(ctx context.Context, id int) error {
+// settled waits until every Reserve under way on the EVSE has returned. One
+// for another reservation is refused at once (the EVSE is held), so waiting for
+// it costs nothing worth avoiding.
+func (s *Service) settled(ctx context.Context, evseUID string) error {
 	s.mu.Lock()
-	ch := s.settling[id]
+	chans := slices.Clone(s.settling[evseUID])
 	s.mu.Unlock()
-	if ch == nil {
-		return nil
+	for _, ch := range chans {
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
-	select {
-	case <-ch:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return nil
 }
 
 // Start asks the station to start a session on an EVSE for a tag; an empty

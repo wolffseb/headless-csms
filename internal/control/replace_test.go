@@ -314,6 +314,75 @@ func TestCancelForPartnerWaitsForAPendingReservation(t *testing.T) {
 	}
 }
 
+// A cancel that arrives while the reservation is being written to state.json,
+// before the ReserveNow has gone out, waits as well. The record is already in
+// core then, so the partner's cancel finds it by its OCPI id.
+func TestCancelForPartnerWaitsWhileTheReservationIsBeingWritten(t *testing.T) {
+	t.Parallel()
+
+	for _, replacement := range []bool{false, true} {
+		name := "new reservation"
+		if replacement {
+			name = "replacement"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			sent := 0
+			if replacement {
+				if _, err := ocpiReserve(r, "RES-1", t0.Add(10*time.Minute)); err != nil {
+					t.Fatal(err)
+				}
+				sent = 1
+			}
+			entered, release := r.store.BlockNext()
+			defer release()
+
+			reserved := make(chan error, 1)
+			go func() { _, err := ocpiReserve(r, "RES-1", t0.Add(40*time.Minute)); reserved <- err }()
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the reservation was never written")
+			}
+			held, ok := r.core.ReservationByOCPIID("RES-1")
+			if !ok || held.Status != core.ReservationPending {
+				t.Fatalf("core holds %+v (found %v), want RES-1 pending", held, ok)
+			}
+			if len(r.station.reserve) != sent {
+				t.Fatalf("ReserveNow was sent before the write finished: %+v", r.station.reserve)
+			}
+
+			cancelled := make(chan error, 1)
+			go func() { cancelled <- r.ctl.CancelForPartner(context.Background(), "EVSE-1", held.ID) }()
+			select {
+			case err := <-cancelled:
+				t.Fatalf("the cancel returned (%v) while the reservation was still being written", err)
+			case <-time.After(100 * time.Millisecond):
+			}
+
+			release()
+			if err := <-reserved; err != nil {
+				t.Fatalf("the reserve: %v", err)
+			}
+			select {
+			case err := <-cancelled:
+				if err != nil {
+					t.Fatalf("the cancel: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the cancel never finished")
+			}
+			if len(r.station.cancels) != 1 || r.station.cancels[0] != held.ID {
+				t.Errorf("the station was sent CancelReservation %v, want [%d]", r.station.cancels, held.ID)
+			}
+			if got := r.reservations(); len(got) != 0 {
+				t.Errorf("core still holds %+v", got)
+			}
+		})
+	}
+}
+
 // If the reservation the cancel waited for did not come to be, there is
 // nothing to cancel.
 func TestCancelForPartnerAfterAPendingReservationFailed(t *testing.T) {

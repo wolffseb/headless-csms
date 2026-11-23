@@ -6,6 +6,7 @@ package statetest
 import (
 	"errors"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -19,6 +20,17 @@ var ErrInjected = errors.New("statetest: injected write failure")
 type Store struct {
 	*state.Store
 	fail atomic.Bool
+
+	// block is the gate the next Update waits at, if BlockNext set one.
+	mu    sync.Mutex
+	block *gate
+}
+
+// gate holds one Update: entered is closed when it arrives, release lets it
+// through.
+type gate struct {
+	entered chan struct{}
+	release chan struct{}
 }
 
 // Open opens a store at path.
@@ -42,8 +54,29 @@ func New(tb testing.TB) *Store {
 // again (false).
 func (s *Store) Fail(fail bool) { s.fail.Store(fail) }
 
-// Update is state.Store.Update, unless failures are switched on.
+// BlockNext makes the next Update wait before it writes, once. entered is
+// closed when that Update has arrived; release lets it go on. It is for tests
+// that need something to happen while a write is under way.
+func (s *Store) BlockNext() (entered <-chan struct{}, release func()) {
+	g := &gate{entered: make(chan struct{}), release: make(chan struct{})}
+	s.mu.Lock()
+	s.block = g
+	s.mu.Unlock()
+	var once sync.Once
+	return g.entered, func() { once.Do(func() { close(g.release) }) }
+}
+
+// Update is state.Store.Update, unless failures are switched on or a block
+// is set.
 func (s *Store) Update(fn func(*state.State) error) error {
+	s.mu.Lock()
+	g := s.block
+	s.block = nil
+	s.mu.Unlock()
+	if g != nil {
+		close(g.entered)
+		<-g.release
+	}
 	if s.fail.Load() {
 		return ErrInjected
 	}

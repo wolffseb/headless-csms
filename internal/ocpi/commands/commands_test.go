@@ -485,7 +485,11 @@ func TestCancelReservation(t *testing.T) {
 	held, _ := s.core.ActiveReservation("EVSE-A1")
 
 	got := s.post("CANCEL_RESERVATION", map[string]any{"response_url": s.emsp.url("c1"), "reservation_id": "res-1"})
-	if got.http != 200 || got.code != 1000 || got.result != "ACCEPTED" || got.timeout != 19 {
+	// Even for an active reservation, which needs one station call now: a
+	// replacement can start after this is read, and the cancel then waits for
+	// its ReserveNow and sends its own, so the time is given for two calls
+	// (twice twice charger A's 7s, plus 5).
+	if got.http != 200 || got.code != 1000 || got.result != "ACCEPTED" || got.timeout != 33 {
 		t.Fatalf("answer = %+v", got)
 	}
 	if res, _ := s.result("c1"); res != "ACCEPTED" {
