@@ -131,18 +131,11 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 		OnConnect: func(ctx context.Context, cp ocpp.ChargePoint) {
 			commands.RefreshStatusOnConnect(ctx, cp)
 		},
-		// Only configured stations are accepted; anything else dialling in is
-		// a misconfiguration worth rejecting loudly.
-		Accept: func(id string) bool { _, ok := cfg.ChargerByID(id); return ok },
-		CallTimeoutFor: func(id string) time.Duration {
-			ch, _ := cfg.ChargerByID(id)
-			return ch.CallTimeout.Duration()
-		},
-		IdleTimeoutFor: func(id string) time.Duration {
-			ch, _ := cfg.ChargerByID(id)
-			return ch.HeartbeatTimeout.Duration()
-		},
-		Log: logger,
+		// Only configured stations are accepted, each with its own timeouts.
+		Accept:         chargerPolicy{cfg}.accept,
+		CallTimeoutFor: chargerPolicy{cfg}.callTimeout,
+		IdleTimeoutFor: chargerPolicy{cfg}.idleTimeout,
+		Log:            logger,
 	})
 	if err != nil {
 		return err
