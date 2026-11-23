@@ -251,9 +251,21 @@ func (m *Model) chargerText(c socket.ChargePointStatus) string {
 	}
 	s += "  last seen " + m.clock(*c.LastSeen)
 	if d := c.LastDisconnect; d != nil && d.Reason != "" {
-		s += " (" + d.Reason + ")"
+		s += " (" + offlineReason(d.Reason) + ")"
 	}
 	return s
+}
+
+// offlineReason keeps the reasons that are words of ours (see closeReason in
+// ocppj) and calls anything
+// else, which is the transport's own error text, a lost connection. The full
+// error is in cpms.log.
+func offlineReason(reason string) string {
+	switch reason {
+	case "heartbeat timeout", "closed by charge point":
+		return reason
+	}
+	return "connection lost"
 }
 
 // statusText is the status word the CLI prints, with the error code if any.

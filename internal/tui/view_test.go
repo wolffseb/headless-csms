@@ -297,3 +297,34 @@ func TestReservationEventShowsLocalTime(t *testing.T) {
 		t.Errorf("the expiry is not in local time:\n%s", got)
 	}
 }
+
+// The charger line gives a short reason; the transport's own words (a close
+// code, "unexpected EOF") are in cpms.log, and at 50 columns they would be cut
+// to nothing useful.
+func TestOfflineReasonIsShort(t *testing.T) {
+	for _, tc := range []struct{ reason, want string }{
+		{"websocket: close 1006 (abnormal closure): unexpected EOF", "(connection lost)"},
+		{"read tcp 127.0.0.1:9000->127.0.0.1:5: i/o timeout", "(connection lost)"},
+		{"heartbeat timeout", "(heartbeat timeout)"},
+		{"closed by charge point", "(closed by charge point)"},
+	} {
+		r := newRig(t)
+		r.onlineStation(cp1, "Alpitronic", "HYC300", "1.4.2", core.StatusAvailable)
+		r.core.Disconnected(cp1, tc.reason)
+		r.pump()
+		r.send(tickMsg{})
+		want := "ALP-HYC-001  offline  last seen 09:30:00 " + tc.want
+		if got := r.view(); !strings.Contains(got, want) {
+			t.Errorf("reason %q: want the charger line %q in\n%s", tc.reason, want, got)
+		}
+		if strings.Contains(strings.SplitN(r.view(), "\n", 5)[2], "EOF") {
+			t.Errorf("reason %q leaks into the charger line", tc.reason)
+		}
+	}
+
+	// Never connected: no reason at all, as before.
+	r := newRig(t)
+	if got := r.view(); !strings.Contains(got, "ALP-HYC-001  offline  never seen") {
+		t.Errorf("never seen:\n%s", got)
+	}
+}
