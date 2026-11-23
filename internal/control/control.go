@@ -584,7 +584,11 @@ func (s *Service) Probe(ctx context.Context, chargerID string) (ocpp.ProbeReport
 // station took the value, so both come back as a Result for the caller to
 // word; anything else is a *RefusedError.
 func (s *Service) ChangeConfiguration(ctx context.Context, chargerID, key, value string) (ocpp.Result, error) {
-	cp, err := s.chargePoint("", chargerID)
+	id, err := s.chargerFor("", chargerID)
+	if err != nil {
+		return ocpp.Result{}, err
+	}
+	cp, err := s.chargePoint("", id)
 	if err != nil {
 		return ocpp.Result{}, err
 	}
@@ -600,7 +604,7 @@ func (s *Service) ChangeConfiguration(ctx context.Context, chargerID, key, value
 	switch res.Status {
 	case ocpp.CommandAccepted, ocpp.CommandRebootRequired:
 		// Not the value: keys such as AuthorizationKey hold credentials.
-		s.log.Info("station configuration changed", "key", key, "status", res.Raw)
+		s.log.Info("station configuration changed", "charge_point", id, "key", key, "status", res.Raw)
 		return res, nil
 	default:
 		return ocpp.Result{}, refused(OpConfigSet, key, res)
