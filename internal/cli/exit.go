@@ -128,6 +128,17 @@ func exitFor(op socket.Op, evse string, err error) error {
 	}
 }
 
+// describe is the message a person sees when a command fails: the one-shot
+// CLI's wording, for an error that came over the socket or, as in the TUI,
+// straight from control. subject is the EVSE (or key) the command was about.
+func describe(op socket.Op, subject string, err error) string {
+	var se *socket.Error
+	if !errors.As(err, &se) {
+		se = socket.Classify(err)
+	}
+	return exitFor(op, subject, se).Error()
+}
+
 // unconfirmed names a charging profile that went out unanswered, for the end
 // of a timeout or connection message: the station may hold it although cpms
 // records nothing. It is empty for every other request.

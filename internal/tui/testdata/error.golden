@@ -1,0 +1,30 @@
+cpms · 1/2 chargers online · OCPI not registered
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ALP-HYC-001  online  Alpitronic HYC300 fw 1.4.2
+     EVSE           STATUS       DETAIL
+     ALP-HYC-001-1  AVAILABLE    -
+     ALP-HYC-001-2  AVAILABLE    -
+ALP-HYC-002  offline  last seen 09:30:00 (heartbeat timeout)
+ ▸   ALP-HYC-002-1  UNKNOWN      -
+     ALP-HYC-002-2  UNKNOWN      -
+── log ─────────────────────────────────────────────────────────────────────────────────────────────
+
+
+
+
+
+09:30:00 ALP-HYC-001 connected
+09:30:00 ALP-HYC-001 booted (Alpitronic HYC300 fw 1.4.2)
+09:30:00 ALP-HYC-001-1 UNKNOWN→AVAILABLE
+09:30:00 ALP-HYC-001-2 UNKNOWN→AVAILABLE
+09:30:00 ALP-HYC-002 connected
+09:30:00 ALP-HYC-002 booted (Alpitronic HYC300 fw 1.4.2)
+09:30:00 ALP-HYC-002-1 UNKNOWN→AVAILABLE
+09:30:00 ALP-HYC-002-2 UNKNOWN→AVAILABLE
+09:31:00 ALP-HYC-002 disconnected: heartbeat timeout
+09:31:00 ALP-HYC-002-1 AVAILABLE→UNKNOWN
+09:31:00 ALP-HYC-002-2 AVAILABLE→UNKNOWN
+09:31:00 ✗ ALP-HYC-002-1 reserve failed: the station is not there
+✗ ALP-HYC-002-1 reserve failed: the station is not there
+
+↑↓ select  r reserve  c cancel  s start  x stop  u unlock  t refresh  ? help  q quit

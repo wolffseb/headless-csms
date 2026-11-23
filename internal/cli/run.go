@@ -25,18 +25,25 @@ import (
 	"github.com/wolffseb/cli-cpms/internal/ocpp/ocppj"
 	"github.com/wolffseb/cli-cpms/internal/ocpp/v16"
 	"github.com/wolffseb/cli-cpms/internal/state"
+	"github.com/wolffseb/cli-cpms/internal/tui"
 )
 
 // shutdownGrace bounds how long we wait for connections to close on exit.
 const shutdownGrace = 5 * time.Second
 
 func newRunCommand(opts *options) *cobra.Command {
-	var logLevel string
+	var (
+		logLevel string
+		headless bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run the CSMS and wait for the charger to connect",
-		Long: "Starts the OCPP and OCPI servers and logs what the charge point does.\n\n" +
+		Long: "Starts the OCPP and OCPI servers and shows what the charge point does in a\n" +
+			"terminal UI: arrow keys select an EVSE, and r, c, s, x, u and t act on it.\n" +
+			"With --headless, or when stdout is not a terminal, it logs lines to stderr\n" +
+			"instead. While the UI is up the log goes to cpms.log next to the state file.\n\n" +
 			"Remember that the charger dials us, not the other way round: point the\n" +
 			"station's CSMS URL at the address printed on startup.",
 		Args: cobra.NoArgs,
@@ -45,20 +52,24 @@ func newRunCommand(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			logger, err := newLogger(cmd.ErrOrStderr(), logLevel)
+			statePath := opts.resolvedStatePath()
+			logger, ui, closeLog, err := setupLogging(cmd, headless, logLevel, statePath)
 			if err != nil {
 				return err
 			}
-			statePath := opts.resolvedStatePath()
-			return run(cmd, cfg, statePath, opts.resolvedSocketPath(statePath), logger)
+			defer closeLog()
+			return run(cmd, cfg, statePath, opts.resolvedSocketPath(statePath), logger, ui)
 		},
 	}
 
 	cmd.Flags().StringVar(&logLevel, "log-level", "info", "log level: debug, info, warn or error")
+	cmd.Flags().BoolVar(&headless, "headless", false,
+		"print log lines to stderr instead of showing the terminal UI (the default when stdout is not a terminal)")
 	return cmd
 }
 
-func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, logger *slog.Logger) error {
+// run serves until ctx ends. ui is nil when running headless.
+func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, logger *slog.Logger, ui *uiSession) error {
 	// OCPP 2.0.1 is a separate adapter that does not exist yet. Failing here
 	// beats accepting the config and then rejecting the charger's handshake
 	// with a confusing "no common version".
@@ -173,6 +184,8 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 		return err
 	}
 
+	// The events are logged in both modes: on stderr headless, and in the
+	// log file under the TUI, which shows them on its own.
 	events, unsubscribe := svc.Subscribe("log")
 	defer unsubscribe()
 
@@ -194,16 +207,17 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	ctl.AttachPush(pusher)
 	ctl.Serve(ctx)
 
+	var startup []string
 	for _, ch := range cfg.Chargers {
-		fmt.Fprintf(cmd.OutOrStdout(), "cpms listening for %s on ws://%s/ocpp/%s\n",
-			ch.ID, server.Addr(), ch.ID)
+		startup = append(startup, fmt.Sprintf("cpms listening for %s on ws://%s/ocpp/%s", ch.ID, server.Addr(), ch.ID))
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "OCPI versions endpoint %s (listening on %s)\n", ocpiServer.VersionsURL(), ocpiServer.Addr())
-	fmt.Fprintf(cmd.OutOrStdout(), "control socket %s\n", ctl.Path())
+	startup = append(startup,
+		fmt.Sprintf("OCPI versions endpoint %s (listening on %s)", ocpiServer.VersionsURL(), ocpiServer.Addr()),
+		"control socket "+ctl.Path())
 	if len(cfg.Chargers) > 1 {
-		fmt.Fprintf(cmd.OutOrStdout(), "waiting for %d charge points to connect; press Ctrl-C to stop\n", len(cfg.Chargers))
+		startup = append(startup, fmt.Sprintf("waiting for %d charge points to connect; press Ctrl-C to stop", len(cfg.Chargers)))
 	} else {
-		fmt.Fprintln(cmd.OutOrStdout(), "waiting for the charge point to connect; press Ctrl-C to stop")
+		startup = append(startup, "waiting for the charge point to connect; press Ctrl-C to stop")
 	}
 
 	done := make(chan struct{})
@@ -214,7 +228,30 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 		}
 	}()
 
-	<-ctx.Done()
+	var uiErr error
+	if ui == nil {
+		for _, l := range startup {
+			fmt.Fprintln(cmd.OutOrStdout(), l)
+		}
+		<-ctx.Done()
+	} else {
+		// The startup lines go to the file too, as headless would have printed
+		// them, and to the pane as its first lines.
+		for _, l := range startup {
+			logger.Info(l)
+		}
+		// Quitting cancels ctx, exactly as SIGINT does, so everything below
+		// is the one shutdown path.
+		uiErr = tui.Run(ctx, tui.Options{
+			Config: cfg, Core: svc, Control: commands,
+			Registration: registrar, Push: pusher,
+			Describe: describe,
+			Stop:     stop,
+			Logs:     ui.sink, LogPath: ui.logPath, Startup: startup,
+			In: ui.in, Out: ui.out,
+		})
+		stop()
+	}
 	fmt.Fprintln(cmd.OutOrStdout(), "shutting down")
 	// Each listener gets its own grace, started when its turn comes:
 	// commands.Close below can take up to four times call_timeout (a Reserve
@@ -246,7 +283,7 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 
 	unsubscribe()
 	<-done
-	return nil
+	return uiErr
 }
 
 // ocpiDeps is everything startOCPI wires into the OCPI server. Later modules
@@ -294,20 +331,27 @@ func startOCPI(d ocpiDeps) (*ocpi.Server, error) {
 	return s, nil
 }
 
-// newLogger builds the structured logger the protocol layers write to.
-func newLogger(w io.Writer, level string) (*slog.Logger, error) {
-	var l slog.Level
+// parseLevel is the slog level for --log-level.
+func parseLevel(level string) (slog.Level, error) {
 	switch strings.ToLower(level) {
 	case "debug":
-		l = slog.LevelDebug
+		return slog.LevelDebug, nil
 	case "info":
-		l = slog.LevelInfo
+		return slog.LevelInfo, nil
 	case "warn", "warning":
-		l = slog.LevelWarn
+		return slog.LevelWarn, nil
 	case "error":
-		l = slog.LevelError
+		return slog.LevelError, nil
 	default:
-		return nil, fmt.Errorf("unknown log level %q; want debug, info, warn or error", level)
+		return 0, fmt.Errorf("unknown log level %q; want debug, info, warn or error", level)
+	}
+}
+
+// newLogger builds the structured logger the protocol layers write to.
+func newLogger(w io.Writer, level string) (*slog.Logger, error) {
+	l, err := parseLevel(level)
+	if err != nil {
+		return nil, err
 	}
 
 	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{

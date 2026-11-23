@@ -1,0 +1,30 @@
+cpms · 1/2 chargers online
+OCPI not registered
+──────────────────────────────────────────────────
+ALP-HYC-001  online  Alpitronic HYC300 fw 1.4.2
+ ▸   ALP-HYC-001-1  AVAILABLE
+     ALP-HYC-001-2  AVAILABLE
+     session 12 · 04A1B2C3D4 · since 09:31
+ALP-HYC-002  offline  last seen 09:30:00 (heartbe…
+     ALP-HYC-002-1  UNKNOWN
+     ALP-HYC-002-2  UNKNOWN
+── log ───────────────────────────────────────────
+
+
+
+
+09:30:00 ALP-HYC-001 connected
+09:30:00 ALP-HYC-001 booted (Alpitronic HYC300 fw…
+09:30:00 ALP-HYC-001-1 UNKNOWN→AVAILABLE
+09:30:00 ALP-HYC-001-2 UNKNOWN→AVAILABLE
+09:30:00 ALP-HYC-002 connected
+09:30:00 ALP-HYC-002 booted (Alpitronic HYC300 fw…
+09:30:00 ALP-HYC-002-1 UNKNOWN→AVAILABLE
+09:30:00 ALP-HYC-002-2 UNKNOWN→AVAILABLE
+09:31:00 ALP-HYC-002 disconnected: heartbeat time…
+09:31:00 ALP-HYC-002-1 AVAILABLE→UNKNOWN
+09:31:00 ALP-HYC-002-2 AVAILABLE→UNKNOWN
+09:31:00 ALP-HYC-001 transaction 12 started on AL…
+
+
+↑↓ r c s x u t   ? help   q quit
