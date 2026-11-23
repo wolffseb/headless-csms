@@ -49,10 +49,10 @@ func (s *Service) chargerFor(evseUID, chargerID string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("%w %q", ocpp.ErrUnknownEVSE, evseUID)
 	}
-	if chargerID != "" && chargerID != e.Charger {
-		return "", fmt.Errorf("%w: EVSE %s is on charger %s, not %s", ErrChargerMismatch, evseUID, e.Charger, chargerID)
+	if chargerID != "" && chargerID != s.cfg.ChargerOf(e) {
+		return "", fmt.Errorf("%w: EVSE %s is on charger %s, not %s", ErrChargerMismatch, evseUID, s.cfg.ChargerOf(e), chargerID)
 	}
-	return e.Charger, nil
+	return s.cfg.ChargerOf(e), nil
 }
 
 // chargePoint is the command interface of the charger a command goes to.

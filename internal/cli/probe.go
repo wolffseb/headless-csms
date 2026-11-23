@@ -183,7 +183,7 @@ func configChecks(cfg *config.Config, r socket.ProbeResult) []check {
 	var mine []config.EVSE
 	var mineIdx []int
 	for i, e := range cfg.Location.EVSEs {
-		if e.Charger == charger.ID {
+		if cfg.ChargerOf(e) == charger.ID {
 			mine = append(mine, e)
 			mineIdx = append(mineIdx, i)
 		}

@@ -53,8 +53,8 @@ func newLimitEnv(cmd *cobra.Command, opts *options, wholeStation bool) (*station
 		if _, err := control.ResolveCharger(env.cfg, id); err != nil {
 			return nil, false, &ExitStatus{Code: ExitError, Err: err}
 		}
-		if e, _ := env.cfg.EVSEByUID(env.evse); e.Charger != id {
-			return nil, false, usage("EVSE %s is on charger %s, not %s", env.evse, e.Charger, id)
+		if e, _ := env.cfg.EVSEByUID(env.evse); env.cfg.ChargerOf(e) != id {
+			return nil, false, usage("EVSE %s is on charger %s, not %s", env.evse, env.cfg.ChargerOf(e), id)
 		}
 		env.charger = id
 	}

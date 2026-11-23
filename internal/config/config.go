@@ -244,14 +244,20 @@ func (c *Config) ChargerByID(id string) (Charger, bool) {
 	return Charger{}, false
 }
 
-// evseOn reports whether e sits on the charger. An EVSE with no charger set
+// ChargerOf is the id of the charger e sits on. An EVSE with no charger set
 // belongs to the only charger; the loader fills that in, this keeps a Config
-// built by hand (as tests do) working the same way.
-func (c *Config) evseOn(e EVSE, chargerID string) bool {
-	if e.Charger == "" {
-		return len(c.Chargers) == 1 && c.Chargers[0].ID == chargerID
+// built by hand (as tests do) working the same way. With several chargers an
+// unset EVSE belongs to none, and the result is empty.
+func (c *Config) ChargerOf(e EVSE) string {
+	if e.Charger == "" && len(c.Chargers) == 1 {
+		return c.Chargers[0].ID
 	}
-	return e.Charger == chargerID
+	return e.Charger
+}
+
+// evseOn reports whether e sits on the charger.
+func (c *Config) evseOn(e EVSE, chargerID string) bool {
+	return c.ChargerOf(e) == chargerID
 }
 
 // EVSEsOf returns the EVSEs on the given charger, in config order.

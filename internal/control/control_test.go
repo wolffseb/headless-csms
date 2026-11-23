@@ -33,8 +33,8 @@ func testConfig() *config.Config {
 		Auth:     config.Auth{DefaultIDTag: testTag},
 		Location: config.Location{
 			EVSEs: []config.EVSE{
-				{UID: "EVSE-1", Charger: testCP, OCPPConnectorID: 1},
-				{UID: "EVSE-2", Charger: testCP, OCPPConnectorID: 2},
+				{UID: "EVSE-1", OCPPConnectorID: 1},
+				{UID: "EVSE-2", OCPPConnectorID: 2},
 			},
 		},
 	}
