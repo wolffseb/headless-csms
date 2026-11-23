@@ -87,10 +87,11 @@ authentication.
 - **Is the management API separate from OCPI?** It should be: OCPI is a roaming protocol
   with its own rules, and bending it into an admin API ends badly. Two listeners, or two
   path prefixes on one listener.
-- **Multiple chargers.** Today the config describes exactly one station, by design. An
-  API-first daemon probably wants a charger registry. That collides with the principle that
-  `config.yaml` is read-only and hand-edited, so chargers would be added through the API
-  and stored by idea 3. This is the biggest design question in the fridge.
+- **Multiple chargers.** Settled the simple way in #85: several stations in the
+  hand-edited `chargers:` list of `config.yaml`, on one OCPP listener, one OCPI Location,
+  one state file and one control socket. No registry and no API. A charger registry that
+  adds stations at runtime is still the open version of this question and would be stored
+  by idea 3.
 - **Locations, EVSEs and connectors without editing config.** The same applies one level
   down: today the OCPI Location (#14) is assembled from the hand-edited `location:` block.
   An easy way to create and change locations, EVSEs and connectors (through this API, and
