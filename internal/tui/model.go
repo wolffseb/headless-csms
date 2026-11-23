@@ -186,7 +186,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if at.IsZero() {
 				at = m.now()
 			}
-			m.addLine(at, lineInfo, e.String())
+			m.addLine(at, lineInfo, m.eventText(e))
 		}
 		m.refresh()
 		return m, m.waitEvent()

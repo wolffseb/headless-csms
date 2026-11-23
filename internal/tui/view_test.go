@@ -277,3 +277,23 @@ func TestViewTerminatesAtEverySizeWithWideRunes(t *testing.T) {
 		}
 	}
 }
+
+// The log is on local time, so a reservation's expiry is too: core's own line
+// carries it in RFC 3339 UTC, an hour (or more) off the time before it.
+func TestReservationEventShowsLocalTime(t *testing.T) {
+	cest := time.FixedZone("CEST", 2*60*60)
+	r := newRig(t, func(o *Options) { o.Location = cest })
+	r.onlineStation(cp1, "Alpitronic", "HYC300", "1.4.2", core.StatusAvailable, core.StatusAvailable)
+	reservation, err := r.core.BeginReservation(core.Reservation{
+		ChargePointID: cp1, EVSEUID: evse11, IDTag: defaultTag, ExpiresAt: r.clk.Now().Add(15 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.core.ActivateReservation(reservation.ID)
+	r.pump()
+	// 09:30 UTC is 11:30 on the screen; the reservation ends at 11:45:00.
+	if got := r.view(); !strings.Contains(got, "11:30:00 ALP-HYC-001-1 reserved for tag 04A1B2C3D4 until 11:45:00 (reservation 1)") {
+		t.Errorf("the expiry is not in local time:\n%s", got)
+	}
+}

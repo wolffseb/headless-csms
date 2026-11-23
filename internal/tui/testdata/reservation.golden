@@ -24,7 +24,7 @@ ALP-HYC-002  offline  last seen 09:30:00 (heartbeat timeout)
 09:31:00 ALP-HYC-002 disconnected: heartbeat timeout
 09:31:00 ALP-HYC-002-1 AVAILABLE→UNKNOWN
 09:31:00 ALP-HYC-002-2 AVAILABLE→UNKNOWN
-09:31:00 ALP-HYC-001-1 reserved for tag 04A1B2C3D4 until 2026-11-23T09:46:00Z (reservation 1)
+09:31:00 ALP-HYC-001-1 reserved for tag 04A1B2C3D4 until 09:46:00 (reservation 1)
 
 
 ↑↓ select  r reserve  c cancel  s start  x stop  u unlock  t refresh  ? help  q quit
