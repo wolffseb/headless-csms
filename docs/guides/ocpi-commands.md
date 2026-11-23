@@ -72,7 +72,7 @@ plus 5 s, using the `call_timeout` of the charger that owns the EVSE.
 | Command | Does | Notes |
 |---|---|---|
 | `RESERVE_NOW` | `ReserveNow` | The token's `uid` is the OCPP `idTag`. `expiry_date` must be at least a minute ahead. Without `evse_uid`, the first `AVAILABLE` reservable EVSE of the location is taken. |
-| `CANCEL_RESERVATION` | `CancelReservation` | Finds the reservation by `reservation_id`. |
+| `CANCEL_RESERVATION` | `CancelReservation` | Finds the reservation by `reservation_id`. If its `RESERVE_NOW` is still with the station, cpms waits for the answer and then cancels it. |
 | `START_SESSION` | `RemoteStartTransaction` | The token's `uid` is the `idTag`. Without `evse_uid`, the first `AVAILABLE` EVSE is taken. |
 | `STOP_SESSION` | `RemoteStopTransaction` | `session_id` is [our transaction id](#stop_session-and-the-session_id). |
 | `UNLOCK_CONNECTOR` | `UnlockConnector` | `evse_uid` and `connector_id` are required. |

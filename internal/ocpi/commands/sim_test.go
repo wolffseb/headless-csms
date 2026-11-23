@@ -27,7 +27,7 @@ type simStage struct {
 
 // newSimStage dials the simulator in with the given scenario, and with idTag
 // as the tag a session started at the station uses.
-func newSimStage(t *testing.T, scenario simulator.Scenario, idTag string) *simStage {
+func newSimStage(t *testing.T, scenario simulator.Scenario, idTag string, mods ...func(*simulator.Options)) *simStage {
 	t.Helper()
 
 	// Short call timeouts, so a silent station is quick to give up on.
@@ -66,10 +66,14 @@ func newSimStage(t *testing.T, scenario simulator.Scenario, idTag string) *simSt
 		}
 	})
 
-	sim, err := simulator.New(simulator.Options{
+	simOpts := simulator.Options{
 		URL: "ws://" + server.Addr(), ID: cpA, Connectors: 3, IDTag: idTag, Scenario: scenario,
 		SlowDelay: 3 * time.Second, Log: slog.New(slog.DiscardHandler),
-	})
+	}
+	for _, mod := range mods {
+		mod(&simOpts)
+	}
+	sim, err := simulator.New(simOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,5 +233,53 @@ func TestStopSessionOnTheSimulator(t *testing.T) {
 	body["session_id"] = strconv.Itoa(999)
 	if got := s.post("STOP_SESSION", body); got.result != "UNKNOWN_SESSION" {
 		t.Errorf("an unknown session: %+v", got)
+	}
+}
+
+// CANCEL_RESERVATION that arrives while the RESERVE_NOW is still with the
+// station (the simulator sits on every answer) is not lost: it is carried out
+// once the reservation is active, so the partner's cancel is ACCEPTED, and
+// neither core nor the station is left holding a reservation the partner
+// cancelled.
+func TestCancelReservationWhileTheReserveNowIsStillPending(t *testing.T) {
+	t.Parallel()
+	s := newSimStage(t, simulator.ScenarioSlow, tag, func(o *simulator.Options) { o.SlowDelay = 250 * time.Millisecond })
+
+	if got := s.post("RESERVE_NOW", s.reserveBody("r1", nil)); got.result != "ACCEPTED" {
+		t.Fatalf("RESERVE_NOW answer = %+v", got)
+	}
+	eventually(t, "the reservation to be recorded", func() bool {
+		_, ok := s.core.ReservationByOCPIID("RES-1")
+		return ok
+	})
+	if _, ok := s.core.ActiveReservation("EVSE-A1"); ok {
+		t.Fatal("the reservation is already active: the station should still be thinking")
+	}
+
+	got := s.post("CANCEL_RESERVATION", map[string]any{"response_url": s.emsp.url("c1"), "reservation_id": "RES-1"})
+	if got.result != "ACCEPTED" {
+		t.Fatalf("CANCEL_RESERVATION answer = %+v", got)
+	}
+	// It may wait for the pending reserve and then cancel: two station calls
+	// of 2 x 400 ms each, plus the slack, rounded up (a plain cancel says 6).
+	if got.timeout != 7 {
+		t.Errorf("timeout = %d, want 7", got.timeout)
+	}
+	if res, msg := s.result("c1"); res != "ACCEPTED" {
+		t.Fatalf("cancel result = %s (%s), want ACCEPTED: the reservation was set up, then cancelled", res, msg)
+	}
+	if res, _ := s.result("r1"); res != "ACCEPTED" {
+		t.Errorf("reserve result = %s, want ACCEPTED", res)
+	}
+
+	if cp, _ := s.core.Snapshot().ChargePoint(cpA); len(cp.Reservations) != 0 {
+		t.Errorf("core still holds %+v after the partner cancelled", cp.Reservations)
+	}
+	eventually(t, "the simulator to drop the reservation", func() bool { return s.sim.ReservationID(1) == 0 })
+	// The partner asked for the cancel itself, so it is not also told that the
+	// CPO cancelled: its two results are the only ones.
+	time.Sleep(150 * time.Millisecond)
+	if n := s.emsp.all(); n != 2 {
+		t.Errorf("the partner got %d CommandResults, want 2 (the reserve and the cancel)", n)
 	}
 }

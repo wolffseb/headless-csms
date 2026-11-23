@@ -249,7 +249,7 @@ func TestCancelForPartner(t *testing.T) {
 	}
 	drain(r.events)
 
-	if err := r.ctl.CancelForPartner(context.Background(), "EVSE-1"); err != nil {
+	if err := r.ctl.CancelForPartner(context.Background(), "EVSE-1", 1); err != nil {
 		t.Fatal(err)
 	}
 	evs := drain(r.events)
@@ -258,5 +258,118 @@ func TestCancelForPartner(t *testing.T) {
 	}
 	if evs[0].ResponseURL != "http://emsp/RES-1" {
 		t.Errorf("response URL = %q", evs[0].ResponseURL)
+	}
+}
+
+// A cancel for a reservation whose ReserveNow is still out waits for the
+// station's answer and then cancels it, rather than finding nothing to cancel
+// and leaving the reservation to go active behind the partner's back.
+func TestCancelForPartnerWaitsForAPendingReservation(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	gate := make(chan struct{})
+	r.station.reserveEntered, r.station.reserveGate = make(chan struct{}), gate
+
+	reserved := make(chan error, 1)
+	go func() { _, err := ocpiReserve(r, "RES-1", t0.Add(10*time.Minute)); reserved <- err }()
+	select {
+	case <-r.station.reserveEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ReserveNow never went out")
+	}
+	pending := r.reservations()
+	if len(pending) != 1 || pending[0].Status != core.ReservationPending {
+		t.Fatalf("reservations = %+v, want one pending", pending)
+	}
+	drain(r.events)
+
+	cancelled := make(chan error, 1)
+	go func() { cancelled <- r.ctl.CancelForPartner(context.Background(), "EVSE-1", pending[0].ID) }()
+	select {
+	case err := <-cancelled:
+		t.Fatalf("the cancel returned (%v) while the reservation was still being set up", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(gate)
+	if err := <-reserved; err != nil {
+		t.Fatalf("the reserve: %v", err)
+	}
+	select {
+	case err := <-cancelled:
+		if err != nil {
+			t.Fatalf("the cancel: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the cancel never finished")
+	}
+	if len(r.station.cancels) != 1 || r.station.cancels[0] != pending[0].ID {
+		t.Errorf("the station was sent CancelReservation %v, want [%d]", r.station.cancels, pending[0].ID)
+	}
+	if got := r.reservations(); len(got) != 0 {
+		t.Errorf("core still holds %+v", got)
+	}
+	if got := endedAs(drain(r.events)); len(got) != 1 || got[0] != core.ReservationCancelledByPartner {
+		t.Errorf("ended = %v, want [cancelled by partner]", got)
+	}
+}
+
+// If the reservation the cancel waited for did not come to be, there is
+// nothing to cancel.
+func TestCancelForPartnerAfterAPendingReservationFailed(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	gate := make(chan struct{})
+	r.station.reserveEntered, r.station.reserveGate = make(chan struct{}), gate
+	r.station.answer["reserve"] = ocpp.Result{Status: ocpp.CommandRejected, Raw: "Rejected"}
+
+	reserved := make(chan error, 1)
+	go func() { _, err := ocpiReserve(r, "RES-1", t0.Add(10*time.Minute)); reserved <- err }()
+	<-r.station.reserveEntered
+	id := r.reservations()[0].ID
+
+	cancelled := make(chan error, 1)
+	go func() { cancelled <- r.ctl.CancelForPartner(context.Background(), "EVSE-1", id) }()
+	close(gate)
+	<-reserved
+	if err := <-cancelled; !errors.Is(err, control.ErrNoReservation) {
+		t.Errorf("the cancel = %v, want ErrNoReservation", err)
+	}
+	if len(r.station.cancels) != 0 {
+		t.Errorf("CancelReservation sent for %v", r.station.cancels)
+	}
+}
+
+// The cancel is for the reservation it names: if that one ended and another
+// took the EVSE in the meantime, the other is left alone.
+func TestCancelForPartnerWithAStaleIDLeavesTheOtherReservation(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	first, err := ocpiReserve(r, "RES-1", t0.Add(10*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ctl.Cancel(context.Background(), "EVSE-1"); err != nil {
+		t.Fatal(err)
+	}
+	second, err := ocpiReserve(r, "RES-2", t0.Add(20*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.station.cancels = nil
+	drain(r.events)
+
+	err = r.ctl.CancelForPartner(context.Background(), "EVSE-1", first.ID)
+	if !errors.Is(err, control.ErrNoReservation) {
+		t.Fatalf("err = %v, want ErrNoReservation", err)
+	}
+	if len(r.station.cancels) != 0 {
+		t.Errorf("CancelReservation sent for %v", r.station.cancels)
+	}
+	if got, ok := r.core.ActiveReservation("EVSE-1"); !ok || got.ID != second.ID {
+		t.Errorf("the other reservation = %+v, %v, want %d untouched", got, ok, second.ID)
+	}
+	if got := endedAs(drain(r.events)); len(got) != 0 {
+		t.Errorf("ended = %v, want none", got)
 	}
 }

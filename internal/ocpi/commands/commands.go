@@ -63,7 +63,7 @@ const responseTimeoutSlack = 5 * time.Second
 // *control.Service satisfies it.
 type Controller interface {
 	Reserve(ctx context.Context, p control.ReserveParams) (core.Reservation, error)
-	CancelForPartner(ctx context.Context, evseUID string) error
+	CancelForPartner(ctx context.Context, evseUID string, reservationID int) error
 	Start(ctx context.Context, evseUID, idTag string) error
 	Stop(ctx context.Context, evseUID, txID string) error
 	Unlock(ctx context.Context, evseUID string) error
@@ -249,6 +249,10 @@ type plan struct {
 	// charger is whose call timeout bounds the command; empty means the
 	// longest of them.
 	charger string
+	// calls is how many station calls in a row the command can wait for, each
+	// bounded by ocpp.CallBound; 0 means one. A CANCEL_RESERVATION that waits
+	// for a RESERVE_NOW still out makes two.
+	calls int
 	// run does the command, through control. Its error is turned into the
 	// result by ResultFor.
 	run func(ctx context.Context) error
@@ -294,13 +298,18 @@ func (r *Receiver) serve(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	timeout := int(math.Ceil(ocpp.CallBound(r.callTimeout(p.charger)).Seconds()) + responseTimeoutSlack.Seconds())
+	timeout := int(math.Ceil(p.bound(r).Seconds()) + responseTimeoutSlack.Seconds())
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
 		r.execute(ocpi.WithCorrelationID(r.ctx, ocpi.CorrelationID(req.Context())), command, b.ResponseURL, p)
 	}()
 	respond(w, ocpi.StatusSuccess, commandResponse{Result: ResponseAccepted, Timeout: timeout})
+}
+
+// bound is the longest the plan's calls to the station can take.
+func (p *plan) bound(r *Receiver) time.Duration {
+	return time.Duration(max(p.calls, 1)) * ocpp.CallBound(r.callTimeout(p.charger))
 }
 
 func respond(w http.ResponseWriter, code ocpi.StatusCode, resp commandResponse) {
@@ -396,7 +405,7 @@ func (r *Receiver) callTimeout(chargerID string) time.Duration {
 func (r *Receiver) execute(ctx context.Context, command, responseURL string, p *plan) {
 	// The call timeouts are what normally end a command. This only backstops
 	// a station adapter that lacks them, so it must not tie with them.
-	runCtx, cancel := context.WithTimeout(ctx, ocpp.CallBound(r.callTimeout(p.charger))+responseTimeoutSlack)
+	runCtx, cancel := context.WithTimeout(ctx, p.bound(r)+responseTimeoutSlack)
 	err := p.run(runCtx)
 	cancel()
 

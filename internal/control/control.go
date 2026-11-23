@@ -73,6 +73,10 @@ type Service struct {
 	inflight sync.WaitGroup
 	mu       sync.Mutex
 	closed   bool
+	// settling maps the OCPP id of a reservation whose Reserve is under way to
+	// a channel closed when that Reserve has returned, which is when the
+	// reservation is active or gone. A cancel waits on it. Guarded by mu.
+	settling map[int]chan struct{}
 	// closing is closed by Close. A cancel that was not sent stops trying
 	// again when it sees it.
 	closing chan struct{}
@@ -101,6 +105,7 @@ func New(opts Options) *Service {
 		bootGrace: opts.BootGrace,
 		afterFunc: opts.AfterFunc,
 		closing:   make(chan struct{}),
+		settling:  map[int]chan struct{}{},
 	}
 }
 
@@ -218,6 +223,18 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 	if err != nil {
 		return core.Reservation{}, err
 	}
+
+	// A cancel for this reservation waits until the station has answered.
+	settled := make(chan struct{})
+	s.mu.Lock()
+	s.settling[r.ID] = settled
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.settling, r.ID)
+		s.mu.Unlock()
+		close(settled)
+	}()
 
 	res, err := cp.ReserveNow(ctx, ocpp.ReserveRequest{
 		ReservationID: r.ID,
@@ -379,23 +396,37 @@ func (s *Service) isClosed() bool {
 // Our record is then stale and would block new reservations until it timed
 // out, so it ends here as well, and the refusal is reported.
 func (s *Service) Cancel(ctx context.Context, evseUID string) error {
-	return s.cancel(ctx, evseUID, core.ReservationCancelled)
+	return s.cancel(ctx, evseUID, 0, core.ReservationCancelled)
 }
 
-// CancelForPartner is Cancel for a cancellation the OCPI partner asked for.
+// CancelForPartner is Cancel for a cancellation the OCPI partner asked for,
+// of the reservation with the OCPP id reservationID.
+//
 // The reservation ends as core.ReservationCancelledByPartner, so that the
 // partner, who already has the answer to its CANCEL_RESERVATION, is not also
 // told that the CPO cancelled.
-func (s *Service) CancelForPartner(ctx context.Context, evseUID string) error {
-	return s.cancel(ctx, evseUID, core.ReservationCancelledByPartner)
+//
+// If that reservation's ReserveNow is still out, the cancel waits for the
+// station's answer (ctx bounds the wait), and cancels the reservation if it
+// became active. Without the wait there is nothing yet to cancel, and the
+// reservation would go active behind the partner's back. It is that
+// reservation or nothing: if it is gone, or another one has taken the EVSE,
+// the cancel fails with ErrNoReservation and the other is left alone.
+func (s *Service) CancelForPartner(ctx context.Context, evseUID string, reservationID int) error {
+	return s.cancel(ctx, evseUID, reservationID, core.ReservationCancelledByPartner)
 }
 
-func (s *Service) cancel(ctx context.Context, evseUID, reason string) error {
+func (s *Service) cancel(ctx context.Context, evseUID string, reservationID int, reason string) error {
 	if err := s.checkEVSE(evseUID); err != nil {
 		return err
 	}
+	if reservationID != 0 {
+		if err := s.settled(ctx, reservationID); err != nil {
+			return fmt.Errorf("%s: waiting for reservation %d to be set up: %w", evseUID, reservationID, err)
+		}
+	}
 	r, ok := s.core.ActiveReservation(evseUID)
-	if !ok {
+	if !ok || (reservationID != 0 && r.ID != reservationID) {
 		return fmt.Errorf("%s: %w", evseUID, ErrNoReservation)
 	}
 	cp, err := s.chargePoint(evseUID, "")
@@ -414,6 +445,23 @@ func (s *Service) cancel(ctx context.Context, evseUID, reason string) error {
 		return refused(OpCancel, evseUID, res)
 	}
 	return nil
+}
+
+// settled waits until the Reserve of reservation id, if one is under way, has
+// returned.
+func (s *Service) settled(ctx context.Context, id int) error {
+	s.mu.Lock()
+	ch := s.settling[id]
+	s.mu.Unlock()
+	if ch == nil {
+		return nil
+	}
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Start asks the station to start a session on an EVSE for a tag; an empty

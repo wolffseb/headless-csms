@@ -200,8 +200,14 @@ func (r *Receiver) cancelReservation(b *body) (*plan, *refusal) {
 	if ref := r.online(e, r.opts.Core.Snapshot()); ref != nil {
 		return nil, ref
 	}
-	return &plan{charger: r.opts.Config.ChargerOf(e), run: func(ctx context.Context) error {
-		return r.opts.Control.CancelForPartner(ctx, e.UID)
+	// A reservation whose ReserveNow is still out is cancelled once the
+	// station has answered it, so the cancel can take two calls.
+	calls := 1
+	if held.Status != core.ReservationActive {
+		calls = 2
+	}
+	return &plan{charger: r.opts.Config.ChargerOf(e), calls: calls, run: func(ctx context.Context) error {
+		return r.opts.Control.CancelForPartner(ctx, e.UID, held.ID)
 	}}, nil
 }
 
