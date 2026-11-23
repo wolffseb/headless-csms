@@ -199,9 +199,11 @@ func TestStartSessionWithAnOCPITokenOnTheSimulator(t *testing.T) {
 	if got := s.core.ActiveTransactions("EVSE-A1")[0].IDTag; got != tag {
 		t.Errorf("transaction tag = %q, want %q", got, tag)
 	}
-	if s.sim.TransactionID(1) == 0 {
-		t.Error("the simulator's session was refused by the CSMS")
-	}
+	// The handler records the session in core before it returns the conf, so
+	// the simulator may not have read the conf yet.
+	eventually(t, "the simulator's session to be confirmed by the CSMS", func() bool {
+		return s.sim.TransactionID(1) != 0
+	})
 }
 
 // STOP_SESSION takes our transaction id, the one core and `cpms status` show.
