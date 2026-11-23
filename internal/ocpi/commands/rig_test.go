@@ -415,6 +415,8 @@ type partnerState struct {
 	at    time.Time
 	token string
 	log   *slog.Logger
+	// origin is the one scheme://host:port the partner has; empty allows any.
+	origin string
 }
 
 func newPartner(log *slog.Logger) partner {
@@ -426,6 +428,19 @@ func (p *partnerState) set(at time.Time, token string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.at, p.token = at, token
+}
+
+// onlyAt restricts the partner's response URLs to those under origin.
+func (p *partnerState) onlyAt(origin string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.origin = origin
+}
+
+func (p *partnerState) AllowsResponseURL(registration time.Time, responseURL string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return registration.Equal(p.at) && (p.origin == "" || strings.HasPrefix(responseURL, p.origin+"/"))
 }
 
 func (p *partnerState) Registered() time.Time {

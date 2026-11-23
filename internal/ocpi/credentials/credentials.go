@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -182,6 +183,58 @@ func (r *Registrar) ClientFor(registration time.Time) (*client.Client, bool) {
 		return nil, false
 	}
 	return r.client.WithToken(reg.TokenB), true
+}
+
+// AllowsResponseURL reports whether a command's response_url may be sent
+// TOKEN_B of the registration: it must still be the current one, and the URL's
+// scheme and host (with its port) must be one the partner gave us in that
+// registration, its versions URL or one of its endpoints. TOKEN_B already goes
+// to those hosts, so a result sent there discloses nothing new.
+//
+// The check is there because TOKEN_C is the same for every registration (it
+// comes from config): a former partner that still holds it can send commands
+// to the current one's registration, and would otherwise name its own URL and
+// be sent the current partner's TOKEN_B.
+func (r *Registrar) AllowsResponseURL(registration time.Time, responseURL string) bool {
+	reg := r.opts.Store.Get().OCPI
+	if reg == nil || !reg.RegisteredAt.Equal(registration) {
+		return false
+	}
+	want, ok := origin(responseURL)
+	if !ok {
+		return false
+	}
+	urls := []string{reg.VersionsURL}
+	for _, e := range reg.Endpoints {
+		urls = append(urls, e.URL)
+	}
+	for _, u := range urls {
+		if got, ok := origin(u); ok && got == want {
+			return true
+		}
+	}
+	return false
+}
+
+// origin is a URL's scheme and host with its port, lower-cased, the port made
+// explicit for http and https so that "https://a" and "https://a:443" agree.
+func origin(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return "", false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	port := u.Port()
+	switch {
+	case port != "":
+	case scheme == "http":
+		port = "80"
+	case scheme == "https":
+		port = "443"
+	default:
+		return "", false
+	}
+	return scheme + "://" + net.JoinHostPort(strings.ToLower(u.Hostname()), port), true
 }
 
 func (r *Registrar) tokenB() string {

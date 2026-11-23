@@ -907,3 +907,39 @@ func TestResultsAreDroppedWhenThePartnerRegistrationChanged(t *testing.T) {
 		}
 	})
 }
+
+// A command whose response_url is not on the registered partner's host is
+// refused at once (HTTP 400, 2001), and nothing is done or sent. TOKEN_C is
+// the same for every registration, so a former partner that holds it would
+// otherwise be sent the current partner's TOKEN_B at a URL of its own.
+func TestACommandWithAResponseURLOutsideThePartnersHostIsRefused(t *testing.T) {
+	t.Parallel()
+	s := newStage(t)
+	foreign := newEMSP(t)
+	s.partner.onlyAt(s.emsp.srv.URL)
+
+	for _, command := range []string{"RESERVE_NOW", "CANCEL_RESERVATION", "START_SESSION", "STOP_SESSION", "UNLOCK_CONNECTOR"} {
+		body := map[string]any{
+			"response_url": foreign.url("x"), "reservation_id": "RES-1", "session_id": "s1",
+			"token":       map[string]any{"uid": tag, "type": "RFID"},
+			"expiry_date": ocpi.FormatDateTime(t0.Add(30 * time.Minute)),
+			"location_id": locationID, "evse_uid": "EVSE-A1", "connector_id": "1",
+		}
+		got := s.post(command, body)
+		if got.http != http.StatusBadRequest || got.code != 2001 {
+			t.Errorf("%s: answer = %+v, want HTTP 400 and 2001", command, got)
+		}
+	}
+	if n := s.station(cpA).total() + s.station(cpB).total(); n != 0 {
+		t.Errorf("the station got %d commands, want none", n)
+	}
+	if n := foreign.all(); n != 0 {
+		t.Errorf("the foreign host got %d requests, want none", n)
+	}
+
+	// The same command at the partner's own host goes through.
+	if got := s.post("RESERVE_NOW", s.reserveBody("r1", nil)); got.result != "ACCEPTED" {
+		t.Errorf("answer at the partner's host = %+v, want ACCEPTED", got)
+	}
+	s.result("r1")
+}

@@ -329,7 +329,9 @@ the command. The answer is a `CommandResponse`:
 | `NOT_SUPPORTED` | Unknown command type, or `RESERVE_NOW` for an EVSE with `reservable: false`. |
 | `UNKNOWN_SESSION` | `STOP_SESSION` for a `session_id` that is not an active transaction. |
 
-A body that is not valid JSON, or lacks a field the command needs, is HTTP 400 with `2001`.
+A body that is not valid JSON, or lacks a field the command needs, is HTTP 400 with `2001`. So
+is one whose `response_url` is not on a host the registered partner gave at registration (its
+`versions` URL or an endpoint), with the same scheme and port.
 
 ---
 

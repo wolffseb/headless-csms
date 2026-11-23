@@ -98,6 +98,7 @@ sent to the station or posted to `response_url`:
 | Condition | HTTP | `status_code` | `result` |
 |---|---|---|---|
 | Body is not valid JSON, or lacks a field the command needs, or `response_url` is not an `http(s)` URL | 400 | `2001` | |
+| `response_url` is not on a host of the registered partner (see below) | 400 | `2001` | |
 | `location_id` is not ours | 200 | `2003` | `REJECTED` |
 | `evse_uid` or `connector_id` is unknown | 200 | `1000` | `REJECTED` |
 | The charger that owns the EVSE is not connected | 200 | `1000` | `REJECTED`, "charge point offline" |
@@ -151,9 +152,17 @@ Each result is delivered on its own, so a partner that is slow to take one never
 the next command. A result still waiting when cpms stops is lost.
 
 !!! warning "TOKEN_B goes to the `response_url`"
-    cpms authenticates the `CommandResult` with the partner's `TOKEN_B`, as OCPI has it, to
-    whatever URL the request names. Only the registered partner can send commands, so it is
-    sending its own token to a URL it chose.
+    cpms authenticates the `CommandResult` with the partner's `TOKEN_B`, as OCPI has it. It
+    therefore accepts a command only if its `response_url` has the same scheme and host
+    (with port) as the partner's `versions` URL or one of its endpoints, as the partner gave
+    them when it registered. Any other URL is answered at once with HTTP 400 and `2001`;
+    nothing is sent to the station and nothing is posted.
+
+    The check is needed because `TOKEN_C` is the same for every registration: a former
+    partner that still holds it could otherwise send a command naming its own URL and be
+    sent the current partner's `TOKEN_B`. **Rotate `ocpi.token_c` whenever the partner
+    changes**, so that the former one is locked out altogether (see
+    [OCPI partner](ocpi-partner.md)).
 
 A `response_url` belongs to the registration its command arrived under. If that partner is
 unregistered, and another registers (or the same one registers again from the start), a

@@ -355,6 +355,14 @@ func TestAFormerPartnerNeverGetsTheCurrentPartnersToken(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
+	// A is still configured with our URL and TOKEN_C, which every registration
+	// shares. It sends a new command naming its own response_url: it is refused,
+	// not run, and B's token never reaches A.
+	status, env := post("RESERVE_NOW", reserveNowBody(cfg, emspA, "r2", "NL-ABC-C00012345"))
+	if status != http.StatusBadRequest || env["status_code"] != float64(2001) {
+		t.Errorf("RESERVE_NOW from the former partner: HTTP %d %v, want 400 and 2001", status, env)
+	}
+
 	if got := emspA.resultsAt("r1"); len(got) != 1 {
 		t.Errorf("the former partner got %d results at r1, want only the original ACCEPTED: %+v", len(got), got)
 	}
@@ -365,6 +373,9 @@ func TestAFormerPartnerNeverGetsTheCurrentPartnersToken(t *testing.T) {
 				t.Errorf("the former partner got a result at %s with the current partner's TOKEN_B", name)
 			}
 		}
+	}
+	if got := emspA.resultsAt("r2"); len(got) != 0 {
+		t.Errorf("the former partner got results for the command that was refused: %+v", got)
 	}
 	if got := emspB.allResults(); len(got) != 0 {
 		t.Errorf("the current partner got results for a reservation that was not its own: %+v", got)

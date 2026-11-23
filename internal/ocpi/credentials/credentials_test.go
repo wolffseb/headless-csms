@@ -928,3 +928,62 @@ func TestClientForServesOnlyTheRegistrationItWasAskedFor(t *testing.T) {
 		t.Error("ClientFor served the former registration after another one registered")
 	}
 }
+
+// A response_url may be sent TOKEN_B only if it is on a host the registration
+// gave us, and only under that registration.
+func TestAllowsResponseURLOnlyOnTheRegisteredPartnersHosts(t *testing.T) {
+	t.Parallel()
+	h, emsp := newHarness(t), newFakeEMSP(t)
+	h.register(emsp)
+	reg := h.reg.Registered()
+
+	// The fake partner's endpoints are on its own host; so is its versions URL.
+	other := newFakeEMSP(t)
+	tests := []struct {
+		name string
+		url  string
+		want bool
+	}{
+		{"the partner's host", emsp.srv.URL + "/result/r1", true},
+		{"a different path on it", emsp.srv.URL + "/anything?x=1", true},
+		{"another host", other.srv.URL + "/result/r1", false},
+		{"same host, other port", "http://127.0.0.1:1/result/r1", false},
+		{"same host, other scheme", "https://" + strings.TrimPrefix(emsp.srv.URL, "http://") + "/result", false},
+		{"not a URL", "://nope", false},
+		{"no host", "http:///result", false},
+		{"empty", "", false},
+	}
+	for _, tc := range tests {
+		if got := h.reg.AllowsResponseURL(reg, tc.url); got != tc.want {
+			t.Errorf("%s: AllowsResponseURL(%q) = %v, want %v", tc.name, tc.url, got, tc.want)
+		}
+	}
+
+	if h.reg.AllowsResponseURL(reg.Add(time.Second), emsp.srv.URL+"/result/r1") {
+		t.Error("allowed under a registration that is not the current one")
+	}
+	if _, err := h.reg.Unregister(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if h.reg.AllowsResponseURL(reg, emsp.srv.URL+"/result/r1") {
+		t.Error("allowed after the partner was unregistered")
+	}
+}
+
+// The default port of a scheme counts as given, and host case does not matter.
+func TestAllowsResponseURLNormalisesTheOrigin(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ a, b string }{
+		{"https://Partner.Example/versions", "https://partner.example:443/result"},
+		{"http://partner.example:80/versions", "http://PARTNER.example/result"},
+	} {
+		x, ok1 := credentials.Origin(tc.a)
+		y, ok2 := credentials.Origin(tc.b)
+		if !ok1 || !ok2 || x != y {
+			t.Errorf("origin(%q) = %q, origin(%q) = %q", tc.a, x, tc.b, y)
+		}
+	}
+	if a, _ := credentials.Origin("https://partner.example/x"); a == "http://partner.example:80" {
+		t.Error("schemes confused")
+	}
+}

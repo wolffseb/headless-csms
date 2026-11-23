@@ -91,6 +91,11 @@ type Partner interface {
 	// ClientFor calls the partner with the TOKEN_B of the registration, or
 	// reports false if that is no longer the current one.
 	ClientFor(registration time.Time) (*client.Client, bool)
+	// AllowsResponseURL reports whether the registration is still current and
+	// the URL is on a host the partner gave in it. A command naming any other
+	// URL is refused: TOKEN_C is the same for every registration, so a former
+	// partner that still holds it must not get the current one's token.
+	AllowsResponseURL(registration time.Time, responseURL string) bool
 }
 
 // Stopper is a scheduled callback that can be cancelled, as *time.Timer is.
@@ -305,6 +310,15 @@ func (r *Receiver) serve(w http.ResponseWriter, req *http.Request) {
 	}
 
 	b.registration = r.opts.Partner.Registered()
+	if !r.opts.Partner.AllowsResponseURL(b.registration, b.ResponseURL) {
+		// Nothing is sent to it and nothing is done: the URL's owner is not
+		// the registered partner, as far as we can tell.
+		r.log.Warn("refusing an OCPI command: its response_url is not on a host of the registered partner",
+			"command", command, "response_host", hostOf(b.ResponseURL))
+		ocpi.WriteError(w, http.StatusBadRequest, ocpi.StatusInvalidParameters,
+			"response_url must be on a host the registered partner gave in its credentials (its versions URL or an endpoint)")
+		return
+	}
 	p, ref := prepare(&b)
 	if ref != nil {
 		r.log.Info("refusing an OCPI command", "command", command, "response", string(ref.response), "reason", ref.message)
@@ -319,6 +333,15 @@ func (r *Receiver) serve(w http.ResponseWriter, req *http.Request) {
 		r.execute(ocpi.WithCorrelationID(r.ctx, ocpi.CorrelationID(req.Context())), command, b.ResponseURL, b.registration, p)
 	}()
 	respond(w, ocpi.StatusSuccess, commandResponse{Result: ResponseAccepted, Timeout: timeout})
+}
+
+// hostOf is the host of a URL for the log, never the path or query: those may
+// carry a secret.
+func hostOf(raw string) string {
+	if u, err := url.Parse(raw); err == nil {
+		return u.Host
+	}
+	return ""
 }
 
 // bound is the longest the plan's calls to the station can take.
