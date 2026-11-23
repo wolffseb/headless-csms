@@ -246,3 +246,34 @@ func TestLogShowsTheNewestLines(t *testing.T) {
 	}
 	assertFits(t, r.view(), 100, 30)
 }
+
+// A station's own text can hold double-width runes. At a width where not even
+// one fits after the indent, wrap used to take nothing off the word and spin,
+// and with it Bubble Tea's event loop: keys and quit were never read again.
+func TestViewTerminatesAtEverySizeWithWideRunes(t *testing.T) {
+	for _, help := range []bool{false, true} {
+		for w := 0; w <= 12; w++ {
+			for h := 0; h <= 6; h++ {
+				r := newRig(t, func(o *Options) { o.LogPath = "/充電器/cpms.log" })
+				r.m.msg = message{msgErr, "✗ 充電器 充電器充電器 reported 充電器"}
+				r.m.help = help
+				r.size(w, h)
+
+				done := make(chan string, 1)
+				go func() { done <- r.view() }()
+				select {
+				case frame := <-done:
+					if h == 0 {
+						if frame != "" {
+							t.Errorf("a zero-height screen drew %q", frame)
+						}
+						continue
+					}
+					assertFits(t, frame, w, h)
+				case <-time.After(time.Second):
+					t.Fatalf("View did not return at %dx%d (help %v)", w, h, help)
+				}
+			}
+		}
+	}
+}

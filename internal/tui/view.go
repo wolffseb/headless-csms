@@ -361,6 +361,11 @@ func wrap(s string, w int, indent string) []string {
 				cur = indent
 			}
 			head := ansi.Truncate(word, w-len(cur), "")
+			if head == "" {
+				// Not even one rune fits (a double-width one at width 3):
+				// take it anyway so the word shrinks. fit cuts the line.
+				head = string([]rune(word)[:1])
+			}
 			out = append(out, cur+head)
 			word = word[len(head):]
 			cur = indent
