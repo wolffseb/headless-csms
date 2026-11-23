@@ -221,10 +221,16 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 	startup = append(startup,
 		fmt.Sprintf("OCPI versions endpoint %s (listening on %s)", ocpiServer.VersionsURL(), ocpiServer.Addr()),
 		"control socket "+ctl.Path())
+	// How to leave depends on what is on the screen: the UI has a key, the
+	// headless process a signal.
+	leave := "press Ctrl-C to stop"
+	if ui != nil {
+		leave = "press q to quit"
+	}
 	if len(cfg.Chargers) > 1 {
-		startup = append(startup, fmt.Sprintf("waiting for %d charge points to connect; press Ctrl-C to stop", len(cfg.Chargers)))
+		startup = append(startup, fmt.Sprintf("waiting for %d charge points to connect; %s", len(cfg.Chargers), leave))
 	} else {
-		startup = append(startup, "waiting for the charge point to connect; press Ctrl-C to stop")
+		startup = append(startup, "waiting for the charge point to connect; "+leave)
 	}
 
 	done := make(chan struct{})

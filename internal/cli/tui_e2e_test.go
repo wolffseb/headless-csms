@@ -172,6 +172,8 @@ func TestTUIQuitShutsDownLikeSIGINT(t *testing.T) {
 	r := startPTY(t, buildCPMS(t), "run", "-c", s.configPath, "--socket", s.socketPath)
 
 	r.waitForScreen("cpms · 0/1 chargers online")
+	// The UI says how to leave it, not how headless is stopped.
+	r.waitForScreen("waiting for the charge point to connect; press q to quit")
 
 	// A key reaches control in-process: with no station connected, the error
 	// is the one-shot CLI's own sentence.
@@ -287,6 +289,9 @@ func TestHeadlessServesAndStopsOnSIGINT(t *testing.T) {
 
 			if !strings.Contains(out.String(), "shutting down") {
 				t.Errorf("stdout lacks \"shutting down\":\n%s", out.String())
+			}
+			if !strings.Contains(out.String(), "waiting for the charge point to connect; press Ctrl-C to stop") {
+				t.Errorf("headless keeps the Ctrl-C wording:\n%s", out.String())
 			}
 			if !strings.Contains(errOut.String(), "ALP-HYC-001 connected") {
 				t.Errorf("the event log is not on stderr:\n%s", errOut.String())
