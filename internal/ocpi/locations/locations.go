@@ -109,10 +109,14 @@ const (
 // staticAt is when the static data last changed (the config file's
 // modification time). It does no I/O, so its output can be golden-tested.
 func Build(cfg *config.Config, staticAt time.Time, snap core.Snapshot) Location {
+	// Each EVSE takes its live state from its own charger. uids are globally
+	// unique, so one map over all chargers is unambiguous.
 	live := map[string]core.EVSESnapshot{}
-	if cp, ok := snap.ChargePoint(cfg.Chargers[0].ID); ok { // TODO(#85 B1)
-		for _, e := range cp.EVSEs {
-			live[e.UID] = e
+	for _, ch := range cfg.Chargers {
+		if cp, ok := snap.ChargePoint(ch.ID); ok {
+			for _, e := range cp.EVSEs {
+				live[e.UID] = e
+			}
 		}
 	}
 
