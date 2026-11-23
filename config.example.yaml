@@ -6,6 +6,9 @@
 #
 # Validate a copy of this file with:  cpms config validate -c config.yaml
 
+# One station: `charger:`. Several stations on the same listener (a test
+# bench, say): use `chargers:` with a list instead (not both), see the
+# commented example below the auth block.
 charger:
   # Must match the charge point identity the station sends in its OCPP
   # WebSocket URL: ws://<host>:<ocpp_bind port>/ocpp/<id>
@@ -32,6 +35,11 @@ server:
 auth:
   # The default RFID tag, used when a command does not name one.
   default_id_tag: "04A1B2C3D4"
+  # More RFID tags accepted on every charger, besides default_id_tag.
+  # Optional. idTags compare case-insensitively, so duplicates (also of the
+  # default) are an error.
+  # id_tags:
+  #   - "04A1B2C3D5"
 
 ocpi:
   country_code: DE
@@ -99,6 +107,10 @@ location:
       # OCPP 1.6 addresses this outlet by connector id. 0 is reserved for the
       # charge point as a whole, so EVSEs start at 1.
       ocpp_connector_id: 1
+      # With `chargers:` (several stations) every EVSE names its charger by
+      # id; (charger, ocpp_connector_id) must be unique. With one charger it
+      # is optional and defaults to that charger.
+      # charger: ALP-HYC-001
       # Advertise the OCPI RESERVABLE capability. Set it to false if
       # `cpms probe` reports the station has no Reservation profile.
       # Optional, default true.
@@ -122,3 +134,29 @@ location:
           max_voltage: 920
           max_amperage: 500
           max_electric_power: 400000
+
+# Several stations: replace `charger:` above with a list. Each entry takes the
+# same keys and defaults; each EVSE then needs `charger: <id>`.
+#
+# chargers:
+#   - id: PRUESTEL_000
+#     heartbeat_interval: 60s
+#     heartbeat_timeout: 90s
+#     call_timeout: 30s
+#   - id: PRUESTEL_001
+#
+# auth:
+#   default_id_tag: RFID_PRUESTEL_000
+#   id_tags:
+#     - RFID_PRUESTEL_001
+#
+# location:
+#   evses:
+#     - uid: PRUESTEL_000-1
+#       charger: PRUESTEL_000
+#       ocpp_connector_id: 1
+#       ...
+#     - uid: PRUESTEL_001-1
+#       charger: PRUESTEL_001
+#       ocpp_connector_id: 1
+#       ...
