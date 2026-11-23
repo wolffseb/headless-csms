@@ -152,11 +152,21 @@ func New(opts Options) (*Pusher, error) {
 	// EVSEs are static config, so the workers are too.
 	p.byUID = make(map[string]*worker, len(opts.Config.Location.EVSEs))
 	for _, e := range opts.Config.Location.EVSEs {
-		w := &worker{p: p, uid: e.UID, charger: e.Charger, wake: make(chan struct{}, 1)}
+		w := &worker{p: p, uid: e.UID, charger: chargerOf(opts.Config, e), wake: make(chan struct{}, 1)}
 		p.workers = append(p.workers, w)
 		p.byUID[e.UID] = w
 	}
 	return p, nil
+}
+
+// chargerOf is the id of the charger e hangs on: an EVSE with no charger set
+// belongs to the only charger, as in config (a Config built by hand may leave
+// it empty).
+func chargerOf(cfg *config.Config, e config.EVSE) string {
+	if e.Charger == "" && len(cfg.Chargers) == 1 {
+		return cfg.Chargers[0].ID
+	}
+	return e.Charger
 }
 
 // defaultBackoff is 1s, 2s, 4s… capped at 30s, with up to 25% jitter so that

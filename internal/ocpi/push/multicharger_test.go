@@ -110,3 +110,33 @@ func TestOneChargerOfflinePushesOnlyItsEVSEs(t *testing.T) {
 		t.Errorf("%d PATCHes, want %d", len(got), 2*r.evses()-1)
 	}
 }
+
+// A hand-built config that leaves EVSE.Charger empty means "the only
+// charger", as in config and core. The push must not go silent on it.
+func TestEmptyChargerMeansTheOnlyCharger(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, func(cfg *config.Config) {
+		for i := range cfg.Location.EVSEs {
+			cfg.Location.EVSEs[i].Charger = ""
+		}
+	})
+	cp := r.cfg.Chargers[0].ID
+	r.register()
+	r.core.Connected(cp)
+	for _, e := range r.cfg.Location.EVSEs {
+		r.core.SetConnectorStatus(cp, e.OCPPConnectorID, core.StatusAvailable, "NoError")
+	}
+	r.core.flush(r.t)
+	r.pushRound(r.evses())
+	r.emsp.waitPatches(r.evses())
+
+	r.clk.Advance(time.Minute)
+	r.core.SetConnectorStatus(cp, r.cfg.Location.EVSEs[0].OCPPConnectorID, core.StatusCharging, "NoError")
+	r.pushRound(1)
+
+	got := r.emsp.waitPatches(r.evses() + 1)
+	p := got[r.evses()]
+	if want := r.evsePath(0); p.path != want || p.status() != "CHARGING" {
+		t.Errorf("PATCH %s %s, want %s CHARGING", p.path, p.raw, want)
+	}
+}
