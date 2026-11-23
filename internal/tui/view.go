@@ -366,7 +366,7 @@ func wrap(s string, w int, indent string) []string {
 	cur := ""
 	for _, word := range strings.Fields(s) {
 		for ansi.StringWidth(word) > w-len(indent) && w > len(indent) {
-			if cur != "" {
+			if cur != "" && cur != indent {
 				out = append(out, cur)
 				cur = indent
 			}
@@ -428,10 +428,22 @@ func (m *Model) helpLines() []line {
 		}
 	}
 	blank()
-	add("Other tags, expiry, limits: run the CLI in another terminal, e.g. cpms reserve --evse <uid> --tag <tag> --expires 30m")
+	add("Other tags, expiry, limits: run the CLI in another terminal, for example:")
+	// The example keeps to a line of its own; at a narrow width it wraps under
+	// itself, which is better than cutting the end off.
+	for _, l := range wrap("cpms reserve --evse <uid> --tag <tag> --expires 30m", m.w-2, "  ") {
+		out = append(out, line{text: m.fit("  " + l)})
+	}
 	if m.opts.LogPath != "" {
 		blank()
-		add("Full log: " + m.opts.LogPath)
+		out = append(out, m.plain("Full log:"))
+		// Whole, and on its own line, so it can be copied. If the screen is too
+		// narrow the start goes: the file name is what says where to look.
+		path := m.opts.LogPath
+		if room := m.w - 2; ansi.StringWidth(path) > room && room > 1 {
+			path = ansi.TruncateLeft(path, ansi.StringWidth(path)-(room-1), "…")
+		}
+		out = append(out, m.plain("  "+path))
 	}
 	for len(out) < m.h-1 {
 		out = append(out, line{})

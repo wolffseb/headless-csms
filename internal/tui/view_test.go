@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -326,5 +327,49 @@ func TestOfflineReasonIsShort(t *testing.T) {
 	r := newRig(t)
 	if got := r.view(); !strings.Contains(got, "ALP-HYC-001  offline  never seen") {
 		t.Errorf("never seen:\n%s", got)
+	}
+}
+
+// A word longer than a line is cut into pieces; the pieces follow each other
+// with no empty line between them (the log path used to break with one).
+func TestWrapCutsALongWordWithoutBlankLines(t *testing.T) {
+	got := wrap("Full log: /a/very/long/path/that/does/not/fit/cpms.log", 20, "    ")
+	want := []string{"Full log:", "    /a/very/long/pat", "    h/that/does/not/", "    fit/cpms.log"}
+	if !slices.Equal(got, want) {
+		t.Errorf("wrap = %q, want %q", got, want)
+	}
+}
+
+const longLogPath = "/Users/someone/projects/cpms/scratchpad/uxrun/cpms.log"
+
+func TestHelpAt50Columns(t *testing.T) {
+	r := newRig(t, func(o *Options) { o.LogPath = longLogPath })
+	r.size(50, 30)
+	r.send(keyMsg("?"))
+	golden(t, "help50", r.view())
+	assertFits(t, r.view(), 50, 30)
+}
+
+// The example command and the log path each start a line of their own, and a
+// path that does not fit is cut from the left: its end is what says where.
+func TestHelpExampleAndLogPathHaveTheirOwnLines(t *testing.T) {
+	r := newRig(t, func(o *Options) { o.LogPath = longLogPath })
+	r.send(keyMsg("?"))
+	lines := strings.Split(r.view(), "\n")
+	has := func(want string) bool { return slices.Contains(lines, want) }
+	if !has("  cpms reserve --evse <uid> --tag <tag> --expires 30m") {
+		t.Errorf("the example command is not on a line of its own:\n%s", r.view())
+	}
+	if !has("  " + longLogPath) {
+		t.Errorf("the log path is not on a line of its own at 100 columns:\n%s", r.view())
+	}
+
+	r.size(30, 30)
+	assertFits(t, r.view(), 30, 30)
+	lines = strings.Split(r.view(), "\n")
+	if !slices.ContainsFunc(lines, func(l string) bool {
+		return strings.HasPrefix(l, "  …") && strings.HasSuffix(l, "/uxrun/cpms.log")
+	}) {
+		t.Errorf("a path wider than the screen is not cut from the left:\n%s", r.view())
 	}
 }
