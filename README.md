@@ -70,7 +70,7 @@ ALP-HYC-002  offline  last seen 09:30:00 (heartbeat timeout)
 09:31:00 ALP-HYC-002 disconnected: heartbeat timeout
 09:31:00 ALP-HYC-002-1 AVAILABLE→UNKNOWN
 09:31:00 ALP-HYC-002-2 AVAILABLE→UNKNOWN
-09:31:00 ALP-HYC-001 transaction 12 started on ALP-HYC-001-2 (tag 04A1B2C3D4)
+09:31:00 ALP-HYC-001 session 12 started on ALP-HYC-001-2 (tag 04A1B2C3D4)
 09:31:00 ALP-HYC-001-2 AVAILABLE→CHARGING
 
 

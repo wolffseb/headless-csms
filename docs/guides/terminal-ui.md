@@ -33,7 +33,7 @@ ALP-HYC-002  offline  last seen 09:30:00 (heartbeat timeout)
 09:31:00 ALP-HYC-002 disconnected: heartbeat timeout
 09:31:00 ALP-HYC-002-1 AVAILABLE→UNKNOWN
 09:31:00 ALP-HYC-002-2 AVAILABLE→UNKNOWN
-09:31:00 ALP-HYC-001 transaction 12 started on ALP-HYC-001-2 (tag 04A1B2C3D4)
+09:31:00 ALP-HYC-001 session 12 started on ALP-HYC-001-2 (tag 04A1B2C3D4)
 09:31:00 ALP-HYC-001-2 AVAILABLE→CHARGING
 
 
@@ -46,13 +46,15 @@ ALP-HYC-002  offline  last seen 09:30:00 (heartbeat timeout)
   The push status is read once a second.
 - **One group per charger.** The charger line shows `online` with the station's vendor,
   model and firmware, or `offline` with when it was last seen and why it went. An offline
-  group is dimmed; the keys still work and fail with the same sentence the CLI gives.
+  group is dimmed; the keys still work. A key on a charger seen before fails with
+  `<charger> is offline (last seen 09:30:00)`; otherwise with the sentence the CLI gives.
 - **One row per EVSE.** `▸` marks the selected one. STATUS is the word `cpms status`
   prints, with the OCPP error code after it if there is one. DETAIL is the reservation
   (`#7 04A1B2C3D4 until 10:30`, with `(pending)` or `(cancelling)` while it is not settled)
   or the session (`session 12 · 04A1B2C3D4 · since 09:51 · 48.2 kW`).
 - **Log.** The last lines that fit, newest at the bottom: every core event except
-  heartbeats and meter values, the result of each key, and warnings from the logger.
+  heartbeats and meter values, failed commands (successful results are on the message
+  line only), and warnings from the logger.
   There is no scrolling; the full log is in a file (below).
 - **Message line.** The latest result, above the key hints: `✓` in green, `✗` in red with
   the CLI's wording. It stays until the next result or `esc`.
