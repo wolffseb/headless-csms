@@ -258,7 +258,7 @@ func run(cmd *cobra.Command, cfg *config.Config, statePath, socketPath string, l
 		uiErr = tui.Run(ctx, tui.Options{
 			Config: cfg, Core: svc, Control: commands,
 			Registration: registrar, Push: pusher,
-			Describe: describe,
+			Describe: func(op socket.Op, subject string, err error) string { return describe(cfg, op, subject, err) },
 			Stop:     cancelRun,
 			Logs:     ui.sink, LogPath: ui.logPath, Startup: startup,
 			In: ui.in, Out: ui.out,

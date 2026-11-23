@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/wolffseb/cli-cpms/internal/config"
 	"github.com/wolffseb/cli-cpms/internal/control"
 	"github.com/wolffseb/cli-cpms/internal/control/socket"
 	"github.com/wolffseb/cli-cpms/internal/ocpp"
@@ -17,6 +20,8 @@ import (
 // exitFor. The two must say the same thing, for every kind of failure.
 func TestDescribeSaysWhatTheCLISays(t *testing.T) {
 	t.Parallel()
+
+	cfg := timeoutConfig(map[string]time.Duration{"CP-1": 10 * time.Second}, map[string]string{"ALP-1": "CP-1"})
 
 	cases := []struct {
 		name string
@@ -35,7 +40,7 @@ func TestDescribeSaysWhatTheCLISays(t *testing.T) {
 			"ALP-1: the station says it is occupied (status Occupied)"},
 		{"timeout", socket.OpUnlock,
 			fmt.Errorf("unlock: %w", ocpp.ErrTimeout),
-			"ALP-1: the station did not answer within charger.call_timeout"},
+			"ALP-1: the station did not answer within 10s (charger.call_timeout)"},
 		{"unlock failed", socket.OpUnlock,
 			&control.RefusedError{Op: control.OpUnlock, EVSEUID: "ALP-1", Status: ocpp.CommandUnlockFailed, Raw: "UnlockFailed"},
 			"ALP-1: the station could not release the cable lock (status UnlockFailed)"},
@@ -59,9 +64,9 @@ func TestDescribeSaysWhatTheCLISays(t *testing.T) {
 			if err := json.Unmarshal(raw, &wire); err != nil {
 				t.Fatal(err)
 			}
-			viaCLI := exitFor(c.op, "ALP-1", &wire).Error()
+			viaCLI := exitFor(cfg, c.op, "ALP-1", &wire).Error()
 
-			got := describe(c.op, "ALP-1", c.err)
+			got := describe(cfg, c.op, "ALP-1", c.err)
 			if got != viaCLI {
 				t.Errorf("TUI says %q, CLI says %q", got, viaCLI)
 			}
@@ -69,5 +74,49 @@ func TestDescribeSaysWhatTheCLISays(t *testing.T) {
 				t.Errorf("describe = %q, want it to contain %q", got, c.want)
 			}
 		})
+	}
+}
+
+// timeoutConfig is a config with chargers of the given call timeouts and EVSEs
+// on them, as far as the wording of errors reads it.
+func timeoutConfig(timeouts map[string]time.Duration, evses map[string]string) *config.Config {
+	cfg := &config.Config{}
+	for id, d := range timeouts {
+		cfg.Chargers = append(cfg.Chargers, config.Charger{ID: id, CallTimeout: config.NewDuration(d)})
+	}
+	slices.SortFunc(cfg.Chargers, func(a, b config.Charger) int { return strings.Compare(a.ID, b.ID) })
+	for uid, ch := range evses {
+		cfg.Location.EVSEs = append(cfg.Location.EVSEs, config.EVSE{UID: uid, Charger: ch})
+	}
+	return cfg
+}
+
+// A timeout names the time that applied, so nobody has to open the config to
+// know how long "did not answer" was. With several chargers it is the one the
+// command went to; for a command with no EVSE it is only named if every
+// charger agrees.
+func TestTimeoutNamesTheConfiguredDuration(t *testing.T) {
+	t.Parallel()
+
+	two := timeoutConfig(map[string]time.Duration{"CP-1": 10 * time.Second, "CP-2": 45 * time.Second},
+		map[string]string{"E-1": "CP-1", "E-2": "CP-2"})
+	same := timeoutConfig(map[string]time.Duration{"CP-1": 20 * time.Second, "CP-2": 20 * time.Second}, nil)
+
+	for _, c := range []struct {
+		name    string
+		cfg     *config.Config
+		subject string
+		want    string
+	}{
+		{"first charger's EVSE", two, "E-1", "E-1: the station did not answer within 10s (charger.call_timeout)"},
+		{"second charger's EVSE", two, "E-2", "E-2: the station did not answer within 45s (charger.call_timeout)"},
+		{"station command, chargers differ", two, "station", "station: the station did not answer within charger.call_timeout"},
+		{"station command, chargers agree", same, "station", "station: the station did not answer within 20s (charger.call_timeout)"},
+		{"no config", nil, "E-1", "E-1: the station did not answer within charger.call_timeout"},
+	} {
+		got := exitFor(c.cfg, socket.OpUnlock, c.subject, &socket.Error{Code: socket.CodeTimeout}).Error()
+		if got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
 	}
 }
