@@ -311,6 +311,25 @@ func TestBadRequestsAreUsageErrors(t *testing.T) {
 	}
 }
 
+// Version 1 daemons ignore the charger field and send station-level commands
+// to their only station, so a v1 client must be refused, not misrouted. This
+// pins the bump: a later field that changes routing needs another one.
+func TestDaemonRefusesProtocolVersion1(t *testing.T) {
+	t.Parallel()
+	path := serve(t, nil)
+
+	conn, err := net.Dial("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_, _ = conn.Write([]byte(`{"v":1,"op":"status"}` + "\n"))
+	line, _ := bufio.NewReader(conn).ReadString('\n')
+	if !strings.Contains(line, `"code":"usage"`) || !strings.Contains(line, "protocol version 1 is not supported") {
+		t.Errorf("v1 request answered %q, want a usage error naming protocol version 1", line)
+	}
+}
+
 func TestListenRefusesWhileAnotherServes(t *testing.T) {
 	t.Parallel()
 	path := serve(t, nil)

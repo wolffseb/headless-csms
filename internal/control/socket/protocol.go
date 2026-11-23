@@ -20,7 +20,7 @@ import (
 // Version is the protocol version this build speaks. A request with any other
 // version is refused, so a mismatched CLI and daemon fail loudly rather than
 // misreading each other.
-const Version = 1
+const Version = 2
 
 // Op is the action a request asks for.
 type Op string
