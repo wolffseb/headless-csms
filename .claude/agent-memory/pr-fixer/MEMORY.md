@@ -73,3 +73,5 @@ Lessons from earlier fix passes in this repo. Newest last within each section. K
 - revive wants a doc comment on every exported method, even tiny `Is` helpers: copy the sibling type's comment. Run golangci-lint before the first push, since the lint job is the first CI check to go red (#76).
 - A "must fail when X is removed" test for a retry or timer loop should fail fast, not by `eventually` timing out: wait on "retry armed OR round ended" and assert which one happened, so the mutant gives a clear message in milliseconds (2026-11-19, #78).
 - Transport errors from `client.Do` wrap a `*url.Error` and open with the full URL twice. Anything shown cut to a width (`cpms status`) should store `errors.As(*url.Error).Err` instead (#78).
+
+- Multi-charger (2026-11-23, #89): core makes synthetic EVSE uids "<cp>-<n>" per charger, so uids are not unique across chargers' snapshots; key any per-snapshot map by charger first. Hand-built configs may leave EVSE.Charger empty: resolve it to the only charger (local `chargerOf` in locations/push, as config is another PR's file).
