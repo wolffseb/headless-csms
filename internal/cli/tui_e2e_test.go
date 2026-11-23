@@ -341,7 +341,7 @@ func TestTUISecondSIGINTDuringShutdownIsSwallowed(t *testing.T) {
 	}
 	t.Parallel()
 
-	const port = 19660
+	const port = 19690
 	s := &station{
 		t:    t,
 		port: port,
