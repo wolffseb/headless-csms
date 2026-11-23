@@ -206,6 +206,11 @@ and `StartTransaction` with `Accepted` for
   gives a CPO to skip real-time authorisation). It is kept in memory: after a restart of cpms
   the window is gone.
 
+The temporary tags come with an `expiryDate` in the answer's `idTagInfo`: the end of the
+15-minute window for a `START_SESSION`, the reservation's expiry for a reserved tag. A
+station keeps what it is told in its Authorization Cache, and an `Accepted` without an
+`expiryDate` has no end. The configured tags have none.
+
 Tags compare case-insensitively. cpms does not authorise tokens with the partner
 (`POST tokens/{uid}/authorize`); the spec lets a CPO trust the eMSP to send valid ones.
 
