@@ -59,15 +59,20 @@ func (s *Service) persistOrLog(what string, id int) {
 // stable order so that an unchanged state writes an unchanged file.
 func (s *Service) persistableLocked() ([]state.Reservation, []state.Transaction) {
 	reservations := []state.Reservation{}
-	for _, r := range s.reservations {
-		if r.Status != ReservationActive {
+	for _, held := range s.reservations {
+		r := held.Reservation
+		if held.Status == ReservationPending && held.prior != nil {
+			// A replacement is out: the station still holds the original until
+			// it answers, and a crash now must not forget it.
+			r = *held.prior
+		} else if held.Status != ReservationActive {
 			continue
 		}
 		reservations = append(reservations, state.Reservation{
 			ID: r.ID, OCPIReservationID: r.OCPIReservationID,
 			ChargePointID: r.ChargePointID, EVSEUID: r.EVSEUID, IDTag: r.IDTag,
 			ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt,
-			Source: r.Source, ResponseURL: r.ResponseURL,
+			Source: r.Source, ResponseURL: r.ResponseURL, ResponseRegistration: r.ResponseRegistration,
 		})
 	}
 	sort.Slice(reservations, func(i, j int) bool { return reservations[i].ID < reservations[j].ID })
@@ -165,7 +170,8 @@ func (s *Service) loadLocked(st state.State) (dropped bool) {
 			ID: r.ID, OCPIReservationID: r.OCPIReservationID,
 			ChargePointID: r.ChargePointID, EVSEUID: r.EVSEUID, ConnectorID: connectorID,
 			IDTag: r.IDTag, ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt,
-			Source: r.Source, ResponseURL: r.ResponseURL, Status: ReservationActive,
+			Source: r.Source, ResponseURL: r.ResponseURL, ResponseRegistration: r.ResponseRegistration,
+			Status: ReservationActive,
 		}}
 		s.reservations[r.ID] = res
 		s.armLocked(res)

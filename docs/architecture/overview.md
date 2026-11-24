@@ -24,7 +24,7 @@ flowchart LR
     cli -- "Unix socket" --> sock
     partner <-- "OCPI 2.3.0<br/>(requests in, status PATCHes out)" --> ocpi
     sock --> ctrl
-    ocpi -.-> ctrl
+    ocpi --> ctrl
     ctrl -- "commands" --> csms
     csms <-- "OCPP 1.6-J over WebSocket<br/>(the station dials in)" --> station
     ctrl -- "reservations, ids" --> core
@@ -34,8 +34,7 @@ flowchart LR
     core --> log
 ```
 
-The dotted line is planned: OCPI commands, which will end in the same `control` layer as
-the terminal.
+OCPI commands end in the same `control` layer as the terminal.
 
 ## Four rules
 
@@ -63,6 +62,7 @@ All under [`internal/`](https://github.com/wolffseb/headless-csms/tree/main/inte
 | `ocpi/client` | Calls to the partner's OCPI API |
 | `ocpi/credentials` | The credentials module and registration handshake |
 | `ocpi/locations` | The Locations module (sender): config plus live status, paginated |
+| `ocpi/commands` | The Commands module (receiver): answers a command at once, runs it through `control`, posts the result to its `response_url` |
 | `ocpi/push` | Pushes EVSE status changes to the partner's Locations receiver: dirty flag per EVSE, debounce, retries |
 | `config` | Loads and validates `config.yaml` |
 | `state` | `state.json`: the persisted DTOs and the atomic-write store |
@@ -108,6 +108,13 @@ later OCPI into command results.
 A reservation becomes active only once the station accepts it. On a refusal or a timeout
 it is dropped at once, so nothing lingers that the station may not hold. `core` reports an
 EVSE as `RESERVED` only when the station does.
+
+A reservation made over OCPI keeps the partner's `reservation_id`. Reserving again under a
+known one replaces it with the same OCPP id. If that fails, no cancel is sent (it would drop
+the original at the station too). If the station never saw the replacement or said no, it
+still holds the original, and so do we. If the outcome is unknown (a timeout, or the
+connection went while it was out), our record of the original ends, and the tags of both
+stay accepted until their own expiry.
 
 ### Charging profiles are validated before sending
 

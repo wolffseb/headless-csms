@@ -18,10 +18,7 @@ package push
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
-	"math/rand/v2"
-	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -38,13 +35,6 @@ import (
 
 // subscriberName is how the push subscriber shows up in core's drop counts.
 const subscriberName = "ocpi-push"
-
-// Backoff bounds. The delay before retry n is baseBackoff·2^(n-1), plus up to
-// a quarter of that as jitter, and never more than maxBackoff.
-const (
-	baseBackoff = time.Second
-	maxBackoff  = 30 * time.Second
-)
 
 // Core is the part of core the pusher reads. *core.Service satisfies it.
 type Core interface {
@@ -147,7 +137,7 @@ func New(opts Options) (*Pusher, error) {
 		p.now = time.Now
 	}
 	if p.backoff == nil {
-		p.backoff = defaultBackoff
+		p.backoff = client.Backoff
 	}
 	// EVSEs are static config, so the workers are too.
 	p.byUID = make(map[string]*worker, len(opts.Config.Location.EVSEs))
@@ -157,17 +147,6 @@ func New(opts Options) (*Pusher, error) {
 		p.byUID[e.UID] = w
 	}
 	return p, nil
-}
-
-// defaultBackoff is 1s, 2s, 4s… capped at 30s, with up to 25% jitter so that
-// several EVSEs failing together do not retry in lockstep.
-func defaultBackoff(retry int) time.Duration {
-	d := baseBackoff
-	for i := 1; i < retry && d < maxBackoff; i++ {
-		d *= 2
-	}
-	d += time.Duration(rand.Int64N(int64(d)/4 + 1))
-	return min(d, maxBackoff)
 }
 
 // Start subscribes to the bus and starts the workers. It returns once the
@@ -391,14 +370,14 @@ func (w *worker) send(ctx context.Context, retries int) outcome {
 	}
 
 	p.recordError(err)
-	if permanent(err) {
+	if client.Permanent(err) {
 		p.log.Error("OCPI status push failed and will not be retried",
-			"evse", w.uid, "status", string(evse.Status), "reason", describe(err), "error", err)
+			"evse", w.uid, "status", string(evse.Status), "reason", client.Describe(err), "error", err)
 		return abandoned
 	}
 	if retries >= cfg.OCPI.Push.MaxRetries {
 		p.log.Error("OCPI status push failed, giving up",
-			"evse", w.uid, "status", string(evse.Status), "attempts", retries+1, "reason", describe(err), "error", err)
+			"evse", w.uid, "status", string(evse.Status), "attempts", retries+1, "reason", client.Describe(err), "error", err)
 		return abandoned
 	}
 	p.log.Debug("OCPI status push failed, will retry", "evse", w.uid, "retry", retries+1, "error", err)
@@ -423,31 +402,6 @@ func shortReason(err error) string {
 		return ue.Err.Error()
 	}
 	return err.Error()
-}
-
-// permanent reports whether retrying cannot help: the partner refused the
-// request itself. 408 and 429 are 4xx that mean "later", and everything that
-// is not an answer (timeouts, refused connections) or not a success envelope
-// is retried.
-func permanent(err error) bool {
-	var e *client.Error
-	if !errors.As(err, &e) {
-		return false
-	}
-	s := e.HTTPStatus
-	return s >= 400 && s < 500 && s != http.StatusRequestTimeout && s != http.StatusTooManyRequests
-}
-
-// describe names the last HTTP status or OCPI code for the error log.
-func describe(err error) string {
-	var e *client.Error
-	if errors.As(err, &e) {
-		if e.StatusCode != 0 {
-			return fmt.Sprintf("HTTP %d, OCPI status_code %d", e.HTTPStatus, e.StatusCode)
-		}
-		return fmt.Sprintf("HTTP %d", e.HTTPStatus)
-	}
-	return "no answer"
 }
 
 // patchURL is {locations_endpoint_url}/{country_code}/{party_id}/{location_id}/{evse_uid},

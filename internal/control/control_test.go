@@ -61,6 +61,10 @@ type fakeStation struct {
 	// arrives, which then waits for cancelGate to be closed.
 	cancelEntered chan struct{}
 	cancelGate    chan struct{}
+
+	// reserveEntered and reserveGate do the same for the first ReserveNow.
+	reserveEntered chan struct{}
+	reserveGate    chan struct{}
 }
 
 func newFakeStation() *fakeStation {
@@ -96,7 +100,13 @@ func (f *fakeStation) Version() ocpp.Version { return ocpp.Version16 }
 func (f *fakeStation) ReserveNow(_ context.Context, r ocpp.ReserveRequest) (ocpp.Result, error) {
 	f.mu.Lock()
 	f.reserve = append(f.reserve, r)
+	entered, gate := f.reserveEntered, f.reserveGate
+	f.reserveGate = nil // only the first reserve waits
 	f.mu.Unlock()
+	if gate != nil {
+		entered <- struct{}{}
+		<-gate
+	}
 	return f.respond("reserve")
 }
 

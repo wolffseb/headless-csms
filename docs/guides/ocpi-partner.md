@@ -115,6 +115,14 @@ If the registration it waited for succeeds, that brand-new registration is the o
     **To rotate it:** change `ocpi.token_c`, restart, run `cpms ocpi unregister`, and have
     the partner register again.
 
+!!! warning "Rotate `TOKEN_C` when the partner changes"
+    `TOKEN_C` is the same for every registration. After `cpms ocpi unregister`, a former
+    partner that still has it can call everything `TOKEN_C` opens, such as the Locations
+    module and the commands. cpms only sends command results to the registered partner's
+    own hosts, so the former partner cannot be sent the new partner's `TOKEN_B`, but it can
+    still try to act on your chargers. Before another partner registers, change
+    `ocpi.token_c` and restart.
+
 ## Next
 
 - What cpms sends the partner: [Push status to the partner](ocpi-push.md)

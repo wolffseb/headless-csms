@@ -78,6 +78,23 @@ func WriteOK(w http.ResponseWriter, data any) {
 	})
 }
 
+// ParseDateTime reads an OCPI DateTime. OCPI writes UTC with or without a
+// "Z" (no zone means UTC) and allows fractional seconds; an explicit offset
+// is not OCPI but is unambiguous, so it is accepted too.
+func ParseDateTime(s string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t, nil
+	}
+	return time.ParseInLocation("2006-01-02T15:04:05.999999999", s, time.UTC)
+}
+
+// WriteStatus answers HTTP 200 with data under the given OCPI status code.
+// It is for the one place where the spec wants both: a command naming an
+// unknown location answers 2003 and a CommandResponse.
+func WriteStatus(w http.ResponseWriter, code StatusCode, message string, data any) {
+	writeEnvelope(w, http.StatusOK, Response{Data: data, StatusCode: code, StatusMessage: message})
+}
+
 // WriteError answers with an HTTP status and an OCPI status code. Use an HTTP
 // error status only for failures on the transport layer (auth, unparseable
 // JSON, unknown resource); a request that reached the OCPI layer answers 200

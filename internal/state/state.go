@@ -26,8 +26,11 @@ import "time"
 //
 // Version 2 added next_charging_profile_id and charging_profiles. A version 1
 // file has neither, which decodes as a zero counter and no profiles: the
-// migration is to read it and write it back as version 2.
-const Version = 2
+// migration is to read it and write it back as the current version.
+//
+// Version 3 added reservations[].response_registration. A version 2 file has
+// none, which decodes as the zero time: the migration is the same as from 1.
+const Version = 3
 
 // State is the whole of state.json.
 type State struct {
@@ -87,6 +90,9 @@ type Reservation struct {
 	CreatedAt         time.Time `json:"created_at"`
 	Source            string    `json:"source"`                 // "cli", "tui" or "ocpi"
 	ResponseURL       string    `json:"response_url,omitempty"` // OCPI CommandResult target
+	// ResponseRegistration is the registered_at of the partner registration
+	// ResponseURL belongs to; results go there only while it is still current.
+	ResponseRegistration time.Time `json:"response_registration,omitzero"`
 }
 
 // Transaction is an active charging transaction.
@@ -184,6 +190,7 @@ func (s *State) normalize() {
 		r := &s.Reservations[i]
 		r.ExpiresAt = r.ExpiresAt.UTC()
 		r.CreatedAt = r.CreatedAt.UTC()
+		r.ResponseRegistration = r.ResponseRegistration.UTC()
 	}
 	for i := range s.Transactions {
 		s.Transactions[i].StartedAt = s.Transactions[i].StartedAt.UTC()

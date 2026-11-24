@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -73,6 +74,14 @@ type Service struct {
 	inflight sync.WaitGroup
 	mu       sync.Mutex
 	closed   bool
+	// settling maps an EVSE to the channels of the Reserve calls under way on
+	// it; each is closed when its Reserve has returned, which is when the
+	// reservation is active or gone. A cancel waits on them. It is keyed by
+	// EVSE, not by reservation id, because a Reserve registers before it has
+	// an id: its record is in core, findable by the partner, from the moment
+	// BeginReservation takes the lock, a state.json write before it returns.
+	// Guarded by mu.
+	settling map[string][]chan struct{}
 	// closing is closed by Close. A cancel that was not sent stops trying
 	// again when it sees it.
 	closing chan struct{}
@@ -101,6 +110,7 @@ func New(opts Options) *Service {
 		bootGrace: opts.BootGrace,
 		afterFunc: opts.AfterFunc,
 		closing:   make(chan struct{}),
+		settling:  map[string][]chan struct{}{},
 	}
 }
 
@@ -122,6 +132,9 @@ type ReserveParams struct {
 	// back.
 	OCPIReservationID string
 	ResponseURL       string
+	// ResponseRegistration is the OCPI partner registration ResponseURL came
+	// from, kept with the reservation (see core.Reservation).
+	ResponseRegistration time.Time
 }
 
 // Close refuses further reservations (ErrShuttingDown), then waits for the
@@ -158,6 +171,16 @@ func (s *Service) Close() {
 // and the reservation the station may hold is left to expire there, at the
 // reservation's expiryDate, so a new reserve on that EVSE can be answered
 // Occupied until then.
+//
+// A ReserveParams.OCPIReservationID that names a reservation we hold replaces
+// it: same OCPP id, as a ReserveNow with an id the station holds replaces it
+// there. If that fails, no cancel follows (it would drop the original, which
+// the station may still hold). Whether the original lives on depends on what
+// we know of the station. If it never saw the replacement (ErrNotSent) or
+// answered no, it holds the original: we keep it, and the caller reports the
+// failure. If the outcome is unknown (a timeout, or the connection went while
+// the request was out), the original ends locally, and the tags of both stay
+// accepted until their own expiry (see core.AuthoriseTag).
 func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservation, error) {
 	s.mu.Lock()
 	if s.closed {
@@ -185,7 +208,24 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		expiresAt = s.now().Add(length)
 	}
 
-	r, err := s.core.BeginReservation(core.Reservation{
+	// A cancel for this reservation waits until the station has answered. The
+	// wait is registered before the record exists, so it covers the write of
+	// the record to state.json too; every way out of Reserve ends it.
+	settled := make(chan struct{})
+	s.mu.Lock()
+	s.settling[p.EVSEUID] = append(s.settling[p.EVSEUID], settled)
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.settling[p.EVSEUID] = slices.DeleteFunc(s.settling[p.EVSEUID], func(c chan struct{}) bool { return c == settled })
+		if len(s.settling[p.EVSEUID]) == 0 {
+			delete(s.settling, p.EVSEUID)
+		}
+		s.mu.Unlock()
+		close(settled)
+	}()
+
+	want := core.Reservation{
 		OCPIReservationID: p.OCPIReservationID,
 		ChargePointID:     cp.ID(),
 		EVSEUID:           p.EVSEUID,
@@ -193,7 +233,20 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		ExpiresAt:         expiresAt,
 		Source:            p.Source,
 		ResponseURL:       p.ResponseURL,
-	})
+		// Kept with the URL it belongs to.
+		ResponseRegistration: p.ResponseRegistration,
+	}
+	// An OCPI reservation_id we hold is replaced under the same OCPP id.
+	var (
+		r        core.Reservation
+		replaced bool
+	)
+	if p.OCPIReservationID != "" {
+		r, replaced, err = s.core.BeginReplacement(want)
+	}
+	if err == nil && !replaced {
+		r, err = s.core.BeginReservation(want)
+	}
 	if err != nil {
 		return core.Reservation{}, err
 	}
@@ -205,10 +258,31 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		ExpiresAt:     r.ExpiresAt,
 	})
 	if errors.Is(err, ocpp.ErrNotSent) {
+		if replaced {
+			// The station never saw the replacement, so it still holds the
+			// original, which is known, not unknown: keep it.
+			s.core.RevertReplacement(r.ID)
+			return core.Reservation{}, err
+		}
 		// The station never saw the ReserveNow, so there is nothing to
 		// cancel, and a cancel for a reservation that never went out would
 		// only be a second command for a station that is already busy.
 		s.core.EndReservation(r.ID, core.ReservationFailed)
+		return core.Reservation{}, err
+	}
+	if err != nil && replaced {
+		// The id is the one the station holds from before: a cancel for it
+		// (cancelOrphan assumes ids are never reused) would drop the original
+		// reservation too, which may well still be good there. The request
+		// may or may not have got through, so what the station holds now is
+		// unknown: our record goes, and the tags of both reservations stay
+		// accepted until their own expiry, so that whichever the station
+		// holds can still be redeemed. The caller reports the failure.
+		prior, _ := s.core.PriorReservation(r.ID)
+		s.core.EndReservation(r.ID, endReason(err))
+		now := s.now()
+		s.core.AuthoriseTag(prior.IDTag, prior.ExpiresAt.Sub(now))
+		s.core.AuthoriseTag(r.IDTag, r.ExpiresAt.Sub(now))
 		return core.Reservation{}, err
 	}
 	if err != nil {
@@ -228,7 +302,13 @@ func (s *Service) Reserve(ctx context.Context, p ReserveParams) (core.Reservatio
 		return core.Reservation{}, err
 	}
 	if res.Status != ocpp.CommandAccepted {
-		s.core.EndReservation(r.ID, core.ReservationRejected)
+		if replaced {
+			// The station answered, and said no to the replacement: the
+			// original is what it holds.
+			s.core.RevertReplacement(r.ID)
+		} else {
+			s.core.EndReservation(r.ID, core.ReservationRejected)
+		}
 		return core.Reservation{}, refused(OpReserve, r.EVSEUID, res)
 	}
 
@@ -331,11 +411,38 @@ func (s *Service) isClosed() bool {
 // Our record is then stale and would block new reservations until it timed
 // out, so it ends here as well, and the refusal is reported.
 func (s *Service) Cancel(ctx context.Context, evseUID string) error {
+	return s.cancel(ctx, evseUID, 0, core.ReservationCancelled)
+}
+
+// CancelForPartner is Cancel for a cancellation the OCPI partner asked for,
+// of the reservation with the OCPP id reservationID.
+//
+// The reservation ends as core.ReservationCancelledByPartner, so that the
+// partner, who already has the answer to its CANCEL_RESERVATION, is not also
+// told that the CPO cancelled.
+//
+// If that reservation's Reserve is still under way (its record being written,
+// or its ReserveNow out), the cancel waits for the
+// station's answer (ctx bounds the wait), and cancels the reservation if it
+// became active. Without the wait there is nothing yet to cancel, and the
+// reservation would go active behind the partner's back. It is that
+// reservation or nothing: if it is gone, or another one has taken the EVSE,
+// the cancel fails with ErrNoReservation and the other is left alone.
+func (s *Service) CancelForPartner(ctx context.Context, evseUID string, reservationID int) error {
+	return s.cancel(ctx, evseUID, reservationID, core.ReservationCancelledByPartner)
+}
+
+func (s *Service) cancel(ctx context.Context, evseUID string, reservationID int, reason string) error {
 	if err := s.checkEVSE(evseUID); err != nil {
 		return err
 	}
+	if reservationID != 0 {
+		if err := s.settled(ctx, evseUID); err != nil {
+			return fmt.Errorf("%s: waiting for reservation %d to be set up: %w", evseUID, reservationID, err)
+		}
+	}
 	r, ok := s.core.ActiveReservation(evseUID)
-	if !ok {
+	if !ok || (reservationID != 0 && r.ID != reservationID) {
 		return fmt.Errorf("%s: %w", evseUID, ErrNoReservation)
 	}
 	cp, err := s.chargePoint(evseUID, "")
@@ -347,11 +454,28 @@ func (s *Service) Cancel(ctx context.Context, evseUID string) error {
 	if err != nil {
 		return err
 	}
-	s.core.EndReservation(r.ID, core.ReservationCancelled)
+	s.core.EndReservation(r.ID, reason)
 	if res.Status != ocpp.CommandAccepted {
 		s.log.Warn("station refused to cancel a reservation; dropping our record of it anyway",
 			"reservation_id", r.ID, "evse", evseUID, "status", res.Raw)
 		return refused(OpCancel, evseUID, res)
+	}
+	return nil
+}
+
+// settled waits until every Reserve under way on the EVSE has returned. One
+// for another reservation is refused at once (the EVSE is held), so waiting for
+// it costs nothing worth avoiding.
+func (s *Service) settled(ctx context.Context, evseUID string) error {
+	s.mu.Lock()
+	chans := slices.Clone(s.settling[evseUID])
+	s.mu.Unlock()
+	for _, ch := range chans {
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	return nil
 }

@@ -24,13 +24,12 @@ served cannot disagree. There is no TLS: this is a LAN tool, by decision.
 | `GET` | [`/2.3.0/locations/{location_id}`](#get-a-location) | C | One Location |
 | `GET` | [`/2.3.0/locations/{location_id}/{evse_uid}`](#get-an-evse) | C | One EVSE |
 | `GET` | [`/2.3.0/locations/{location_id}/{evse_uid}/{connector_id}`](#get-an-evse) | C | One Connector |
+| `POST` | [`/2.3.0/commands/{command}`](#commands) | C | `RESERVE_NOW`, `CANCEL_RESERVATION`, `START_SESSION`, `STOP_SESSION`, `UNLOCK_CONNECTOR` |
 
 cpms also **calls the partner**: it sends every EVSE status change as a `PATCH` to the
-partner's Locations receiver. See [Push status to the partner](../guides/ocpi-push.md).
-
-!!! note "Planned"
-    The Commands module (`RESERVE_NOW`, ...) is not built yet. See the
-    [status](../development.md#status).
+partner's Locations receiver, and it posts the result of every command to the command's
+`response_url`. See [Push status to the partner](../guides/ocpi-push.md) and
+[Take commands from the partner](../guides/ocpi-commands.md).
 
 ## Authentication
 
@@ -85,7 +84,8 @@ Every answer is an [OCPI envelope](https://github.com/ocpi/ocpi/blob/release-2.3
 | 200 | `1000` | Success |
 | 400 | `2001` | JSON that does not parse, invalid credentials, a malformed `date_from`/`date_to`, a negative `offset`, a `limit` below 1 |
 | 401 | `2000` | Missing or wrong token |
-| 404 | `2003` | Unknown location, EVSE or connector |
+| 404 | `2003` | Unknown location, EVSE or connector, on a locations request |
+| 200 | `2003` | A command for a location that is not ours (the `CommandResponse` is in `data`) |
 | 405 | | Method not allowed in the current registration state |
 | 200 | `2000` | Credentials: another registration change is in progress; retry shortly |
 | 200 | `3001` | Credentials: cpms could not use the partner's API |
@@ -296,6 +296,42 @@ regard to case, as OCPI's `CiString` requires.
 | Connector `last_updated` | The config file's modification time, read at startup. |
 | EVSE `last_updated` | The later of that and its last status change. Repeats that change nothing do not move it. |
 | Location `last_updated` | The latest of all. |
+
+---
+
+## Commands
+
+Spec: [Commands module](https://github.com/ocpi/ocpi/blob/release-2.3.0-bugfixes/mod_commands.asciidoc).
+The full story, with the results and the replace and cancel flows, is in
+[Take commands from the partner](../guides/ocpi-commands.md).
+
+```
+POST /2.3.0/commands/{command}
+```
+
+`{command}` is `RESERVE_NOW`, `CANCEL_RESERVATION`, `START_SESSION`, `STOP_SESSION` or
+`UNLOCK_CONNECTOR`. Every body carries a `response_url`; the rest is the spec's object for
+the command. The answer is a `CommandResponse`:
+
+```json
+{
+  "data": { "result": "ACCEPTED", "timeout": 65 },
+  "status_code": 1000,
+  "status_message": "Success",
+  "timestamp": "2026-11-23T14:58:12Z"
+}
+```
+
+| `result` | Meaning |
+|---|---|
+| `ACCEPTED` | Passed on; the outcome follows at `response_url`. `timeout` is in seconds. |
+| `REJECTED` | Refused without asking the station: unknown location (with `status_code` `2003`), EVSE or connector, charger offline, a token that is not an OCPP `idTag`, an expiry less than a minute ahead. `timeout` is 0. |
+| `NOT_SUPPORTED` | Unknown command type, or `RESERVE_NOW` for an EVSE with `reservable: false`. |
+| `UNKNOWN_SESSION` | `STOP_SESSION` for a `session_id` that is not an active transaction. |
+
+A body that is not valid JSON, or lacks a field the command needs, is HTTP 400 with `2001`. So
+is one whose `response_url` is not on a host the registered partner gave at registration (its
+`versions` URL or an endpoint), with the same scheme and port.
 
 ---
 

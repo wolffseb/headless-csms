@@ -132,13 +132,12 @@ func (h *Handler) authorize(cpID string, payload json.RawMessage) (any, *ocpp.RP
 	}
 
 	h.core.Seen(cpID)
-	status := AuthInvalid
-	if h.cfg.AcceptsIDTag(req.IDTag) {
-		status = AuthAccepted
-	} else {
+	ok, until := h.core.TagAuthorisation(req.IDTag)
+	if !ok {
 		h.log.Warn("rejecting unknown id tag", "charge_point", cpID, "id_tag", req.IDTag)
+		return AuthorizeConf{IDTagInfo: IDTagInfo{Status: AuthInvalid}}, nil
 	}
-	return AuthorizeConf{IDTagInfo: IDTagInfo{Status: status}}, nil
+	return AuthorizeConf{IDTagInfo: acceptedUntil(until)}, nil
 }
 
 func (h *Handler) startTransaction(cpID string, payload json.RawMessage) (any, *ocpp.RPCError) {
@@ -152,7 +151,8 @@ func (h *Handler) startTransaction(cpID string, payload json.RawMessage) (any, *
 
 	// An unknown tag is refused with an Invalid idTagInfo rather than a
 	// CALLERROR: the message was perfectly well formed, the answer is just no.
-	if !h.cfg.AcceptsIDTag(req.IDTag) {
+	ok, until := h.core.TagAuthorisation(req.IDTag)
+	if !ok {
 		h.core.Seen(cpID)
 		h.log.Warn("refusing transaction for unknown id tag", "charge_point", cpID, "id_tag", req.IDTag)
 		return StartTransactionConf{
@@ -179,8 +179,20 @@ func (h *Handler) startTransaction(cpID string, payload json.RawMessage) (any, *
 
 	return StartTransactionConf{
 		TransactionID: txID,
-		IDTagInfo:     IDTagInfo{Status: AuthAccepted},
+		IDTagInfo:     acceptedUntil(until),
 	}, nil
+}
+
+// acceptedUntil is Accepted for a tag cpms vouches for until the given time;
+// the zero time means for good, which has no expiryDate. The station caches
+// every idTagInfo it is sent, and an Accepted without an expiryDate has no end
+// (§7.27), so a tag that is only vouched for a while must say when it ends.
+func acceptedUntil(until time.Time) IDTagInfo {
+	info := IDTagInfo{Status: AuthAccepted}
+	if !until.IsZero() {
+		info.ExpiryDate = formatTime(until)
+	}
+	return info
 }
 
 func (h *Handler) stopTransaction(cpID string, payload json.RawMessage) (any, *ocpp.RPCError) {
