@@ -51,7 +51,8 @@ Not pushed:
 
 A `PATCH` the partner does not accept is tried again after 1 s, 2 s, 4 s ... (at most 30 s,
 each with up to a quarter more as jitter). `ocpi.push.max_retries` (default `5`) is the
-number of retries after the first attempt.
+number of retries after the first attempt. The results of [commands](ocpi-commands.md#delivery)
+are retried the same way, with the same budget.
 
 | Partner's answer | Retried |
 |---|---|

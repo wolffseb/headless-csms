@@ -64,10 +64,10 @@ an active reservation, and the token of a `START_SESSION` for 15 minutes. See
 | `party_id` | yes | | Three uppercase letters, for example `EXA`. |
 | `public_base_url` | yes | | The OCPI root advertised to the partner. Its host must be reachable from the partner. Its **path** is where cpms serves: `http://192.168.1.10:8080/ocpi` serves under `/ocpi`. |
 | `token_a` | yes | | Handed to the partner out of band to start [registration](../guides/ocpi-partner.md). |
-| `token_c` | yes | | What the partner authenticates with once registered. |
+| `token_c` | yes | | What the partner authenticates with once registered. The same for every registration: change it before another partner registers, see [Register an OCPI partner](../guides/ocpi-partner.md#change-or-end-a-registration). |
 | `business_name` | | `location.name` | The name in our OCPI credentials. At most 100 characters. |
 | `push.debounce` | | `500ms` | How long to wait after an EVSE's status changes before [pushing it](../guides/ocpi-push.md). Changes inside the wait become one `PATCH`. |
-| `push.max_retries` | | `5` | Retries after the first attempt, with backoff, before the change is dropped. |
+| `push.max_retries` | | `5` | Retries after the first attempt, with backoff, before the change is dropped. The same number applies to a [command result](../guides/ocpi-commands.md#delivery) posted to the partner's `response_url`. |
 
 Both tokens must be 8 to 64 printable ASCII characters without whitespace, and they must differ.
 
@@ -102,7 +102,7 @@ data. It is served verbatim. Only the per-EVSE status is filled in live.
 | `evse_id` | yes | | An eMI3 EVSE ID, for example `DE*EXA*E001*1`. Unique, at most 38 ASCII characters. |
 | `charger` | with several chargers | the only charger | The id of the charger this EVSE sits on. Must name a configured charger. |
 | `ocpp_connector_id` | yes | | The OCPP 1.6 connector this EVSE is. `1` or greater (`0` is the station itself). Unique per charger. |
-| `reservable` | | `true` | Advertises the OCPI `RESERVABLE` capability. Set it to `false` if [`cpms probe`](probe.md) reports no Reservation profile. |
+| `reservable` | | `true` | Advertises the OCPI `RESERVABLE` capability. Set it to `false` if [`cpms probe`](probe.md) reports no Reservation profile. A partner's `RESERVE_NOW` for such an EVSE is answered `NOT_SUPPORTED`, and without an `evse_uid` it is never picked. `cpms reserve` is not affected. |
 | `connectors` | yes | | At least one. |
 
 ### `location.evses[].connectors[]`
@@ -171,16 +171,21 @@ location:
 | Kept | Not kept |
 |---|---|
 | The OCPI registration (partner token, endpoints, roles) | Reservations still waiting for the station's answer |
-| **Active** reservations, with their expiry timers re-armed | Finished sessions: `state.json` is not a history |
+| **Active** reservations, with their expiry timers re-armed, and for an OCPI one the partner's `response_url` | Finished sessions: `state.json` is not a history |
 | **Active** sessions | Meter readings |
 | Charging profiles the station accepted, as sent | EVSE status (the station reports it again) |
-| The id counters (reservation, transaction, remote start, profile) | |
+| The id counters (reservation, transaction, remote start, profile) | Command results still to be posted, and the 15-minute window of a `START_SESSION` tag |
 
 A reservation that expired while cpms was down is dropped on load, as is a `tx` profile
 whose session ended meanwhile.
 
 ### Versions
 
-The file carries a `version`. cpms migrates older versions on load. A file it cannot parse,
-or one written by a **newer** cpms, stops `cpms run` at startup with the file named, and is
-never overwritten. Move it aside to start from empty state.
+The file carries a `version`, currently **3**. cpms migrates older versions on load (1 and 2)
+and writes 3 from its next save on. Version 3 added `response_registration` to reservations,
+which ties a partner's `response_url` to the registration it came from. A reservation read
+from an older file has none, so it never posts a result to the partner: only reservations
+made after the upgrade do. A file it cannot parse, or one written by a
+**newer** cpms, stops `cpms run` at startup with the file named, and is never overwritten. So
+a cpms built before version 3 refuses a file the current one has written. Move it aside to
+start from empty state.

@@ -57,7 +57,9 @@ sequenceDiagram
     `push:` is the partner's Locations receiver, where [status changes are sent](ocpi-push.md).
 
 From then on the partner uses `TOKEN_C`, and `TOKEN_A` gets HTTP 401. The registration
-survives a restart.
+survives a restart. `TOKEN_C` opens the Locations module and the
+[commands](ocpi-commands.md) (`RESERVE_NOW`, `START_SESSION`, ...). Both are listed in
+`GET /2.3.0`, `commands` with the role `RECEIVER`.
 
 ??? example "Try it by hand with curl"
 
@@ -107,6 +109,13 @@ not be told: that is a `warning:` on stderr. If the partner is registering at th
 the command waits up to `charger.call_timeout`, then exits 9 without changing anything.
 If the registration it waited for succeeds, that brand-new registration is the one cleared.
 
+What an unregistration does to [commands](ocpi-commands.md): a command's `response_url`
+belongs to the registration it arrived under. Once that registration is gone, and whether
+another partner registers or the same one starts over, the `CommandResult` still to be sent
+and the `CANCELED_RESERVATION` of a reservation made earlier are dropped and logged. A
+`PUT`, which only replaces `TOKEN_B` and the endpoints, keeps the registration, so results
+go on with the new token.
+
 !!! warning "Deviation from the spec: `TOKEN_C` does not change on `PUT`"
     OCPI says the server must generate a new token when the partner `PUT`s its credentials.
     cpms answers with the same `ocpi.token_c`, because its tokens live in `config.yaml`,
@@ -126,5 +135,6 @@ If the registration it waited for succeeds, that brand-new registration is the o
 ## Next
 
 - What cpms sends the partner: [Push status to the partner](ocpi-push.md)
+- What the partner can ask of the station: [Take commands from the partner](ocpi-commands.md)
 - What the partner can call: [OCPI API reference](../reference/ocpi-api.md)
 - Token rules: [Configuration](../reference/configuration.md#ocpi)

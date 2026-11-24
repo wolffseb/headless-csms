@@ -82,7 +82,7 @@ Every answer is an [OCPI envelope](https://github.com/ocpi/ocpi/blob/release-2.3
 | HTTP | `status_code` | When |
 |---|---|---|
 | 200 | `1000` | Success |
-| 400 | `2001` | JSON that does not parse, invalid credentials, a malformed `date_from`/`date_to`, a negative `offset`, a `limit` below 1 |
+| 400 | `2001` | JSON that does not parse, invalid credentials, a malformed `date_from`/`date_to`, a negative `offset`, a `limit` below 1, a command with a missing field or a `response_url` that is not the partner's |
 | 401 | `2000` | Missing or wrong token |
 | 404 | `2003` | Unknown location, EVSE or connector, on a locations request |
 | 200 | `2003` | A command for a location that is not ours (the `CommandResponse` is in `data`) |
@@ -126,7 +126,8 @@ GET /2.3.0
     "version": "2.3.0",
     "endpoints": [
       { "identifier": "credentials", "role": "SENDER", "url": "http://192.168.1.10:8080/ocpi/2.3.0/credentials" },
-      { "identifier": "locations", "role": "SENDER", "url": "http://192.168.1.10:8080/ocpi/2.3.0/locations" }
+      { "identifier": "locations", "role": "SENDER", "url": "http://192.168.1.10:8080/ocpi/2.3.0/locations" },
+      { "identifier": "commands", "role": "RECEIVER", "url": "http://192.168.1.10:8080/ocpi/2.3.0/commands" }
     ]
   },
   "status_code": 1000,
@@ -134,6 +135,9 @@ GET /2.3.0
   "timestamp": "2026-11-19T09:04:05Z"
 }
 ```
+
+`commands` is a `RECEIVER` endpoint: cpms receives commands there. The partner's own
+`commands` endpoint is not used, because results go to each command's `response_url`.
 
 ---
 
@@ -311,7 +315,19 @@ POST /2.3.0/commands/{command}
 
 `{command}` is `RESERVE_NOW`, `CANCEL_RESERVATION`, `START_SESSION`, `STOP_SESSION` or
 `UNLOCK_CONNECTOR`. Every body carries a `response_url`; the rest is the spec's object for
-the command. The answer is a `CommandResponse`:
+the command, and cpms reads these fields (others are accepted and ignored):
+
+| Command | Required | Optional |
+|---|---|---|
+| `RESERVE_NOW` | `response_url`, `token.uid`, `expiry_date`, `reservation_id`, `location_id` | `evse_uid` |
+| `CANCEL_RESERVATION` | `response_url`, `reservation_id` | |
+| `START_SESSION` | `response_url`, `token.uid`, `location_id` | `evse_uid`, `connector_id` (with an `evse_uid`) |
+| `STOP_SESSION` | `response_url`, `session_id` | |
+| `UNLOCK_CONNECTOR` | `response_url`, `location_id`, `evse_uid`, `connector_id` | |
+
+`response_url` is an absolute `http` or `https` URL. Ids (`reservation_id`, `location_id`,
+`evse_uid`, `connector_id`, `session_id`) are at most 36 characters. The answer is a
+`CommandResponse`:
 
 ```json
 {

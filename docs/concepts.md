@@ -59,6 +59,15 @@ OCPP and OCPI name the same things differently. `cpms` uses the OCPI names.
     OCPP 1.6 addresses an outlet by an integer connector id, OCPI by an EVSE `uid`.
     Each EVSE in the config maps the two with `ocpp_connector_id`. The CLI takes the `uid`.
 
+## OCPI commands are answered twice
+
+A registered partner can send `RESERVE_NOW`, `CANCEL_RESERVATION`, `START_SESSION`,
+`STOP_SESSION` and `UNLOCK_CONNECTOR`. cpms answers the `POST` **at once**, saying whether it
+can pass the command on, and tells the partner later what the station did, with a
+`CommandResult` posted to the `response_url` of the request. The token `uid` becomes the OCPP
+`idTag`, and `STOP_SESSION` takes cpms's own transaction id as its `session_id`. See
+[Take commands from the partner](guides/ocpi-commands.md).
+
 ## EVSE status
 
 `cpms` reports status in OCPI terms, taken from what the station says.
