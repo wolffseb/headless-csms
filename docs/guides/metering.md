@@ -10,6 +10,7 @@ ALP-HYC-001-1  CHARGING  -            1 04A1B2C3D4 since 14:28:32  50.0 kW 125.0
 ```
 
 **Offered** is the limit the station applies. A [charging profile](smart-charging.md) changes it.
+The [terminal UI](terminal-ui.md) shows the power of a running session in kW on its row.
 
 ## Turn the readings on
 

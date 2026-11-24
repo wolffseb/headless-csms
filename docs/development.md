@@ -28,6 +28,13 @@ No hardware is needed: every test runs against the built-in
     go test ./internal/ocpp/v16 -run Golden -update
     ```
 
+!!! tip "Terminal UI frames"
+    The screens are pinned in `internal/tui/testdata/*.golden`. Regenerate them deliberately:
+
+    ```sh
+    go test ./internal/tui -update
+    ```
+
 ## Where things are
 
 Start with the [architecture overview](architecture/overview.md). The short version:
@@ -39,6 +46,7 @@ Start with the [architecture overview](architecture/overview.md). The short vers
 | An OCPP 1.6 message | `internal/ocpp/v16` |
 | An OCPI endpoint, or the status push | `internal/ocpi/...` |
 | A config field | `internal/config`, and `config.example.yaml` |
+| The terminal UI | `internal/tui`, and `internal/cli/tui.go` for the log routing |
 | The simulator | `internal/simulator` |
 
 ## These docs

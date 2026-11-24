@@ -41,6 +41,9 @@ Spec: [Locations module, receiver interface](https://github.com/ocpi/ocpi/blob/r
 | No registration, or the partner lists no `locations` receiver | No call, and nothing logged above debug level. |
 | A partner registers while cpms runs | It gets the next change. |
 
+The header of the [terminal UI](terminal-ui.md) shows the last push, or the last failure
+in red.
+
 Not pushed:
 
 - A full state after registration. The partner reads it with `GET` [locations](../reference/ocpi-api.md#locations).

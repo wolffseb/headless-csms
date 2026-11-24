@@ -45,16 +45,22 @@ Enter that URL as the station's CSMS (backend) URL, with the host's LAN address.
 
 ## 4. Run
 
-```console
-$ cpms run
-cpms listening for ALP-HYC-001 on ws://127.0.0.1:9000/ocpp/ALP-HYC-001
-waiting for the charge point to connect; press Ctrl-C to stop
-INFO msg="charge point connected" charge_point=ALP-HYC-001 version=1.6
-INFO msg="ALP-HYC-001 booted (Alpitronic HYC300)"
-INFO msg="ALP-HYC-001-1 UNKNOWN→AVAILABLE"
+```sh
+cpms run
 ```
 
-`--log-level debug` shows the protocol messages underneath.
+In a terminal this opens the [terminal UI](terminal-ui.md). When the station connects, its
+line turns `online` with the vendor, model and firmware it reported, and the log pane adds:
+
+```
+10:03:57 ALP-HYC-001 connected
+10:03:57 ALP-HYC-001 booted (Alpitronic HYC300)
+10:03:57 ALP-HYC-001-1 UNKNOWN→AVAILABLE
+```
+
+While the UI is up the full log, including the protocol messages at `--log-level debug`,
+goes to `cpms.log` next to the state file. `cpms run --headless` prints it to stderr
+instead, which is also what you get when stdout is not a terminal.
 
 ## 5. Probe
 
@@ -89,7 +95,7 @@ How to read the whole report: [Probe report](../reference/probe.md).
 
 | Symptom | Likely cause |
 |---|---|
-| Nothing connects | The station's URL points elsewhere, or a firewall blocks port 9000. Check `charger.ip` is reachable. |
+| Nothing connects | The station's URL points elsewhere, or a firewall blocks port 9000. Check `charger.ip` is reachable. The charger line stays `offline  never seen`; `cpms.log` (or `cpms run --headless --log-level debug`) shows whether anything arrives. |
 | The station is refused with HTTP 404 | Its identity is not `charger.id`. |
 | Every EVSE stays `UNKNOWN` | The station reconnected without booting and has no RemoteTrigger profile. Its statuses arrive with the next change. |
 | The station goes offline every few minutes | It is silent for longer than `charger.heartbeat_timeout`. |
