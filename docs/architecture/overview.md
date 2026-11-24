@@ -40,8 +40,8 @@ OCPI commands end in the same `control` layer as the terminal.
 
 | Rule | Meaning |
 |---|---|
-| **`core` is the single source of truth.** | It holds the station, every EVSE's status, reservations and sessions, and publishes an event for every change. The event log and the OCPI push subscribe, and later the TUI. Nothing else keeps charger state. |
-| **`control` is the single way to act on the station.** | It validates the EVSE, allocates and persists ids, sends the command, interprets the answer and records the outcome in `core`. The socket (and later OCPI and the TUI) are thin transports in front of it. |
+| **`core` is the single source of truth.** | It holds the station, every EVSE's status, reservations and sessions, and publishes an event for every change. The event log, the OCPI push and the TUI subscribe. Nothing else keeps charger state. |
+| **`control` is the single way to act on the station.** | It validates the EVSE, allocates and persists ids, sends the command, interprets the answer and records the outcome in `core`. The socket and the TUI (and later OCPI) are thin transports in front of it. |
 | **Protocol versions stay in their adapters.** | `ocpp/csms` routes raw messages by the negotiated subprotocol and never learns a message name. `ocpp/v16` translates between 1.6 messages and the version-agnostic `core`. OCPP 2.0.1 will be a sibling adapter, not a rewrite. |
 | **`config.yaml` is read, `state.json` is written.** | See [Configuration](../reference/configuration.md#statejson). |
 

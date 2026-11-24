@@ -3,7 +3,7 @@
 Run a CSMS, connect a simulated charging station, and take it through
 reserve → charge → stop. About five minutes, no hardware.
 
-**You need:** [Go](https://go.dev/dl/) 1.24 or newer, `make` and `git`.
+**You need:** [Go](https://go.dev/dl/) 1.25 or newer, `make` and `git`.
 
 ## 1. Build
 
@@ -50,7 +50,9 @@ control socket cpms.sock
 waiting for the charge point to connect; press Ctrl-C to stop
 ```
 
-Leave it running. It logs everything the station does.
+Leave it running. In a terminal it shows the [terminal UI](guides/terminal-ui.md)
+(the startup lines above are its first log lines); with `--headless`, or when stdout is
+not a terminal, it prints them and then logs everything the station does.
 
 ## 4. Connect a station
 

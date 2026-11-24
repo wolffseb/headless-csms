@@ -83,7 +83,7 @@ Stable, so scripts can branch on them.
 | Stream | Carries |
 |---|---|
 | stdout | Reports and confirmations: `status`, `probe`, `config validate`, `version`, the startup lines of `run`. |
-| stderr | Logs, validation problems, `warning:` lines and `cpms: …` errors. |
+| stderr | Logs (of `run --headless`; the UI writes `cpms.log` instead), validation problems, `warning:` lines and `cpms: …` errors. |
 
 So piping a report works:
 
@@ -97,11 +97,17 @@ cpms probe --json | jq .ok
 
 ### `cpms run`
 
-Starts the OCPP and OCPI servers and logs what the charge point does.
+Starts the OCPP and OCPI servers and shows what the charge point does in a
+[terminal UI](../guides/terminal-ui.md): arrow keys select an EVSE, and `r`, `c`, `s`, `x`, `u`
+and `t` act on it.
 
 | Flag | Default | |
 |---|---|---|
+| `--headless` | off | Print log lines to stderr instead of showing the UI. This is also what happens when stdout is not a terminal, after the line `stdout is not a terminal; running headless` (stdin not a terminal: the same, with `stdin`). |
 | `--log-level` | `info` | `debug`, `info`, `warn` or `error`. `debug` shows the protocol messages and one line per OCPI request. |
+
+While the UI is up the log goes to `cpms.log` next to the state file (appended to), not to
+stderr.
 
 It claims the [control socket](#the-control-socket). A second `cpms run` on the same state
 exits with "another cpms is already running".

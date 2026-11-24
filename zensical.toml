@@ -24,6 +24,7 @@ nav = [
     { "Connect a real station" = "guides/connect-station.md" },
   ] },
   { "Guides" = [
+    { "Use the terminal UI" = "guides/terminal-ui.md" },
     { "Run a charging session" = "guides/charging-session.md" },
     { "Test with the simulator" = "guides/simulator.md" },
     { "Read power and current" = "guides/metering.md" },

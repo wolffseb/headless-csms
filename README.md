@@ -16,15 +16,17 @@ A terminal charge point management system for a single OCPP charging station.
 - takes **OCPI commands** (`RESERVE_NOW`, `CANCEL_RESERVATION`, `START_SESSION`,
   `STOP_SESSION`, `UNLOCK_CONNECTOR`) from the partner, answers each at once, and posts the
   station's result to its `response_url`, so a backend can reserve the station over OCPI;
+- shows the stations in a **terminal UI** (`cpms run`): select an EVSE, then reserve, start,
+  stop, unlock or refresh it with one key;
 - includes a **charge point simulator**, so all of it runs on a laptop without hardware;
 - needs no database, no container and no web UI: one hand-edited config file, one binary.
 
-Planned: a terminal UI and OCPP 2.0.1. See the
+Planned: OCPP 2.0.1. See the
 [status](https://wolffseb.github.io/headless-csms/development/#status).
 
 ## Quickstart
 
-Needs Go 1.24 or newer.
+Needs Go 1.25 or newer.
 
 ```sh
 make build                            # -> bin/cpms
@@ -42,6 +44,53 @@ Three terminals:
 ./bin/cpms start --evse ALP-HYC-001-1
 ./bin/cpms stop --evse ALP-HYC-001-1
 ```
+
+`cpms run` opens the terminal UI. Terminal 1 above looks like this:
+
+```text
+cpms · 1/2 chargers online · OCPI not registered
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ALP-HYC-001  online  Alpitronic HYC300 fw 1.4.2
+     EVSE           STATUS       DETAIL
+ ▸   ALP-HYC-001-1  AVAILABLE    -
+     ALP-HYC-001-2  CHARGING     session 12 · 04A1B2C3D4 · since 09:31 · 48.2 kW
+ALP-HYC-002  offline  last seen 09:30:00 (heartbeat timeout)
+     ALP-HYC-002-1  UNKNOWN      -
+     ALP-HYC-002-2  UNKNOWN      -
+── log ─────────────────────────────────────────────────────────────────────────────────────────────
+
+
+
+
+09:30:00 ALP-HYC-001 connected
+09:30:00 ALP-HYC-001 booted (Alpitronic HYC300 fw 1.4.2)
+09:30:00 ALP-HYC-001-1 UNKNOWN→AVAILABLE
+09:30:00 ALP-HYC-001-2 UNKNOWN→AVAILABLE
+09:30:00 ALP-HYC-002 connected
+09:30:00 ALP-HYC-002 booted (Alpitronic HYC300 fw 1.4.2)
+09:30:00 ALP-HYC-002-1 UNKNOWN→AVAILABLE
+09:30:00 ALP-HYC-002-2 UNKNOWN→AVAILABLE
+09:31:00 ALP-HYC-002 disconnected: heartbeat timeout
+09:31:00 ALP-HYC-002-1 AVAILABLE→UNKNOWN
+09:31:00 ALP-HYC-002-2 AVAILABLE→UNKNOWN
+09:31:00 ALP-HYC-001 session 12 started on ALP-HYC-001-2 (tag 04A1B2C3D4)
+09:31:00 ALP-HYC-001-2 AVAILABLE→CHARGING
+
+
+↑↓ select  r reserve  c cancel  s start  x stop  u unlock  t refresh  ? help  q quit
+```
+
+| Key | Acts on the selected EVSE |
+|---|---|
+| `↑` `↓` / `k` `j` | select |
+| `r` `c` | reserve (default tag, 15 min) / cancel the reservation |
+| `s` `x` | start a session (default tag) / stop it (asks `y`) |
+| `u` `t` | unlock the cable / ask the station for its status |
+| `?` `q` | help / quit (same shutdown as Ctrl-C) |
+
+While the UI is up the log goes to `cpms.log` next to the state file. `cpms run --headless`
+(or a stdout that is not a terminal) logs to stderr instead.
+[More](https://wolffseb.github.io/headless-csms/guides/terminal-ui/).
 
 With a real station, set its CSMS URL to `ws://<host running cpms>:9000/ocpp/<charge point id>`.
 **The charger dials us**; we never dial it.

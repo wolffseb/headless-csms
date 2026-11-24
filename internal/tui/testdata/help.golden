@@ -1,0 +1,30 @@
+Keys act on the selected EVSE.
+
+↑ ↓  k j    select an EVSE
+r           reserve it for the default tag (auth.default_id_tag), 15 minutes
+c           cancel its reservation
+s           start a session with the default tag
+x           stop its session (asks first)
+u           unlock the cable
+t           ask the station for its status again
+?           this help
+q  ctrl-c   quit cpms
+
+Other tags, expiry, limits: run the CLI in another terminal, for example:
+  cpms reserve --evse <uid> --tag <tag>
+
+Full log:
+  /var/lib/cpms/cpms.log
+
+
+
+
+
+
+
+
+
+
+
+
+? or esc closes

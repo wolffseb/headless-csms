@@ -285,7 +285,7 @@ func (e *stationEnv) call(cmd *cobra.Command, req socket.Request) (json.RawMessa
 		if req.Station {
 			subject = "station"
 		}
-		return nil, exitFor(req.Op, subject, err)
+		return nil, exitFor(e.cfg, req.Op, subject, err)
 	}
 	return raw, nil
 }

@@ -2,7 +2,7 @@
 
 ## Build and test
 
-**You need:** [Go](https://go.dev/dl/) 1.24 or newer and `make`.
+**You need:** [Go](https://go.dev/dl/) 1.25 or newer and `make`.
 
 | Command | Does |
 |---|---|
@@ -69,7 +69,7 @@ Built in tracked steps. Each lands as its own pull request.
 | 6 | OCPI Locations module (sender) | :material-check: done |
 | 7 | PATCH location on status change | :material-check: done |
 | 8 | OCPI Commands module (receiver) | :material-check: done |
-| 9 | Terminal UI | |
+| 9 | Terminal UI | :material-check: done |
 | 10 | OCPP 2.0.1 | |
 | 11 | Docs and release builds | |
 
