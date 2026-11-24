@@ -1,0 +1,30 @@
+cpms · 0/2 chargers online · OCPI not registered
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ALP-HYC-001  offline  never seen
+     EVSE           STATUS       DETAIL
+ ▸   ALP-HYC-001-1  UNKNOWN      -
+     ALP-HYC-001-2  UNKNOWN      -
+ALP-HYC-002  offline  never seen
+     ALP-HYC-002-1  UNKNOWN      -
+     ALP-HYC-002-2  UNKNOWN      -
+── log ─────────────────────────────────────────────────────────────────────────────────────────────
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+↑↓ select  r reserve  c cancel  s start  x stop  u unlock  t refresh  ? help  q quit

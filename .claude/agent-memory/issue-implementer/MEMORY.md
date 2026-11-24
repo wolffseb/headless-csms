@@ -52,6 +52,8 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 
 - Multi-charger routing (#88, 2026-11-23): `control.ResolveCharger(cfg, id)` (+ `ChargerIDs`) is the one place that defaults "the only charger" or errors listing ids; control's `chargePoint(evseUID, chargerID)` routes by the EVSE's `Charger`. `Probe`/`ChangeConfiguration`/`SetProfile`/`Schedule` take a charger id; `LimitParams.Charger`/`ClearParams.Charger`; socket `Request.Charger`, `Options.Config` (not `ChargePointID`). `socket.Status` marshals `chargers:[{charge_point,evses}]` only with >1 charger (single shape byte-identical). Hand-built `config.Config` literals in tests must set `EVSE.Charger` (applyDefaults does not run), or commands go to charger "". core invents an EVSE `<cp>-<n>` for a simulator connector config lacks, so a test sim with extra connectors sees extra EVSEs. A mutation that makes a CLI test really run a long command (`simulate charger`) hangs for the 10m test timeout: kill the `*.test` process, the mutation script then restores.
 
+- TUI (#17, 2026-11-23): `internal/tui` (Bubble Tea v2, `charm.land/bubbletea/v2`): `New(ctx, Options)` is a `*Model` you drive by hand in tests (`Update`/`View`, goldens in `testdata/*.golden` are `ansi.Strip`ped (lipgloss v2 always emits SGR; style tests read the raw render), own `-update` flag in rig_test.go, no teatest). `rig_test.go` has a real core on a `clocktest` clock, `pump()` (delivers published events as the bridge would), `press`/`pressAsync` (run the Cmd, keep only the `actionMsg`) and a gate-able `fakeControl`. Options.Describe = `cli.describe` (wraps `exitFor` over `socket.Classify`), so TUI error text equals the CLI's. `cli.setupLogging` picks TUI vs headless and builds the logger (file + WARN mirror via `tui.LogSink`); `run(..., ui *uiSession)` is nil when headless. New screens: add a row/line builder in view.go and a golden.
+
 ## OCPI/OCPP traps
 
 - OCPI auth header: strict standard padded Base64. The spec's own example decodes with a trailing newline, and GNU `base64` wraps at 76 columns. Use `printf '%s' tok | base64 | tr -d '\n'` in docs.
@@ -67,6 +69,9 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - Core profile records replace on same EVSE + purpose + stack level, like the station does, so two test profiles on one EVSE need different `StackLevel`s or the first silently vanishes (2026-11-18).
 
 - OCPI field limits (#59, 2026-11-19): config validation has `ocpiString` (string(n): runes + `unicode.IsPrint`) and `ciString` (CiString(n): U+0020–U+007E) on the `validator`; use them for any new text sent over OCPI. Limits from `mod_locations.asciidoc`: Location id 36 (Ci), name/address 255, city 45, postal_code 10, state 45 (cpms has no `state` key and sends none); EVSE uid 36 (Ci), evse_id 48 (Ci), connector id 36 (Ci), BusinessDetails.name 100. Values sent trimmed (`business_name`) are checked trimmed; `location.name` doubles as the business name, so skip the second check for it or one bad char is reported twice.
+
+- Bubble Tea traps (#17, 2026-11-23): its own signal handler deadlocks `Program.Run` shutdown when you also quit from a NotifyContext (use `tea.WithoutSignalHandler()`; showed up 1 in ~12 runs, `-count=25` proves it). v1 only: its `init` queried the terminal (OSC 11 + `ESC[6n`, 5 s stall in every one-shot command); v2 does not, and `TestOneShotCommandsDoNotQueryTheTerminal` guards it. v2 draws only changed cells: read pty output through `x/vt` `SafeEmulator` + `ansi.Strip`, see the pr-fixer memory (Charm v2 migration). A real-binary TUI test needs `creack/pty` with `cmd.Stderr` set first (else stderr joins the pty) and SIGQUIT-on-timeout to get a goroutine dump.
+- Asserting "the message line says X" on a whole frame is vacuous when the log pane repeats it: assert on the exact line (`lines[len-3]`) or the row, or the mutation that breaks it survives.
 
 ## Process that worked
 
@@ -88,6 +93,8 @@ Lessons from implementing roadmap issues in this repo. Newest last within each s
 - A mutation that fails to compile (`declared and not used`, unused import) proves nothing. Make mutations compile (`&& false`, `|| true`) and print the failing test names.
 - Flaky test that will not reproduce even under CPU load (#68, 2026-11-19): read the CI log for the exact failure shape, then widen the suspected window with a throwaway `time.Sleep` in production code (revert with `git checkout <file>`) and run 10x. If the old test fails with the CI signature and the fixed one stays green with the sleep in, the cause is proven. Under 8 busy loops 150 runs still passed, so load alone is not proof.
 - Waiting on state is not waiting on an event: core restores EVSE statuses in `Connected`, so `IsOnline && status==Available` is true before `Booted`. Wait for the `core.EventBootNotified` event (or `BootedSinceConnect`). And `cpms run` logs a status before it answers the call: a test that kills it on that log line can cut the station's first connection mid-`Connect`, which ends the simulator (no redial for a first connect). The sim logs `msg=online` once `Connect` is done; wait for that before killing the CSMS.
+
+- `run_in_background` with a trailing `&` returns at once (the real job keeps running, notification is meaningless) and python buffers stdout into a file: run mutation scripts with `python3 -u`, wait with `until ! pgrep -f script; do sleep 5; done` in a foreground call. No Monitor tool is available. Never edit sources while a mutation script runs.
 
 ## Tooling
 

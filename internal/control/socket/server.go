@@ -366,6 +366,10 @@ func done(err error) Response {
 	return Response{OK: true}
 }
 
+// Classify is what the socket answers with for a failed command. The TUI
+// runs the commands in-process and uses it to word its errors like the CLI.
+func Classify(err error) *Error { return classify(err) }
+
 // classify maps control's typed errors to the socket's closed set of codes.
 // The CLI maps those codes to exit codes, so this table is where "what went
 // wrong" becomes "what the script calling cpms sees".

@@ -21,13 +21,16 @@ func TestExitForNamesTheStationsAnswer(t *testing.T) {
 	}{
 		{"callerror on reserve", socket.OpReserve,
 			&socket.Error{Code: socket.CodeUnlockFailed, CallError: "NotImplemented"},
-			"ALP-1: the station does not support this (CALLERROR NotImplemented)"},
+			"ALP-1: the station does not support this"},
 		{"not supported status", socket.OpUnlock,
 			&socket.Error{Code: socket.CodeUnlockFailed, Status: "NotSupported"},
-			"ALP-1: the station does not support this (status NotSupported)"},
+			"ALP-1: the station does not support unlock"},
+		{"status request callerror", socket.OpStatus,
+			&socket.Error{Code: socket.CodeUnlockFailed, Status: "NotImplemented"},
+			"ALP-1: the station does not support status requests"},
 		{"no answer at all", socket.OpUnlock,
 			&socket.Error{Code: socket.CodeUnlockFailed},
-			"ALP-1: the station does not support this"},
+			"ALP-1: the station does not support unlock"},
 		{"limit not supported", socket.OpLimitSet,
 			&socket.Error{Code: socket.CodeNotSupported, Status: "NotSupported"},
 			"ALP-1: the station does not support this charging profile (status NotSupported). `cpms probe` shows its SmartCharging support, allowed units and limits"},
@@ -39,7 +42,7 @@ func TestExitForNamesTheStationsAnswer(t *testing.T) {
 			"ALP-1: the station rejected the remote start (status Rejected)"},
 	}
 	for _, c := range cases {
-		err := exitFor(c.op, "ALP-1", c.err)
+		err := exitFor(nil, c.op, "ALP-1", c.err)
 		if got := err.Error(); got != c.want {
 			t.Errorf("%s: %q, want %q", c.name, got, c.want)
 		}
@@ -55,7 +58,7 @@ func TestExitForNamesTheStationsAnswer(t *testing.T) {
 func TestBusyHasItsOwnExitCode(t *testing.T) {
 	t.Parallel()
 
-	err := exitFor(socket.OpUnlock, "EVSE-1", &socket.Error{Code: socket.CodeBusy})
+	err := exitFor(nil, socket.OpUnlock, "EVSE-1", &socket.Error{Code: socket.CodeBusy})
 	if code := ExitCode(err); code != ExitBusy || ExitBusy != 12 {
 		t.Errorf("busy exits %d, want 12", code)
 	}
@@ -89,7 +92,7 @@ func TestSocketWaitOutlastsQueueAndCall(t *testing.T) {
 
 func TestNotSupportedHasItsOwnExitCode(t *testing.T) {
 	t.Parallel()
-	if code := ExitCode(exitFor(socket.OpLimitSet, "EVSE-1", &socket.Error{Code: socket.CodeNotSupported})); code != 11 {
+	if code := ExitCode(exitFor(nil, socket.OpLimitSet, "EVSE-1", &socket.Error{Code: socket.CodeNotSupported})); code != 11 {
 		t.Errorf("not_supported exits %d, want 11", code)
 	}
 }
@@ -104,7 +107,7 @@ func TestUnconfirmedProfileNamesItsID(t *testing.T) {
 		code socket.Code
 		exit int
 	}{{socket.CodeTimeout, ExitTimeout}, {socket.CodeNotConnected, ExitNotConnected}} {
-		err := exitFor(socket.OpLimitSet, "EVSE-1", &socket.Error{Code: c.code, ProfileID: 7})
+		err := exitFor(nil, socket.OpLimitSet, "EVSE-1", &socket.Error{Code: c.code, ProfileID: 7})
 		if code := ExitCode(err); code != c.exit {
 			t.Errorf("%s: exit %d, want %d", c.code, code, c.exit)
 		}
@@ -115,7 +118,7 @@ func TestUnconfirmedProfileNamesItsID(t *testing.T) {
 		}
 	}
 	// Without an id (any other command) the message is as before.
-	if err := exitFor(socket.OpStart, "EVSE-1", &socket.Error{Code: socket.CodeTimeout}); strings.Contains(err.Error(), "limit") {
+	if err := exitFor(nil, socket.OpStart, "EVSE-1", &socket.Error{Code: socket.CodeTimeout}); strings.Contains(err.Error(), "limit") {
 		t.Errorf("a timed-out start mentions limits: %q", err)
 	}
 }

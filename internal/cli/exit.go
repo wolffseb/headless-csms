@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wolffseb/cli-cpms/internal/config"
 	"github.com/wolffseb/cli-cpms/internal/control/socket"
 )
 
@@ -62,7 +63,8 @@ func ExitCode(err error) int {
 
 // exitFor turns a socket error into the exit code and the message a person
 // sees. The message says what happened and, where there is one, what to do.
-func exitFor(op socket.Op, evse string, err error) error {
+// cfg only gives a timeout its duration; nil leaves the duration out.
+func exitFor(cfg *config.Config, op socket.Op, evse string, err error) error {
 	if errors.Is(err, socket.ErrNotRunning) {
 		return &ExitStatus{Code: ExitNotRunning, Err: fmt.Errorf("%w. Is `cpms run` running, with the same --config or --socket?", err)}
 	}
@@ -108,7 +110,7 @@ func exitFor(op socket.Op, evse string, err error) error {
 	case socket.CodeFaulted:
 		return &ExitStatus{Code: ExitFaulted, Err: msg("the station says it is faulted or unavailable%s", answer(se))}
 	case socket.CodeTimeout:
-		return &ExitStatus{Code: ExitTimeout, Err: msg("the station did not answer within charger.call_timeout%s", unconfirmed(se))}
+		return &ExitStatus{Code: ExitTimeout, Err: msg("the station did not answer within %s%s", callTimeoutText(cfg, subject), unconfirmed(se))}
 	case socket.CodeBusy:
 		return &ExitStatus{Code: ExitBusy, Err: msg(
 			"the station was busy with an earlier command for the whole of charger.call_timeout, so this one was not sent. Nothing changed; try again")}
@@ -116,7 +118,9 @@ func exitFor(op socket.Op, evse string, err error) error {
 		if se.Status == "UnlockFailed" {
 			return &ExitStatus{Code: ExitUnlockFailed, Err: msg("the station could not release the cable lock%s", answer(se))}
 		}
-		return &ExitStatus{Code: ExitUnlockFailed, Err: msg("the station does not support this%s", answer(se))}
+		// The station's own word (NotImplemented, NotSupported) is jargon here;
+		// the daemon's log has it.
+		return &ExitStatus{Code: ExitUnlockFailed, Err: msg("the station does not support %s", unsupported(op))}
 	case socket.CodeNotSupported:
 		return &ExitStatus{Code: ExitNotSupported, Err: msg(
 			"the station does not support this %s%s. `cpms probe` shows its SmartCharging support, allowed units and limits", noun(op), answer(se))}
@@ -126,6 +130,48 @@ func exitFor(op socket.Op, evse string, err error) error {
 	default:
 		return &ExitStatus{Code: ExitError, Err: errors.New(se.Message)}
 	}
+}
+
+// describe is the message a person sees when a command fails: the one-shot
+// CLI's wording, for an error that came over the socket or, as in the TUI,
+// straight from control. subject is the EVSE (or key) the command was about.
+func describe(cfg *config.Config, op socket.Op, subject string, err error) string {
+	var se *socket.Error
+	if !errors.As(err, &se) {
+		se = socket.Classify(err)
+	}
+	return exitFor(cfg, op, subject, se).Error()
+}
+
+// callTimeoutText names the call_timeout a command to subject waited for:
+// "10s (charger.call_timeout)", or just the key when it cannot be told. The
+// subject is an EVSE when it can be told; a command that addresses the
+// station (or a config key) has none, so the duration is named only if every
+// charger has the same.
+func callTimeoutText(cfg *config.Config, subject string) string {
+	const key = "charger.call_timeout"
+	if cfg == nil || len(cfg.Chargers) == 0 {
+		return key
+	}
+	var ch []config.Charger
+	if e, ok := cfg.EVSEByUID(subject); ok {
+		c, found := cfg.ChargerByID(cfg.ChargerOf(e))
+		if !found {
+			return key
+		}
+		ch = []config.Charger{c}
+	} else {
+		ch = cfg.Chargers
+	}
+	for _, c := range ch[1:] {
+		if c.CallTimeout.Duration() != ch[0].CallTimeout.Duration() {
+			return key
+		}
+	}
+	if ch[0].CallTimeout.Duration() <= 0 {
+		return key
+	}
+	return ch[0].CallTimeout.String() + " (" + key + ")"
 }
 
 // unconfirmed names a charging profile that went out unanswered, for the end
@@ -151,6 +197,19 @@ func answer(se *socket.Error) string {
 		return " (CALLERROR " + se.CallError + ")"
 	default:
 		return ""
+	}
+}
+
+// unsupported names what a station that answers NotImplemented or NotSupported
+// cannot do, for the commands that have no noun of their own.
+func unsupported(op socket.Op) string {
+	switch op {
+	case socket.OpUnlock:
+		return "unlock"
+	case socket.OpStatus:
+		return "status requests"
+	default:
+		return "this"
 	}
 }
 
