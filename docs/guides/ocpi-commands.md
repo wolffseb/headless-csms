@@ -33,27 +33,29 @@ Spec: [Commands module](https://github.com/ocpi/ocpi/blob/release-2.3.0-bugfixes
 ## Send a command
 
 `POST {ocpi.public_base_url}/2.3.0/commands/{command}`, with the partner's `TOKEN_C`
-([how to build the header](../reference/ocpi-api.md#authentication)). `reserve.json`:
+([how to build the header](../reference/ocpi-api.md#authentication)). A `RESERVE_NOW` body,
+written to `reserve.json`:
 
-```json
+```sh
+# 30 minutes from now, UTC (macOS date first, GNU date as the fallback)
+expiry=$(date -u -v+30M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+30 minutes' +%Y-%m-%dT%H:%M:%SZ)
+
+cat > reserve.json <<EOF
 {
   "response_url": "https://emsp.example/ocpi/commands/RESERVE_NOW/9a41",
   "token": { "uid": "NL-ABC-C00012345", "type": "RFID", "contract_id": "NL-ABC-C00012345" },
-  "expiry_date": "2099-12-31T23:00:00Z",
+  "expiry_date": "$expiry",
   "reservation_id": "RES-0001",
   "location_id": "SITE-01",
   "evse_uid": "ALP-HYC-001-1"
 }
+EOF
 ```
 
-The `expiry_date` is a placeholder far in the future, which cpms accepts but which holds the
-EVSE for a very long time. Put a real one in, at least a minute ahead (anything sooner is
-`REJECTED`), for example 30 minutes from now:
-
-```sh
-date -u -v+30M +%Y-%m-%dT%H:%M:%SZ        # macOS
-date -u -d '+30 minutes' +%Y-%m-%dT%H:%M:%SZ   # Linux
-```
+The `expiry_date` has to be at least a minute ahead (anything sooner is `REJECTED`), so it is
+computed rather than written down: a fixed date goes stale. `location_id` and `evse_uid` are
+the ones in `config.yaml`, and the `response_url` has to be on the partner's own host (see
+[Delivery](#delivery)).
 
 ```sh
 TOKEN_C=change-me-token-c   # ocpi.token_c from config.yaml
@@ -82,7 +84,7 @@ plus 5 s, using the `call_timeout` of the charger that owns the EVSE.
 |---|---|---|
 | `RESERVE_NOW` | `ReserveNow` | The token's `uid` is the OCPP `idTag`. `expiry_date` must be at least a minute ahead. Without `evse_uid`, the first `AVAILABLE` reservable EVSE of the location is taken. |
 | `CANCEL_RESERVATION` | `CancelReservation` | Finds the reservation by `reservation_id`. If its `RESERVE_NOW` is still with the station, cpms waits for the answer and then cancels it. |
-| `START_SESSION` | `RemoteStartTransaction` | The token's `uid` is the `idTag`. Without `evse_uid`, the first `AVAILABLE` EVSE is taken. |
+| `START_SESSION` | `RemoteStartTransaction` | The token's `uid` is the `idTag`. Without `evse_uid`, the first `AVAILABLE` EVSE is taken. A `connector_id` needs an `evse_uid`. |
 | `STOP_SESSION` | `RemoteStopTransaction` | `session_id` is [our transaction id](#stop_session-and-the-session_id). |
 | `UNLOCK_CONNECTOR` | `UnlockConnector` | `evse_uid` and `connector_id` are required. |
 
@@ -99,7 +101,7 @@ sent to the station or posted to `response_url`:
 |---|---|---|---|
 | Body is not valid JSON, or lacks a field the command needs, or `response_url` is not an `http(s)` URL | 400 | `2001` | |
 | `response_url` is not on a host of the registered partner (see below) | 400 | `2001` | |
-| `location_id` is not ours | 200 | `2003` | `REJECTED` |
+| `location_id` is not ours (`RESERVE_NOW`, `START_SESSION` and `UNLOCK_CONNECTOR`; the other two do not check it) | 200 | `2003` | `REJECTED` |
 | `evse_uid` or `connector_id` is unknown | 200 | `1000` | `REJECTED` |
 | The charger that owns the EVSE is not connected | 200 | `1000` | `REJECTED`, "charge point offline" |
 | `token.uid` is longer than 20 characters, or not printable ASCII (it has to be an OCPP 1.6 `idTag`) | 200 | `1000` | `REJECTED` |
@@ -118,9 +120,11 @@ A response that is not `ACCEPTED` has `timeout: 0`: no result is coming.
 !!! note "`START_SESSION` on an EVSE reserved for another tag"
     cpms does not check reservations before it passes a `START_SESSION` on, so naming an EVSE
     that is reserved for another tag is answered `ACCEPTED` like any other. The station then
-    decides: a 1.6 station refuses a remote start for another tag on a reserved connector, and
-    the `CommandResult` is `REJECTED`. The reserved tag itself can start. Without an `evse_uid`
-    a reserved EVSE is never picked, because it does not read `AVAILABLE`.
+    decides: a station that follows OCPP 1.6 refuses a remote start for another tag on a
+    reserved connector, and the `CommandResult` is `REJECTED`. The reserved tag itself can
+    start. The built-in simulator does not apply the rule, so no test shows it end to end.
+    Without an `evse_uid` a reserved EVSE is never picked, because
+    it does not read `AVAILABLE`.
 
 ### The result
 
@@ -196,7 +200,7 @@ A reservation made over OCPI that **ends by the CPO's doing** is reported to its
 `response_url` as `CANCELED_RESERVATION`: the spec's
 "reservation canceled by the CPO" flow. That is the case when
 
-- it was cancelled with `cpms cancel` (or the TUI later), and
+- it was cancelled with `cpms cancel` (or from the terminal UI), and
 - another tag started a session on the reserved EVSE, so the reservation failed.
 
 Nothing is sent when it **expires** or is **redeemed** by its own tag: the partner sees both
@@ -241,29 +245,117 @@ charger's too.
 - A `ReserveNow` lost to a dropped connection is not cancelled when the station reconnects:
   it holds the EVSE until it expires, and cpms answers `EVSE_OCCUPIED` meanwhile. See
   [`control`](../architecture/overview.md#reservations).
-- Results are not kept across a restart of cpms.
+- Results are not kept across a restart of cpms, and neither is the 15-minute window of a
+  `START_SESSION` tag. A reservation's `response_url` is kept in `state.json`, so a
+  `CANCELED_RESERVATION` after a restart is still sent.
+- `cpms cancel` does not wait for a `RESERVE_NOW` still with the station: until the station
+  answers, it reports no active reservation (exit 9). Only the partner's own
+  `CANCEL_RESERVATION` waits.
+- A `CANCEL_RESERVATION` always advertises a `timeout` of two station calls
+  (`4 × call_timeout + 5 s`), even for a reservation that is already active and needs one.
+- A tag the partner vouches for is accepted on **every** charger, not only the one the command
+  was for.
 - No Sessions module, CDRs or tariffs.
 
 ## Try it without hardware
 
-```sh
-./bin/cpms run                                              # terminal 1
-./bin/cpms simulate charger --id ALP-HYC-001                # terminal 2
-# register a partner, then POST reserve.json as above      # terminal 3
-./bin/cpms status
-```
+You need a station (the simulator will do), a registered partner, and somewhere for the
+results to land. A real partner is not needed: any HTTP server that answers the OCPI
+versions request will register, and the script below prints what cpms sends it.
 
-Two things the block leaves out:
+1. **Start a stand-in partner** (terminal 1). It listens on `127.0.0.1:9100`.
 
-- **Register a partner first.** Commands need `TOKEN_C`, which only a registered partner
-  has, and results go to the partner's `response_url`. The `curl` that registers one is in
-  [OCPI partner](ocpi-partner.md#steps) ("Try it by hand with curl"); its `url` must
-  answer with OCPI versions, or the registration fails with `3001`.
-- **The simulator uses the same `config.yaml`** as `cpms run` (the one in the working
-  directory, or the one `-c` names): it takes the charger, its EVSEs and the CSMS address
-  from it, and `reserve.json` has to use that file's `location_id` and EVSE uids. To redeem
-  the reservation at the simulator with the partner's token, start it with `--tag` set to
-  that token's `uid`.
+    ??? example "partner.py"
+
+        ```python
+        import json
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        BASE = "http://127.0.0.1:9100/ocpi"
+
+
+        class Partner(BaseHTTPRequestHandler):
+            def reply(self, data):
+                body = json.dumps({"data": data, "status_code": 1000, "status_message": "Success",
+                                   "timestamp": "2026-01-01T00:00:00Z"}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path == "/ocpi/versions":
+                    self.reply([{"version": "2.3.0", "url": BASE + "/2.3.0"}])
+                elif self.path == "/ocpi/2.3.0":
+                    self.reply({"version": "2.3.0", "endpoints": [
+                        {"identifier": "locations", "role": "RECEIVER", "url": BASE + "/2.3.0/locations"}]})
+                else:
+                    self.send_error(404)
+
+            def take(self):  # a command result, or a status PATCH
+                n = int(self.headers.get("Content-Length", 0))
+                print(self.command, self.path, self.rfile.read(n).decode(), flush=True)
+                self.reply(None)
+
+            do_POST = do_PATCH = take
+
+            def log_message(self, *args):
+                pass
+
+
+        HTTPServer(("127.0.0.1", 9100), Partner).serve_forever()
+        ```
+
+    ```sh
+    python3 partner.py
+    ```
+
+2. **Start cpms and the simulator** (terminals 2 and 3). `--tag` is the token `uid` of
+   `reserve.json`, so the simulator can redeem the reservation with it.
+
+    ```sh
+    ./bin/cpms run
+    ./bin/cpms simulate charger --id ALP-HYC-001 --tag NL-ABC-C00012345
+    ```
+
+    The simulator reads the same `config.yaml` as `cpms run` (the one in the working
+    directory, or the one `-c` names): the charger, its EVSEs and the CSMS address come from
+    it, and `reserve.json` has to use that file's `location_id` and EVSE uids.
+
+3. **Register the partner.** Commands need `TOKEN_C`, which only a registered partner has:
+
+    ```sh
+    TOKEN_A=change-me-token-a   # ocpi.token_a from config.yaml
+    curl -s -X POST \
+      -H "Authorization: Token $(printf '%s' "$TOKEN_A" | base64 | tr -d '\n')" \
+      -H 'Content-Type: application/json' \
+      -d '{"token": "partner-token-b", "url": "http://127.0.0.1:9100/ocpi/versions",
+           "roles": [{"role": "EMSP", "party_id": "ABC", "country_code": "NL",
+                      "business_details": {"name": "Example eMSP"}}]}' \
+      http://127.0.0.1:8080/ocpi/2.3.0/credentials
+    ```
+
+    The answer has `status_code` `1000` and carries `TOKEN_C`. More on this step:
+    [Register an OCPI partner](ocpi-partner.md#steps).
+
+4. **Send the command.** Write `reserve.json` as [above](#send-a-command), but with
+   `"response_url": "http://127.0.0.1:9100/ocpi/commands/RESERVE_NOW/9a41"`, which is on the
+   partner's host, and `POST` it. The answer comes at once, with `timeout: 65`.
+
+5. **See the two halves.** The stand-in prints the `CommandResult` (`ACCEPTED`) and then
+   the status `PATCH` (`RESERVED`), and the station shows the reservation:
+
+    ```console
+    $ ./bin/cpms status
+    ...
+    EVSE           STATUS     RESERVATION                         TRANSACTION  METER
+    ALP-HYC-001-1  RESERVED   #1 NL-ABC-C00012345 until 10:24:49  -            -
+    ```
+
+    `./bin/cpms cancel --evse ALP-HYC-001-1` now sends `CANCELED_RESERVATION` to the same
+    URL. A `START_SESSION` with the same token starts a session, and the `session_id` that
+    `STOP_SESSION` takes is the transaction id in the `TRANSACTION` column of `cpms status`.
 
 `cpms simulate charger --scenario reject-reserve` makes the result `REJECTED`, `occupied`
 gives `EVSE_OCCUPIED`, `slow` gives `TIMEOUT`, and `unlock-fails` turns an

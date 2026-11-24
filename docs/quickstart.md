@@ -142,4 +142,5 @@ curl -s -H "Authorization: Token $(printf '%s' "$TOKEN_A" | base64 | tr -d '\n')
 | Make the simulator misbehave | [Test with the simulator](guides/simulator.md) |
 | Cap the charging power | [Limit charging power](guides/smart-charging.md) |
 | Let a backend read my location | [Register an OCPI partner](guides/ocpi-partner.md) |
+| Let a backend reserve and start from its side | [Take commands from the partner](guides/ocpi-commands.md) |
 | Script against `cpms` | [CLI reference](reference/cli.md): `--json` and stable exit codes |

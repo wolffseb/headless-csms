@@ -53,6 +53,15 @@ without regard to case.
 holds one, cpms ends the old one itself (reason `Other`, with a warning in the log).
 Stations do this after a restart in which they forgot their session.
 
+**A partner can drive the same commands over OCPI.** `RESERVE_NOW`, `START_SESSION`,
+`STOP_SESSION` and the others end in the same code as these commands, see
+[Take commands from the partner](ocpi-commands.md). Two things show on this side:
+
+- `cpms cancel` on a reservation the partner made also tells the partner, with a
+  `CANCELED_RESERVATION` result.
+- The transaction id in the `TRANSACTION` column of `cpms status` is the `session_id` the
+  partner's `STOP_SESSION` takes.
+
 ??? note "Two sessions on one EVSE in an old state.json"
     A `state.json` from an older cpms can still hold two sessions on one EVSE. `cpms stop`
     and `cpms limit set --purpose tx` then exit 1 and list both ids. Choose with `--tx ID`.

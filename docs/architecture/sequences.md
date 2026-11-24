@@ -12,6 +12,7 @@ The important flows, message by message. Message names are OCPP 1.6
 | [Silence](#the-station-goes-silent) | A missing heartbeat |
 | [Reconnect](#the-station-reconnects) | The station dialling in again |
 | [OCPI reserve](#an-ocpi-partner-reserves) | A partner's `RESERVE_NOW` |
+| [The CPO cancels](#the-cpo-cancels) | `cpms cancel` of a reservation made over OCPI |
 
 ## Startup, and the station connecting
 
@@ -219,16 +220,68 @@ is [the push](../guides/ocpi-push.md).
 sequenceDiagram
     autonumber
     participant P as OCPI partner
-    participant O as OCPI server
+    participant O as ocpi/commands
     participant Ctl as control
+    participant Core as core
+    participant V16 as ocpp/v16
     participant St as Station
+    participant Push as ocpi/push
 
-    P->>O: POST /ocpi/2.3.0/commands/RESERVE_NOW {token, expiry_date, evse_uid, response_url}
-    O-->>P: CommandResponse ACCEPTED (immediately)
+    P->>O: POST /ocpi/2.3.0/commands/RESERVE_NOW<br/>{token, expiry_date, reservation_id, location_id, evse_uid, response_url}
+    O->>O: checks that need no station: body, response_url host,<br/>EVSE, charger online, token, expiry
+    O-->>P: 200, 1000: CommandResponse { ACCEPTED, timeout: 65 }
+    Note over O: from here in its own goroutine,<br/>bound by the request's timeout
     O->>Ctl: Reserve (same path as the terminal)
-    Ctl->>St: ReserveNow
-    St-->>Ctl: Accepted
-    O->>P: POST response_url: CommandResult ACCEPTED (own goroutine, retried)
-    St->>Ctl: StatusNotification Reserved
-    O->>P: PATCH /locations/.../{evse_uid} {status: RESERVED}
+    Ctl->>Core: BeginReservation: id, pending, response_url
+    Ctl->>V16: ChargePoint.ReserveNow
+    V16->>St: [2,"7","ReserveNow",{connectorId, expiryDate, idTag, reservationId}]
+    St-->>V16: [3,"7",{"status":"Accepted"}]
+    V16-->>Ctl: Result Accepted
+    Ctl->>Core: ActivateReservation: persist, arm expiry timer
+    Ctl-->>O: reservation (no error)
+    O->>P: POST response_url (TOKEN_B)<br/>CommandResult { ACCEPTED }
+    St->>V16: StatusNotification Reserved
+    V16->>Core: EVSE AVAILABLE→RESERVED
+    Core-->>Push: event: EVSE status changed
+    Push->>P: PATCH /locations/.../{evse_uid} { status: RESERVED }
 ```
+
+Anything the station refuses or leaves unanswered ends in the same place, with another
+`result`: `Rejected` is `REJECTED`, `Occupied` is `EVSE_OCCUPIED`, no answer is `TIMEOUT`
+([the table](../guides/ocpi-commands.md#the-result)). A `CommandResult` the partner does not
+take is sent again after a backoff, in its own goroutine, so the next command is not held up.
+
+### The CPO cancels
+
+A reservation that was active and ends because the operator cancelled it is reported to the
+partner without being asked, as `CANCELED_RESERVATION`. `ocpi/commands` finds out from the
+event `core` publishes.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Op as cpms cancel
+    participant Ctl as control
+    participant V16 as ocpp/v16
+    participant St as Station
+    participant Core as core
+    participant O as ocpi/commands
+    participant P as OCPI partner
+
+    Op->>Ctl: Cancel (EVSE)
+    Ctl->>V16: ChargePoint.CancelReservation
+    V16->>St: [2,"8","CancelReservation",{reservationId}]
+    St-->>V16: [3,"8",{"status":"Accepted"}]
+    V16-->>Ctl: Result Accepted
+    Ctl->>Core: EndReservation (cancelled)
+    Core-->>O: event: reservation ended, with its response_url
+    O->>P: POST response_url (TOKEN_B)<br/>CommandResult { CANCELED_RESERVATION }
+    St->>V16: StatusNotification Available
+    Note over P: the status PATCH AVAILABLE follows, as for any change
+```
+
+The event carries the `response_url` only for a reservation that was **active**, and only
+the reasons `cancelled` and `failed` (another tag started a session on the EVSE) are
+reported. Expiry and redemption tell the partner nothing, and neither does the partner's own
+`CANCEL_RESERVATION`, which has its result. The post goes out only while the registration
+the `response_url` arrived under is still the current one.

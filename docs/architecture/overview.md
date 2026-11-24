@@ -13,7 +13,7 @@ flowchart LR
 
     subgraph run ["cpms run (one process)"]
         sock["Control socket<br/>control/socket"]
-        ocpi["OCPI server + push<br/>ocpi (versions, credentials,<br/>locations, push)"]
+        ocpi["OCPI server + push<br/>ocpi (versions, credentials,<br/>locations, commands, push)"]
         ctrl["control<br/>the one way to act<br/>on the station"]
         csms["OCPP server<br/>ocpp/csms + ocpp/v16"]
         core["core<br/>state + event bus"]
@@ -22,7 +22,7 @@ flowchart LR
     end
 
     cli -- "Unix socket" --> sock
-    partner <-- "OCPI 2.3.0<br/>(requests in, status PATCHes out)" --> ocpi
+    partner <-- "OCPI 2.3.0<br/>(requests in, status PATCHes<br/>and command results out)" --> ocpi
     sock --> ctrl
     ocpi --> ctrl
     ctrl -- "commands" --> csms
@@ -34,14 +34,17 @@ flowchart LR
     core --> log
 ```
 
-OCPI commands end in the same `control` layer as the terminal.
+OCPI commands end in the same `control` layer as the terminal. `ocpi/commands` answers the
+partner's `POST` at once, runs the command through `control` in the background, and posts the
+outcome to the request's `response_url`. It also watches `core` for a reservation the CPO
+ends, to report it. See [Sequences](sequences.md#an-ocpi-partner-reserves).
 
 ## Four rules
 
 | Rule | Meaning |
 |---|---|
 | **`core` is the single source of truth.** | It holds the station, every EVSE's status, reservations and sessions, and publishes an event for every change. The event log, the OCPI push and the TUI subscribe. Nothing else keeps charger state. |
-| **`control` is the single way to act on the station.** | It validates the EVSE, allocates and persists ids, sends the command, interprets the answer and records the outcome in `core`. The socket and the TUI (and later OCPI) are thin transports in front of it. |
+| **`control` is the single way to act on the station.** | It validates the EVSE, allocates and persists ids, sends the command, interprets the answer and records the outcome in `core`. The socket, the TUI and the OCPI commands are thin transports in front of it. |
 | **Protocol versions stay in their adapters.** | `ocpp/csms` routes raw messages by the negotiated subprotocol and never learns a message name. `ocpp/v16` translates between 1.6 messages and the version-agnostic `core`. OCPP 2.0.1 will be a sibling adapter, not a rewrite. |
 | **`config.yaml` is read, `state.json` is written.** | See [Configuration](../reference/configuration.md#statejson). |
 
@@ -101,7 +104,8 @@ Nothing calls `ChargePoint` directly except `internal/control`.
 | The call failing | `ocpp.ErrTimeout`, `ocpp.ErrNotConnected`, `ocpp.ErrNotSent`, `ocpp.ErrUnknownEVSE`, `*ocpp.RPCError` | Exit 7, 3, 12, 1, ... |
 
 Typed errors let the CLI turn them into [exit codes](../reference/cli.md#exit-codes), and
-later OCPI into command results.
+`ocpi/commands` into [command results](../guides/ocpi-commands.md#the-result) (`ResultFor` is
+the one table).
 
 ### Reservations
 
@@ -115,6 +119,19 @@ the original at the station too). If the station never saw the replacement or sa
 still holds the original, and so do we. If the outcome is unknown (a timeout, or the
 connection went while it was out), our record of the original ends, and the tags of both
 stay accepted until their own expiry.
+
+A reservation also carries the partner's `response_url`, and the id of the registration it
+arrived under (`response_registration` in `state.json`). A result or `CANCELED_RESERVATION`
+is posted only while that registration is still the current one, so a former partner's URL is
+never sent the new partner's `TOKEN_B`.
+
+### Which tags the station accepts
+
+`ocpp/v16` does not read `auth` itself: it asks `core.TagAuthorisation`, which says yes for the
+configured tags, for the tag of any active reservation, and for the tag of a `START_SESSION`
+within 15 minutes of the command (held in memory). The temporary ones come back in
+`Authorize.conf` and `StartTransaction.conf` with an `expiryDate` in the `idTagInfo`, so a
+station's Authorization Cache does not keep them for ever.
 
 ### Charging profiles are validated before sending
 

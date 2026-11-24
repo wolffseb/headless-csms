@@ -211,6 +211,10 @@ OCPI  not registered
     }
     ```
 
+The number in front of a session's tag (`1` in `1 04A1B2C3D4`; `transaction.id` in the JSON) is
+the transaction id. An OCPI partner's `STOP_SESSION` takes it as its `session_id`, see
+[Take commands from the partner](../guides/ocpi-commands.md#stop_session-and-the-session_id).
+
 ### `cpms reserve`
 
 Holds an EVSE for a tag (`ReserveNow`).
@@ -224,6 +228,12 @@ Holds an EVSE for a tag (`ReserveNow`).
 ### `cpms cancel`
 
 Releases the reservation on an EVSE (`CancelReservation`). Flag: `--evse`.
+
+If the reservation was made by an OCPI partner's `RESERVE_NOW`, the partner is told too: cpms
+posts a `CANCELED_RESERVATION` result to the command's `response_url`
+([When cpms cancels a reservation](../guides/ocpi-commands.md#when-cpms-cancels-a-reservation)).
+It does not wait for a `RESERVE_NOW` the station has not answered yet: until it has, there is
+no active reservation (exit 9).
 
 ### `cpms start`
 
@@ -352,7 +362,9 @@ With more than one charger, add `--charger ID`.
 ### `cpms ocpi unregister`
 
 Clears the OCPI registration from `state.json` and tells the partner with a `DELETE` on its
-credentials endpoint. `TOKEN_A` works again, so the partner can redo the handshake. See
+credentials endpoint. `TOKEN_A` works again, so the partner can redo the handshake. Command
+results still waiting are dropped. Change `ocpi.token_c` before another partner registers: the
+former one still holds it. See
 [Register an OCPI partner](../guides/ocpi-partner.md#change-or-end-a-registration).
 
 ---
