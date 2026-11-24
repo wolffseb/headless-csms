@@ -17,7 +17,7 @@ No database, no container, no web UI: one config file, one binary.
 
 ```mermaid
 flowchart LR
-    you["You<br/><code>cpms reserve / start / stop</code>"]
+    you["You<br/>terminal UI keys or<br/><code>cpms reserve / start / stop</code>"]
     partner["OCPI partner<br/>(eMSP backend)"]
     cpms(["<b>cpms run</b>"])
     station["Charging station<br/>or built-in simulator"]
@@ -35,7 +35,7 @@ No hardware needed: a charge point simulator is built in.
 git clone https://github.com/wolffseb/headless-csms.git && cd headless-csms
 make build && cp config.example.yaml config.yaml
 
-./bin/cpms run                 # terminal 1: the CSMS
+./bin/cpms run                 # terminal 1: the CSMS, with its terminal UI
 ./bin/cpms simulate charger    # terminal 2: a fake station
 ./bin/cpms reserve --evse ALP-HYC-001-1 && ./bin/cpms status   # terminal 3
 ```

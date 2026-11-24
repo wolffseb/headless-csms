@@ -19,6 +19,7 @@ flowchart LR
         core["core<br/>state + event bus"]
         store[("state.json")]
         log["event log"]
+        tui["Terminal UI<br/>tui"]
     end
 
     cli -- "Unix socket" --> sock
@@ -32,6 +33,8 @@ flowchart LR
     ocpi -- "reads status, subscribes to changes" --> core
     core <--> store
     core --> log
+    core -- "events, snapshots" --> tui
+    tui -- "keys" --> ctrl
 ```
 
 OCPI commands end in the same `control` layer as the terminal.
@@ -54,6 +57,7 @@ All under [`internal/`](https://github.com/wolffseb/headless-csms/tree/main/inte
 | `core` | Domain state and the event bus |
 | `control` | The one place that acts on the station: reserve, cancel, start, stop, unlock, probe |
 | `control/socket` | The Unix socket the one-shot commands reach `cpms run` through |
+| `tui` | The terminal UI of `cpms run` (Bubble Tea): renders `core` snapshots, acts through `control` in-process, takes warnings from a log sink |
 | `ocpp` | Version-agnostic RPC errors, the `Handler` and `ChargePoint` interfaces, `ProbeReport` |
 | `ocpp/ocppj` | The OCPP-J RPC layer: framing, correlation, connection goroutines |
 | `ocpp/csms` | The WebSocket server a charge point dials into |
@@ -121,6 +125,14 @@ stay accepted until their own expiry.
 Periods from 0 and strictly increasing, limits with at most one decimal place, only a `Tx`
 profile takes a transaction, only `StationMax` may address the whole station. A bad one
 fails with `ocpp.ErrInvalidProfile`.
+
+### The log while the UI is up
+
+The UI owns the terminal, so nothing may write to stderr. `cpms run` builds the logger to
+match: with the UI, records go to `cpms.log` next to the state file and, at `WARN` and
+above, to a `tui.LogSink` that feeds the log pane; headless, they go to stderr. The pane
+also lists the `core` events, which are logged to the file as well. The UI starts only when
+stdout and stdin are terminals and `--headless` is absent.
 
 ### One CALL in flight per connection
 

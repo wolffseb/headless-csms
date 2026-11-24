@@ -11,7 +11,8 @@ cpms config validate
 
 !!! info "Two files, one rule"
     **`config.yaml` is read-only to cpms.** It holds what you decide. What cpms learns at
-    runtime goes to [`state.json`](#statejson), the only file it writes.
+    runtime goes to [`state.json`](#statejson), the only data file it writes. (`cpms run` also
+    appends to `cpms.log` next to it while the terminal UI is up, and keeps a control socket.)
 
 Durations are written like `60s`, `500ms` or `15m`.
 

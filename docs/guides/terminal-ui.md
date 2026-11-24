@@ -1,9 +1,10 @@
 # Use the terminal UI
 
 `cpms run` shows the stations on one screen and lets you act on them with the keyboard,
-so a second terminal is not needed for the everyday commands. The one-shot commands
-(`cpms reserve`, `cpms status` and the rest) still work, for scripts and for what the
-keys do not cover.
+so a second terminal is not needed for the everyday commands. There is nothing to switch
+on: start `cpms run` in a terminal and the screen is there. The one-shot commands
+(`cpms reserve`, `cpms status` and the rest) still work alongside it, for scripts and for
+what the keys do not cover.
 
 ## What you see
 
@@ -41,8 +42,9 @@ ALP-HYC-002  offline  last seen 09:30:00 (heartbeat timeout)
 ```
 
 - **Header.** How many chargers are online, and the OCPI side: `OCPI not registered`, or
-  `registered with DE*ABC` followed by the status push (`last push 10:14:55`,
-  `nothing pushed yet`, or `last push failed 10:14:55: 503 Service Unavailable` in red).
+  `OCPI registered with DE*ABC` followed by the status push (`last push 10:14:55`,
+  `nothing pushed yet`, or `last push failed 10:14:55: 503 Service Unavailable` in red; a
+  partner that lists no Locations receiver gives `push: no locations receiver`).
   The push status is read once a second.
 - **One group per charger.** The charger line shows `online` with the station's vendor,
   model and firmware, or `offline` with when it was last seen and why it went. An offline
@@ -73,9 +75,10 @@ The keys act on the selected EVSE. There are no prompts: they use the default ta
 | `r` | Reserve the EVSE for the default tag for 15 minutes. |
 | `c` | Cancel its reservation. |
 | `s` | Start a session with the default tag. |
-| `x` | Stop its session. It asks first: `y` confirms, any other key cancels. |
+| `x` | Stop its session. It asks first: `y` confirms, any other key cancels. With no session on the EVSE it asks nothing and shows the CLI's answer. |
 | `u` | Unlock the cable. |
 | `t` | Ask the station for the EVSE's status again. |
+| `esc` | Clear the message line. |
 | `?` | Show the key list; `?` or `esc` closes it. |
 | `q`, `ctrl-c` | Quit, with no confirmation. |
 
@@ -93,7 +96,8 @@ cpms reserve --evse ALP-HYC-001-1 --tag 04FFEE0011 --expires 30m
 
 `q` and `ctrl-c` end `cpms run` exactly as `SIGINT` does: the OCPI and OCPP listeners, the
 control socket and the status push are closed within the usual grace period. `SIGTERM`
-works too. The screen is restored first, and `shutting down` is printed after it.
+works too. The screen is restored first, and `shutting down` is printed after it. A command
+already sent to the station is not abandoned by quitting.
 
 ## Where the log goes
 

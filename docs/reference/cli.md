@@ -8,7 +8,7 @@ cpms [command] [flags]
 
 | Command | Does | Needs `cpms run` |
 |---|---|---|
-| [`run`](#cpms-run) | Runs the CSMS and the OCPI server | |
+| [`run`](#cpms-run) | Runs the CSMS and the OCPI server, with a terminal UI | |
 | [`status`](#cpms-status) | Shows the stations, EVSEs, reservations and sessions | yes |
 | [`reserve`](#cpms-reserve) | Reserves an EVSE for an RFID tag | yes |
 | [`cancel`](#cpms-cancel) | Cancels the reservation on an EVSE | yes |
@@ -82,7 +82,7 @@ Stable, so scripts can branch on them.
 
 | Stream | Carries |
 |---|---|
-| stdout | Reports and confirmations: `status`, `probe`, `config validate`, `version`, the startup lines of `run`. |
+| stdout | Reports and confirmations: `status`, `probe`, `config validate`, `version`, and `run`'s `shutting down`. With `run --headless` also its startup lines (the UI shows them in its log pane). |
 | stderr | Logs (of `run --headless`; the UI writes `cpms.log` instead), validation problems, `warning:` lines and `cpms: …` errors. |
 
 So piping a report works:
@@ -104,10 +104,13 @@ and `t` act on it.
 | Flag | Default | |
 |---|---|---|
 | `--headless` | off | Print log lines to stderr instead of showing the UI. This is also what happens when stdout is not a terminal, after the line `stdout is not a terminal; running headless` (stdin not a terminal: the same, with `stdin`). |
-| `--log-level` | `info` | `debug`, `info`, `warn` or `error`. `debug` shows the protocol messages and one line per OCPI request. |
+| `--log-level` | `info` | `debug`, `info`, `warn` or `error`. `debug` shows the protocol messages and one line per OCPI request, in `cpms.log` while the UI is up. |
 
-While the UI is up the log goes to `cpms.log` next to the state file (appended to), not to
-stderr.
+While the UI is up the log goes to `cpms.log` next to the state file (appended to, at
+`--log-level`), not to stderr. The log pane shows events, failed commands and warnings
+whatever the level. If `cpms.log` cannot be opened, `cpms run` exits 1; use `--headless`.
+
+Quit with `q` or Ctrl-C in the UI; headless, with Ctrl-C or `SIGTERM`.
 
 It claims the [control socket](#the-control-socket). A second `cpms run` on the same state
 exits with "another cpms is already running".
@@ -378,4 +381,4 @@ One-shot commands reach `cpms run` through a Unix socket.
 | Default path | `cpms.sock` next to the state file |
 | Permissions | `0600`, removed on shutdown |
 | Stale socket | One left by a killed `cpms run` is detected and replaced. |
-| Long paths | Socket paths are limited to 103 bytes (a kernel limit on macOS). A longer default falls back to `cpms-<hash>.sock` in the temp directory, which `run` and the commands derive on their own. `cpms run` prints the path it uses. |
+| Long paths | Socket paths are limited to 103 bytes (a kernel limit on macOS). A longer default falls back to `cpms-<hash>.sock` in the temp directory, which `run` and the commands derive on their own. `cpms run` prints the path it uses (in the UI, in the first lines of the log pane and in `cpms.log`). |

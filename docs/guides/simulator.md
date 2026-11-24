@@ -9,6 +9,8 @@ cpms simulate charger    # terminal 2
 ```
 
 With no flags it reads the same config and connects to the CSMS that `cpms run` serves.
+Terminal 1 shows the simulated station in its [terminal UI](terminal-ui.md): select an EVSE
+and press `r`, `s` or `x` to drive it.
 
 ## Scenarios
 
@@ -120,7 +122,7 @@ sequenceDiagram
 
 The `offline-tx` scenario runs that end to end. It implies `--reconnect` and
 `--meter-interval 1s`. It starts a transaction on connector 1 and waits for the connection
-to drop (stop `cpms run`). Offline it queues 3 meter values, stops the transaction, and
+to drop (stop `cpms run` with `q` or Ctrl-C). Offline it queues 3 meter values, stops the transaction, and
 starts and stops a second one. Then it redials and delivers the queue.
 
 A queued message leaves the queue only when the CSMS has answered it:

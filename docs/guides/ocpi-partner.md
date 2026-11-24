@@ -32,7 +32,8 @@ sequenceDiagram
 
 ## Steps
 
-1. **Start `cpms run`.** It prints the versions URL:
+1. **Start `cpms run`.** It logs the versions URL, as one of the first lines of the UI's log
+   pane and in `cpms.log` (`--headless` prints it):
 
     ```
     OCPI versions endpoint http://192.168.1.10:8080/ocpi/versions (listening on 0.0.0.0:8080)

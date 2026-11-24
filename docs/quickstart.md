@@ -43,16 +43,23 @@ config.yaml is valid.
 ./bin/cpms run
 ```
 
+`cpms run` takes over the terminal and shows the [terminal UI](guides/terminal-ui.md):
+the charger and its two EVSEs, `offline` and `UNKNOWN` until a station connects. The
+startup lines are the first lines of its log pane:
+
 ```
 cpms listening for ALP-HYC-001 on ws://127.0.0.1:9000/ocpp/ALP-HYC-001
 OCPI versions endpoint http://192.168.1.10:8080/ocpi/versions (listening on 0.0.0.0:8080)
 control socket cpms.sock
-waiting for the charge point to connect; press Ctrl-C to stop
+waiting for the charge point to connect; press q to quit
 ```
 
-Leave it running. In a terminal it shows the [terminal UI](guides/terminal-ui.md)
-(the startup lines above are its first log lines); with `--headless`, or when stdout is
-not a terminal, it prints them and then logs everything the station does.
+Leave it running. Press `q` or Ctrl-C to stop it.
+
+!!! note "No screen, only log lines?"
+    With `--headless`, or when stdout or stdin is not a terminal (a pipe, CI, systemd),
+    `cpms run` prints the startup lines and then logs everything the station does to
+    stderr. The last line then says `press Ctrl-C to stop`.
 
 ## 4. Connect a station
 
@@ -62,18 +69,26 @@ In a **second terminal**, start the simulator. It reads the same config and dial
 ./bin/cpms simulate charger --meter-interval 5s
 ```
 
-The first terminal shows it arrive:
+The first terminal shows it arrive: the charger line turns `online`, both EVSEs go from
+`UNKNOWN` to `AVAILABLE`, and the log pane adds:
 
 ```
-INFO msg="charge point connected" charge_point=ALP-HYC-001 version=1.6
-INFO msg="ALP-HYC-001 booted (Alpitronic HYC300 fw simulator)"
-INFO msg="ALP-HYC-001-1 UNKNOWN→AVAILABLE"
-INFO msg="ALP-HYC-001-2 UNKNOWN→AVAILABLE"
+10:03:57 ALP-HYC-001 connected
+10:03:57 ALP-HYC-001 booted (Alpitronic HYC300 fw simulator)
+10:03:57 ALP-HYC-001-1 UNKNOWN→AVAILABLE
+10:03:57 ALP-HYC-001-2 UNKNOWN→AVAILABLE
 ```
+
+With `--headless` the same events are `INFO msg="ALP-HYC-001-1 UNKNOWN→AVAILABLE"` lines.
 
 ## 5. Drive it
 
 In a **third terminal**:
+
+!!! tip "Or stay in the first one"
+    In the terminal UI, select an EVSE with `↑` `↓` and press `r` to reserve it, `s` to
+    start a session and `x` then `y` to stop it. The keys use the same defaults as the
+    commands below. [Use the terminal UI](guides/terminal-ui.md) lists them all.
 
 === "Reserve"
 
@@ -139,6 +154,7 @@ curl -s -H "Authorization: Token $(printf '%s' "$TOKEN_A" | base64 | tr -d '\n')
 |---|---|
 | Understand what just happened | [Concepts](concepts.md) |
 | Use a real charger | [Connect a real station](guides/connect-station.md) |
+| Do all this with keys instead of commands | [Use the terminal UI](guides/terminal-ui.md) |
 | Make the simulator misbehave | [Test with the simulator](guides/simulator.md) |
 | Cap the charging power | [Limit charging power](guides/smart-charging.md) |
 | Let a backend read my location | [Register an OCPI partner](guides/ocpi-partner.md) |

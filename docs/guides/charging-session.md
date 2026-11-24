@@ -38,6 +38,12 @@ ALP-HYC-001-1 remote stop accepted
 
 `--evse` takes the EVSE `uid` from config. Leave it out when only one EVSE is configured.
 
+!!! tip "From the terminal UI"
+    In `cpms run`'s [terminal UI](terminal-ui.md), select the EVSE and press `r` (reserve),
+    `c` (cancel), `s` (start), `x` then `y` (stop) or `u` (unlock). The keys use
+    `auth.default_id_tag` and 15 minutes, like the commands without flags, and the result
+    appears on the message line. The failure cases below apply as they are.
+
 ## Rules worth knowing
 
 **The station is the source of truth for status.** An EVSE shows `RESERVED` only when the

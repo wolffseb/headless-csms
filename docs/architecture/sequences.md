@@ -28,7 +28,7 @@ sequenceDiagram
     Run->>Run: claim control socket (refuses if another cpms answers)
     Run->>Core: build from state.json<br/>(reservations re-armed, transactions and counters restored)
     Run->>Run: listen for OCPP on server.ocpp_bind
-    Note over Run: prints the CSMS URL and the socket path
+    Note over Run: logs the CSMS URL and the socket path (headless: prints)
 
     St->>Run: WebSocket upgrade GET /ocpp/ALP-HYC-001<br/>Sec-WebSocket-Protocol: ocpp1.6
     Run->>Core: Connected

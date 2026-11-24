@@ -26,6 +26,7 @@ flowchart LR
         ocpi["OCPI server"]
         csms["OCPP server"]
         core[("core<br/>live state")]
+        ui["Terminal UI"]
     end
 
     cli -- "Unix socket" --> sock
@@ -34,12 +35,13 @@ flowchart LR
     sock --> core
     ocpi --> core
     csms --> core
+    ui --> core
 ```
 
 | Who | Protocol | Notes |
 |---|---|---|
 | The station | OCPP 1.6-J over WebSocket | Its only connection is to `cpms run`. |
-| You | `cpms <command>` over a Unix socket | Commands need a running `cpms run`. They send one request, print the answer and exit. |
+| You | The [terminal UI](guides/terminal-ui.md) of `cpms run`, or `cpms <command>` over a Unix socket | The UI is `cpms run` itself. Commands need a running `cpms run`: they send one request, print the answer and exit. |
 | An OCPI partner | OCPI 2.3.0 over HTTP | Must [register](guides/ocpi-partner.md) first. cpms then [pushes status changes](guides/ocpi-push.md) to it. |
 
 ## Vocabulary
